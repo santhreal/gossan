@@ -11,7 +11,7 @@ members = [
     "crates/correlation",
     "crates/checkpoint",
     "crates/cli", "crates/synscan", "crates/headless",
-    "crates/crawl", "crates/origin",
+    "crates/crawl", "crates/origin", "crates/stealthreq",
 ]
 default-members = ["crates/cli"]
 resolver = "2"
@@ -61,3 +61,4 @@ scanclient = "0.2.0"
 codewalk = "0.2.0"
 multimatch = "0.2.0"
 scanstate = "0.2.0"
+toml = "0.8"

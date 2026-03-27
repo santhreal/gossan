@@ -20,3 +20,5 @@ upstream_reqwest = { workspace = true }
 futures     = { workspace = true }
 psl         = "2"
 secfinding  = { workspace = true }
+serde       = { workspace = true }
+toml        = { workspace = true }

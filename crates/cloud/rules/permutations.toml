@@ -1,0 +1,40 @@
+# Cloud bucket/account name permutation patterns.
+#
+# These suffixes and prefixes are combined with organization names
+# to generate candidate bucket names for enumeration.
+#
+# Pattern: {prefix}{org}{suffix}
+#
+# Resulting candidates must be 3-63 characters for S3/GCS compatibility.
+
+# Suffixes appended to organization names
+[suffixes]
+values = [
+    "", "-assets", "-static", "-media", "-images", "-img",
+    "-uploads", "-files", "-docs", "-documents", "-data",
+    "-backup", "-backups", "-bak", "-archive", "-archives",
+    "-logs", "-log", "-dev", "-development", "-staging",
+    "-stage", "-prod", "-production", "-test", "-testing",
+    "-qa", "-uat", "-public", "-private", "-internal",
+    "-infra", "-infrastructure", "-storage", "-store",
+    "-cdn", "-cache", "-tmp", "-temp", "-web", "-site",
+    "-api", "-app", "-s3", "-bucket", "-admin", "-dashboard",
+    "-config", "-secrets", "-creds", "-jenkins", "-ci",
+    "-build", "-releases", "-deploy", "-email", "-mail",
+    "-db", "-database",
+]
+
+# Prefixes prepended to organization names
+[prefixes]
+values = [
+    "", "assets-", "static-", "media-", "backup-",
+    "dev-", "staging-", "prod-", "test-", "cdn-",
+    "s3-", "storage-",
+]
+
+# Additional transformations applied to the base name
+[transforms]
+# Replace dots with hyphens (e.g., "example.com" -> "example-com")
+dot_to_hyphen = true
+# Replace hyphens with dots (e.g., "example-corp" -> "example.corp")
+hyphen_to_dot = true

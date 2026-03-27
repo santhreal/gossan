@@ -8,13 +8,63 @@
 use async_trait::async_trait;
 use gossan_core::Target;
 use secfinding::{Evidence, Finding, Severity};
+use serde::Deserialize;
+use std::sync::OnceLock;
 
 use crate::common::is_xml_listing;
 use crate::provider::CloudProvider;
 
-const REGIONS: &[&str] = &[
-    "nyc3", "sgp1", "ams3", "fra1", "sfo2", "sfo3", "lon1", "blr1",
-];
+/// DO Spaces region definition from TOML.
+#[derive(Debug, Clone, Deserialize)]
+struct DoRegion {
+    id: String,
+    #[allow(dead_code)]
+    location: String,
+    #[allow(dead_code)]
+    country: String,
+}
+
+/// TOML file containing DO Spaces region definitions.
+#[derive(Debug, Deserialize)]
+struct DoRegionsFile {
+    region: Vec<DoRegion>,
+}
+
+/// Built-in do_spaces.toml content (embedded at compile time).
+const BUILTIN_DO_SPACES: &str = include_str!("../rules/do_spaces.toml");
+
+/// Global cache for built-in DO regions.
+static DO_REGIONS: OnceLock<Vec<DoRegion>> = OnceLock::new();
+
+/// Initialize and return the built-in DO Spaces regions.
+fn builtin_do_regions() -> &'static Vec<DoRegion> {
+    DO_REGIONS.get_or_init(|| {
+        match toml::from_str::<DoRegionsFile>(BUILTIN_DO_SPACES) {
+            Ok(file) => file.region,
+            Err(e) => {
+                tracing::error!(error = %e, "failed to parse built-in do_spaces.toml");
+                // Fallback to minimal hardcoded list only on parse failure
+                vec![
+                    DoRegion {
+                        id: "nyc3".to_string(),
+                        location: "New York City".to_string(),
+                        country: "US".to_string(),
+                    },
+                    DoRegion {
+                        id: "ams3".to_string(),
+                        location: "Amsterdam".to_string(),
+                        country: "NL".to_string(),
+                    },
+                ]
+            }
+        }
+    })
+}
+
+/// Get region IDs from TOML configuration.
+fn region_ids() -> &'static [DoRegion] {
+    builtin_do_regions()
+}
 
 pub struct DoSpacesProvider;
 
@@ -32,8 +82,8 @@ impl CloudProvider for DoSpacesProvider {
     ) -> anyhow::Result<Vec<Finding>> {
         let mut findings = Vec::new();
 
-        for region in REGIONS {
-            let url = format!("https://{}.{}.digitaloceanspaces.com/", name, region);
+        for region in region_ids() {
+            let url = format!("https://{}.{}.digitaloceanspaces.com/", name, region.id);
 
             let resp = match client.get(&url).send().await {
                 Ok(r) => r,
@@ -53,17 +103,17 @@ impl CloudProvider for DoSpacesProvider {
                             } else {
                                 Severity::High
                             },
-                            format!("Public DO Spaces bucket: {} ({})", name, region),
+                            format!("Public DO Spaces bucket: {} ({})", name, region.id),
                             if listed {
                                 format!(
                                     "DO Spaces bucket '{}' ({}) is publicly listable — \
                                      all object keys enumerable.",
-                                    name, region
+                                    name, region.id
                                 )
                             } else {
                                 format!(
                                     "DO Spaces bucket '{}' ({}) returns 200 — publicly accessible.",
-                                    name, region
+                                    name, region.id
                                 )
                             },
                         )
@@ -78,7 +128,7 @@ impl CloudProvider for DoSpacesProvider {
                         .build()
                         .expect("finding builder: required fields are set"),
                     );
-                    try_write(client, name, region, &url, target, &mut findings).await;
+                    try_write(client, name, &region.id, &url, target, &mut findings).await;
                     break;
                 }
                 403 => {
@@ -86,11 +136,11 @@ impl CloudProvider for DoSpacesProvider {
                         crate::finding_builder(
                             target,
                             Severity::Low,
-                            format!("DO Spaces bucket exists (private): {} ({})", name, region),
+                            format!("DO Spaces bucket exists (private): {} ({})", name, region.id),
                             format!(
                                 "DO Spaces bucket '{}' ({}) exists but is private (HTTP 403). \
                                  Verify ownership.",
-                                name, region
+                                name, region.id
                             ),
                         )
                         .tag("cloud")
@@ -99,7 +149,7 @@ impl CloudProvider for DoSpacesProvider {
                         .build()
                         .expect("finding builder: required fields are set"),
                     );
-                    try_write(client, name, region, &url, target, &mut findings).await;
+                    try_write(client, name, &region.id, &url, target, &mut findings).await;
                     break;
                 }
                 _ => {}
@@ -156,7 +206,7 @@ async fn try_write(
             )
             .evidence(Evidence::HttpResponse {
                 status,
-                headers: vec![("url".into(), put_url)],
+                headers: vec![("url".into(), put_url.clone())],
                 body_excerpt: None,
             })
             .tag("cloud")
@@ -166,5 +216,43 @@ async fn try_write(
             .build()
             .expect("finding builder: required fields are set"),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn do_regions_load_from_toml() {
+        let regions = region_ids();
+        assert!(!regions.is_empty(), "should have DO regions from TOML");
+        
+        // Check for expected regions
+        assert!(
+            regions.iter().any(|r| r.id == "nyc3"),
+            "should include nyc3 region"
+        );
+        assert!(
+            regions.iter().any(|r| r.id == "ams3"),
+            "should include ams3 region"
+        );
+    }
+
+    #[test]
+    fn do_regions_have_required_fields() {
+        for region in region_ids() {
+            assert!(!region.id.is_empty(), "region id should not be empty");
+            assert!(!region.location.is_empty(), "location should not be empty");
+            assert!(!region.country.is_empty(), "country should not be empty");
+        }
+    }
+
+    #[test]
+    fn do_regions_cover_major_geographies() {
+        let ids: Vec<_> = region_ids().iter().map(|r| r.id.clone()).collect();
+        for expected in ["nyc3", "ams3", "sgp1", "fra1"] {
+            assert!(ids.contains(&expected.to_string()), "missing region: {}", expected);
+        }
     }
 }

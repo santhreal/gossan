@@ -9,20 +9,68 @@
 //! **DMARC**: Validates policy strength (`p=none` vs `p=reject`), subdomain
 //! policy inheritance (`sp=`), and aggregate report destination (`rua=`).
 //!
-//! **DKIM**: Probes 13 common selectors (Google, Mailchimp, SendGrid, etc.)
-//! and reports which signing infrastructure is active.
+//! **DKIM**: Probes common selectors loaded from TOML configuration
+//! (Google, Mailchimp, SendGrid, etc.) and reports which signing infrastructure is active.
 
 use gossan_core::Target;
 use hickory_resolver::TokioAsyncResolver;
 use secfinding::{Evidence, Finding, FindingBuilder, Severity};
+use serde::Deserialize;
+use std::sync::OnceLock;
 
 use crate::resolver::lookup_txt;
 
-/// Common DKIM selectors covering major email providers.
-const DKIM_SELECTORS: &[&str] = &[
-    "default", "google", "mail", "k1", "k2", "selector1", "selector2",
-    "smtp", "dkim", "mandrill", "mailchimp", "sendgrid", "postmark",
-];
+/// DKIM selector definition from TOML.
+#[derive(Debug, Clone, Deserialize)]
+struct DkimSelector {
+    name: String,
+    #[allow(dead_code)]
+    provider: String,
+}
+
+/// TOML file containing DKIM selector definitions.
+#[derive(Debug, Deserialize)]
+struct DkimSelectorsFile {
+    selector: Vec<DkimSelector>,
+}
+
+/// Built-in dkim_selectors.toml content (embedded at compile time).
+const BUILTIN_DKIM_SELECTORS: &str = include_str!("../rules/dkim_selectors.toml");
+
+/// Global cache for built-in DKIM selectors.
+static DKIM_SELECTORS: OnceLock<Vec<DkimSelector>> = OnceLock::new();
+
+/// Initialize and return the built-in DKIM selectors.
+fn builtin_dkim_selectors() -> &'static Vec<DkimSelector> {
+    DKIM_SELECTORS.get_or_init(|| {
+        match toml::from_str::<DkimSelectorsFile>(BUILTIN_DKIM_SELECTORS) {
+            Ok(file) => file.selector,
+            Err(e) => {
+                tracing::error!(error = %e, "failed to parse built-in dkim_selectors.toml");
+                // Fallback to minimal hardcoded list only on parse failure
+                vec![
+                    DkimSelector {
+                        name: "default".to_string(),
+                        provider: "Generic".to_string(),
+                    },
+                    DkimSelector {
+                        name: "google".to_string(),
+                        provider: "Google Workspace".to_string(),
+                    },
+                    DkimSelector {
+                        name: "selector1".to_string(),
+                        provider: "Microsoft 365".to_string(),
+                    },
+                ]
+            }
+        }
+    })
+}
+
+/// Get DKIM selector names from TOML configuration.
+fn dkim_selector_names() -> &'static [DkimSelector] {
+    builtin_dkim_selectors()
+}
 
 /// Maximum SPF `include:` recursion depth before declaring permerror.
 const MAX_SPF_INCLUDES: usize = 10;
@@ -240,7 +288,7 @@ async fn check_dmarc(
 
 // ── DKIM ────────────────────────────────────────────────────────────────────
 
-/// Probe common DKIM selectors to discover email signing infrastructure.
+/// Probe common DKIM selectors loaded from TOML to discover email signing infrastructure.
 async fn check_dkim(
     resolver: &TokioAsyncResolver,
     domain: &str,
@@ -249,14 +297,14 @@ async fn check_dkim(
     let mut findings = Vec::new();
     let mut dkim_found = false;
 
-    for selector in DKIM_SELECTORS {
-        let dkim_name = format!("{selector}._domainkey.{domain}");
+    for selector in dkim_selector_names() {
+        let dkim_name = format!("{}._domainkey.{domain}", selector.name);
         if let Ok(records) = lookup_txt(resolver, &dkim_name).await {
             if records.iter().any(|r| r.contains("v=DKIM1") || r.contains("p=")) {
                 dkim_found = true;
                 findings.push(
-                    fb(target, Severity::Info, format!("DKIM selector active: {selector}"),
-                       format!("{domain} DKIM selector '{selector}' resolves — email signing configured."))
+                    fb(target, Severity::Info, format!("DKIM selector active: {}", selector.name),
+                       format!("{domain} DKIM selector '{}' resolves — email signing configured.", selector.name))
                     .evidence(Evidence::DnsRecord {
                         record_type: "TXT".into(),
                         value: records.first().cloned().unwrap_or_default(),
@@ -272,7 +320,7 @@ async fn check_dkim(
     if !dkim_found {
         findings.push(
             fb(target, Severity::Low, "No DKIM record found",
-               format!("{domain} — none of {} common DKIM selectors resolved.", DKIM_SELECTORS.len()))
+               format!("{domain} — none of {} common DKIM selectors resolved.", dkim_selector_names().len()))
             .tag("email-security").tag("dkim")
             .build().expect("finding builder: required fields are set"),
         );
@@ -286,18 +334,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn dkim_selectors_load_from_toml() {
+        let selectors = dkim_selector_names();
+        assert!(!selectors.is_empty(), "should have DKIM selectors from TOML");
+        assert!(
+            selectors.iter().any(|s| s.name == "google"),
+            "should include google selector"
+        );
+    }
+
+    #[test]
     fn dkim_selectors_include_major_providers() {
-        for sel in ["default", "google", "mailchimp", "sendgrid", "postmark"] {
-            assert!(DKIM_SELECTORS.contains(&sel), "missing DKIM selector: {sel}");
+        let names: Vec<_> = dkim_selector_names().iter().map(|s| s.name.clone()).collect();
+        for expected in ["default", "google", "mailchimp", "sendgrid", "postmark"] {
+            assert!(names.contains(&expected.to_string()), "missing selector: {}", expected);
         }
     }
 
     #[test]
     fn dkim_selector_count_is_comprehensive() {
         assert!(
-            DKIM_SELECTORS.len() >= 13,
+            dkim_selector_names().len() >= 13,
             "should have 13+ DKIM selectors, got {}",
-            DKIM_SELECTORS.len()
+            dkim_selector_names().len()
         );
     }
 

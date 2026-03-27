@@ -1,0 +1,80 @@
+# HTTP headers that commonly leak origin server information.
+#
+# These headers are set by reverse proxies, load balancers, and CDNs
+# and often inadvertently disclose the backend server IP, hostname,
+# or internal infrastructure details.
+#
+# Confidence scores indicate how likely the header value is to contain
+# actionable origin information (higher = more reliable).
+#
+# Users can extend this list by creating a custom TOML file.
+
+[[header]]
+name = "x-served-by"
+confidence = 85
+description = "CDN backend identifier"
+
+[[header]]
+name = "x-backend-server"
+confidence = 90
+description = "Direct backend server name"
+
+[[header]]
+name = "x-backend"
+confidence = 90
+description = "Backend identifier"
+
+[[header]]
+name = "x-host"
+confidence = 80
+description = "Original host header"
+
+[[header]]
+name = "x-forwarded-server"
+confidence = 80
+description = "Forwarded server identifier"
+
+[[header]]
+name = "x-real-ip"
+confidence = 85
+description = "Original client IP (may leak upstream)"
+
+[[header]]
+name = "x-origin-server"
+confidence = 90
+description = "Origin server identifier"
+
+[[header]]
+name = "x-server"
+confidence = 70
+description = "Server identifier"
+
+[[header]]
+name = "via"
+confidence = 50
+description = "Proxy chain information"
+
+[[header]]
+name = "x-powered-by-plesk"
+confidence = 60
+description = "Plesk hosting panel identifier"
+
+[[header]]
+name = "x-amz-cf-id"
+confidence = 40
+description = "CloudFront request ID"
+
+[[header]]
+name = "x-azure-ref"
+confidence = 40
+description = "Azure reference identifier"
+
+[[header]]
+name = "cf-ray"
+confidence = 30
+description = "Cloudflare ray ID"
+
+[[header]]
+name = "server"
+confidence = 50
+description = "Server software banner"

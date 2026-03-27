@@ -32,3 +32,5 @@ tokio            = { workspace = true }
 futures          = { workspace = true }
 hickory-resolver = { workspace = true }
 secfinding       = { workspace = true }
+serde            = { workspace = true }
+toml             = { workspace = true }

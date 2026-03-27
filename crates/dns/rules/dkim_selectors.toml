@@ -1,0 +1,62 @@
+# Common DKIM selectors covering major email providers.
+#
+# DKIM (DomainKeys Identified Mail) uses selectors to support multiple
+# concurrent keys per domain. These are the most common selectors used
+# by major email service providers and infrastructure.
+#
+# When auditing a domain's email security, these selectors are probed
+# to determine which email signing infrastructure is active.
+#
+# Users can extend this list by creating a custom TOML file.
+
+[[selector]]
+name = "default"
+provider = "Generic / Self-hosted"
+
+[[selector]]
+name = "google"
+provider = "Google Workspace / Gmail"
+
+[[selector]]
+name = "mail"
+provider = "Generic mail services"
+
+[[selector]]
+name = "k1"
+provider = "Mailchimp / Mandrill"
+
+[[selector]]
+name = "k2"
+provider = "Mailchimp / Mandrill"
+
+[[selector]]
+name = "selector1"
+provider = "Microsoft 365 / Office 365"
+
+[[selector]]
+name = "selector2"
+provider = "Microsoft 365 / Office 365"
+
+[[selector]]
+name = "smtp"
+provider = "Generic SMTP services"
+
+[[selector]]
+name = "dkim"
+provider = "Generic DKIM implementations"
+
+[[selector]]
+name = "mandrill"
+provider = "Mandrill"
+
+[[selector]]
+name = "mailchimp"
+provider = "Mailchimp"
+
+[[selector]]
+name = "sendgrid"
+provider = "SendGrid"
+
+[[selector]]
+name = "postmark"
+provider = "Postmark"
