@@ -1,0 +1,24 @@
+[package]
+name    = "gossan-techstack"
+version.workspace = true
+edition.workspace = true
+description      = "Tech stack fingerprinting scanner for panoram — powered by truestack"
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+gossan-core = { version = "0.2", path = "../core" }
+truestack    = { version = "0.1", path = "../../../truestack" }
+async-trait = { workspace = true }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+anyhow      = { workspace = true }
+tracing     = { workspace = true }
+tokio       = { workspace = true }
+reqwest     = { workspace = true }
+futures     = { workspace = true }
+sha2        = { workspace = true }
+hex         = { workspace = true }
+secfinding  = { workspace = true }

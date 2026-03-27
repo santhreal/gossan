@@ -1,0 +1,24 @@
+[package]
+name    = "gossan-js"
+version.workspace = true
+edition.workspace = true
+description      = "JavaScript analysis scanner for gossan (secret detection, prototype pollution, WASM inspection)"
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+gossan-core = { version = "0.2", path = "../core" }
+async-trait = { workspace = true }
+anyhow      = { workspace = true }
+tracing     = { workspace = true }
+tokio       = { workspace = true }
+reqwest     = { workspace = true }
+futures     = { workspace = true }
+regex       = "1"
+scraper     = "0.21"
+url         = { workspace = true }
+serde_json  = { workspace = true }
+base64      = "0.22"
+secfinding  = { workspace = true }

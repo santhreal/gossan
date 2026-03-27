@@ -1,0 +1,74 @@
+[package]
+name             = "gossan"
+version.workspace = true
+edition.workspace = true
+description      = "Fast, modular attack surface discovery — subdomains, ports, tech stack, secrets, hidden endpoints, cloud assets"
+license.workspace = true
+repository.workspace = true
+homepage.workspace   = true
+keywords.workspace   = true
+categories.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "gossan"
+path = "src/main.rs"
+
+# ── Feature flags ──────────────────────────────────────────────────────────────
+# Each scanner module is independently optional.
+# Compile the minimal binary you need:
+#
+#   cargo build --no-default-features --features subdomain,techstack
+#
+# This produces a binary with only subdomain discovery + tech-stack scanning —
+# no port scanner, no DNS audit, no JS analysis, no cloud enumeration compiled in.
+[features]
+default = [
+    "subdomain", "portscan", "techstack", "dns",
+    "js", "hidden", "cloud", "correlation", "checkpoint",
+    "synscan", "headless", "crawl",
+]
+subdomain   = ["dep:gossan-subdomain"]
+portscan    = ["dep:gossan-portscan"]
+techstack   = ["dep:gossan-techstack"]
+dns         = ["dep:gossan-dns"]
+js          = ["dep:gossan-js"]
+hidden      = ["dep:gossan-hidden"]
+cloud       = ["dep:gossan-cloud"]
+correlation = ["dep:gossan-correlation"]
+checkpoint  = ["dep:gossan-checkpoint"]
+synscan     = ["dep:gossan-synscan"]
+headless    = ["dep:gossan-headless"]
+crawl       = ["dep:gossan-crawl"]
+
+[dependencies]
+gossan-core = { version = "0.2", path = "../core" }
+gossan-subdomain   = { version = "0.2", path = "../subdomain",   optional = true }
+gossan-portscan    = { version = "0.2", path = "../portscan",    optional = true }
+gossan-techstack   = { version = "0.2", path = "../techstack",   optional = true }
+gossan-dns         = { version = "0.2", path = "../dns",         optional = true }
+gossan-js          = { version = "0.2", path = "../js",          optional = true }
+gossan-hidden      = { version = "0.2", path = "../hidden",      optional = true }
+gossan-cloud       = { version = "0.2", path = "../cloud",       optional = true }
+gossan-correlation = { version = "0.2", path = "../correlation", optional = true }
+gossan-checkpoint  = { version = "0.2", path = "../checkpoint",  optional = true }
+gossan-synscan     = { version = "0.2", path = "../synscan",     optional = true }
+gossan-headless    = { version = "0.2", path = "../headless",    optional = true }
+gossan-crawl       = { version = "0.2", path = "../crawl",       optional = true }
+
+async-trait        = { workspace = true }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+anyhow             = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tokio              = { workspace = true }
+clap               = { workspace = true }
+indicatif          = { workspace = true }
+chrono             = { workspace = true }
+uuid               = { workspace = true }
+rustls             = { workspace = true }
+santh-output       = { workspace = true }
+secfinding         = { workspace = true }
+scantarget         = { workspace = true }
+scanclient         = { workspace = true }

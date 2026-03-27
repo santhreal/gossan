@@ -1,0 +1,23 @@
+# gossan community CVE rules — example
+#
+# Drop *.toml files in this directory to extend gossan's CVE banner detection.
+# Each file must contain a [[rule]] array. All fields except `exploit` are required.
+#
+# The tool loads all *.toml in this directory at startup and merges them with
+# the compiled-in built-in rules. Adding a rule requires ZERO Rust knowledge.
+#
+# Fields:
+#   pattern     — substring to match in the TCP banner (case-insensitive)
+#   cve         — CVE identifier
+#   cvss        — CVSS v3 base score (float)
+#   severity    — one of: info, low, medium, high, critical
+#   description — human-readable description
+#   exploit     — (optional) ready-to-run PoC command. TARGET is replaced at runtime.
+
+# [[rule]]
+# pattern = "myservice/1.0"
+# cve = "CVE-2025-XXXXX"
+# cvss = 8.5
+# severity = "high"
+# description = "MyService 1.0 — example vulnerability description."
+# exploit = "curl http://TARGET/exploit-path"

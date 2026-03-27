@@ -1,0 +1,14 @@
+[package]
+name    = "gossan-correlation"
+version.workspace = true
+edition.workspace = true
+description      = "Cross-module finding correlation engine for gossan (attack chain detection)"
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+gossan-core = { version = "0.2", path = "../core" }
+tracing     = { workspace = true }
+secfinding  = { workspace = true }

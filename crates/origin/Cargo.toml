@@ -1,0 +1,36 @@
+[package]
+name = "gossan-origin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Discovers the true origin IP of web assets behind CDNs/WAFs"
+keywords = ["security", "origin-ip", "cdn-bypass", "waf", "recon"]
+categories = ["network-programming", "command-line-utilities"]
+
+[dependencies]
+gossan-core = { version = "0.2", path = "../core" }
+reqwest = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+hickory-resolver = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+tokio = { workspace = true }
+urlencoding = "2"
+base64 = { workspace = true }
+
+[features]
+default = [
+    "dns_misconfig",
+    "ssl_cert",
+    "http_header",
+    "favicon",
+    "dns_history",
+]
+dns_misconfig = []
+ssl_cert = []
+http_header = []
+favicon = []
+dns_history = []

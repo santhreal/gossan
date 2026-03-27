@@ -1,0 +1,27 @@
+[package]
+name    = "gossan-portscan"
+version.workspace = true
+edition.workspace = true
+description      = "TCP port scanner with TLS inspection and banner grabbing for gossan"
+license.workspace = true
+readme = "README.md"
+keywords = ["security", "recon", "portscan", "tls", "scanner"]
+categories = ["command-line-utilities", "network-programming"]
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+gossan-core = { version = "0.2", path = "../core" }
+async-trait  = { workspace = true }
+anyhow       = { workspace = true }
+tracing      = { workspace = true }
+tokio        = { workspace = true }
+futures      = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls       = { workspace = true }
+x509-cert    = { workspace = true }
+chrono       = { workspace = true }
+serde        = { workspace = true }
+toml         = "0.8"
+sha2         = { workspace = true }
+secfinding   = { workspace = true }
