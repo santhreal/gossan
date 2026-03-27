@@ -139,17 +139,12 @@ async fn count_spf_lookups(
                     count += Box::pin(count_spf_lookups(resolver, child_spf, depth + 1)).await;
                 }
             }
-        } else if mechanism.starts_with("a:") || mechanism.starts_with("a/")
-            || mechanism == "a"
-        {
-            count += 1;
-        } else if mechanism.starts_with("mx:") || mechanism.starts_with("mx/")
+        } else if mechanism.starts_with("a:") || mechanism.starts_with("a/") || mechanism == "a"
+            || mechanism.starts_with("mx:") || mechanism.starts_with("mx/")
             || mechanism == "mx"
+            || mechanism.starts_with("ptr")
+            || mechanism.starts_with("exists:")
         {
-            count += 1;
-        } else if mechanism.starts_with("ptr") {
-            count += 1;
-        } else if mechanism.starts_with("exists:") {
             count += 1;
         } else if mechanism.starts_with("redirect=") {
             count += 1;

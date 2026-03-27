@@ -14,7 +14,7 @@ async-trait = { workspace = true }
 anyhow      = { workspace = true }
 tracing     = { workspace = true }
 tokio       = { workspace = true }
-stealthreq  = { workspace = true }
+upstream_reqwest = { workspace = true }
 futures     = { workspace = true }
 psl         = "2"
 secfinding  = { workspace = true }

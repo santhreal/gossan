@@ -10,8 +10,7 @@
 //! downstream vulnerability scanning (Karyx routing, Calyx templates, etc.).
 
 extern crate self as reqwest;
-pub use stealthreq::http::{Client, Method, Proxy, Request, Response, StatusCode, Url};
-pub use stealthreq::http::{header, redirect};
+pub use upstream_reqwest::{header, redirect, Client, Method, Proxy, Request, Response, StatusCode, Url};
 
 mod extract;
 

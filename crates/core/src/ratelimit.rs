@@ -22,6 +22,12 @@ use tokio::sync::RwLock;
 
 use crate::Config;
 
+fn is_timeout_error(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<upstream_reqwest::Error>()
+        .is_some_and(upstream_reqwest::Error::is_timeout)
+}
+
 /// Per-hostname rate limiter.  Creates an independent token-bucket governor for
 /// each unique hostname the first time it is seen; subsequent calls reuse it.
 pub struct HostRateLimiter {
@@ -162,11 +168,11 @@ where
                 tokio::time::sleep(delay).await;
             }
             Ok(resp) => return Ok(resp),
-            Err(e) if attempt + 1 < MAX_RETRIES && e.is_timeout() => {
+            Err(e) if attempt + 1 < MAX_RETRIES && is_timeout_error(&e) => {
                 let delay = Duration::from_millis(200 * 2u64.pow(attempt));
                 tokio::time::sleep(delay).await;
             }
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(e),
         }
     }
     anyhow::bail!("max retries exceeded for {url}")
