@@ -143,6 +143,65 @@ const PATTERNS: &[(&str, &str, Severity)] = &[
         "Supabase Project URL",
         Severity::Info,
     ),
+    // ── Twilio / Shopify / Datadog ──────────────────────────────────────────
+    (
+        r"AC[a-f0-9]{32}",
+        "Twilio Account SID",
+        Severity::High,
+    ),
+    (
+        r"shpat_[a-fA-F0-9]{32}",
+        "Shopify Admin API Token",
+        Severity::Critical,
+    ),
+    (
+        r"shpss_[a-fA-F0-9]{32}",
+        "Shopify Shared Secret",
+        Severity::Critical,
+    ),
+    (
+        r#"(?:DATADOG|DD|dd)[-_]?(?:API[-_]?KEY|api[-_]?key)\s*[:=]\s*['"]?([a-f0-9]{32})['"]?"#,
+        "Datadog API Key",
+        Severity::High,
+    ),
+    // ── Infrastructure tokens ───────────────────────────────────────────────
+    (
+        r#"(?:HEROKU|heroku)[-_]?(?:API[-_]?KEY|api[-_]?key)\s*[:=]\s*['"]?([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})['"]?"#,
+        "Heroku API Key",
+        Severity::High,
+    ),
+    (
+        r"(?:hvs|hvb|hvr)\.[a-zA-Z0-9_\-]{24,}",
+        "HashiCorp Vault Token",
+        Severity::Critical,
+    ),
+    // ── Azure ───────────────────────────────────────────────────────────────
+    (
+        r"AccountKey=[a-zA-Z0-9+/=]{88}",
+        "Azure Storage Account Key",
+        Severity::Critical,
+    ),
+    // ── CDN / Search / Chat ─────────────────────────────────────────────────
+    (
+        r#"(?:CLOUDFLARE|CF)_API_(?:TOKEN|KEY)\s*[:=]\s*['"]?([a-zA-Z0-9_\-]{37,})['"]?"#,
+        "Cloudflare API Token",
+        Severity::High,
+    ),
+    (
+        r#"(?:ALGOLIA|algolia)[-_]?(?:API[-_]?KEY|api[-_]?key|search[-_]?key)\s*[:=]\s*['"]?([a-f0-9]{20,})['"]?"#,
+        "Algolia API Key",
+        Severity::Medium,
+    ),
+    (
+        r#"(?:discord|DISCORD)(?:_TOKEN|TOKEN)\s*[:=]\s*['"]?([a-zA-Z0-9._\-]{50,})['"]?"#,
+        "Discord Bot Token",
+        Severity::High,
+    ),
+    (
+        r"[0-9]+:AA[a-zA-Z0-9_\-]{33}",
+        "Telegram Bot Token",
+        Severity::High,
+    ),
     // ── Internal infrastructure ─────────────────────────────────────────────
     (
         r"https?://(?:localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+)[:/]",
@@ -513,6 +572,71 @@ mod tests {
             "all {} patterns should compile, only {} did",
             PATTERNS.len(),
             rules().len()
+        );
+    }
+
+    // ── New pattern tests ───────────────────────────────────────────────────
+
+    #[test]
+    fn detects_twilio_account_sid() {
+        let sid = format!("AC{}", "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4");
+        let js = format!(r#"const twilioSid = "{sid}";"#);
+        let findings = scan("app.js", &js, &target());
+        assert!(
+            findings.iter().any(|f| f.title.contains("Twilio")),
+            "should detect Twilio Account SID"
+        );
+    }
+
+    #[test]
+    fn detects_shopify_admin_token() {
+        let token = format!("shpat_{}", "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4");
+        let js = format!(r#"const shopify = "{token}";"#);
+        let findings = scan("app.js", &js, &target());
+        assert!(
+            findings.iter().any(|f| f.title.contains("Shopify Admin")),
+            "should detect Shopify Admin API Token"
+        );
+    }
+
+    #[test]
+    fn detects_vault_token() {
+        let token = "hvs.abcdefghijklmnopqrstuvwxyz";
+        let js = format!(r#"const vault = "{token}";"#);
+        let findings = scan("app.js", &js, &target());
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.title.contains("Vault")),
+            "should detect HashiCorp Vault token"
+        );
+    }
+
+    #[test]
+    fn detects_azure_storage_key() {
+        let key = format!(
+            "AccountKey={}",
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        );
+        let js = format!(r#"const conn = "{key}";"#);
+        let findings = scan("app.js", &js, &target());
+        assert!(
+            findings.iter().any(|f| f.title.contains("Azure Storage")),
+            "should detect Azure Storage Account Key"
+        );
+    }
+
+    #[test]
+    fn detects_telegram_bot_token() {
+        let token = format!(
+            "123456789:AA{}",
+            "abcdefghijklmnopqrstuvwxyz1234567"
+        );
+        let js = format!(r#"const bot = "{token}";"#);
+        let findings = scan("app.js", &js, &target());
+        assert!(
+            findings.iter().any(|f| f.title.contains("Telegram")),
+            "should detect Telegram bot token"
         );
     }
 }

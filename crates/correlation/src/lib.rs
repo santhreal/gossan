@@ -15,7 +15,7 @@ use gossan_core::Target;
 #[allow(unused_imports)] // Severity is used by tests via `use super::*`
 use secfinding::{Finding, Severity};
 
-pub use rules::{AdminExposedRule, TlsWeaknessRule};
+pub use rules::{AdminExposedRule, SourceCodeSecretsRule, SsrfInternalRule, TlsWeaknessRule};
 
 /// A correlation rule inspects the full finding + target set and returns
 /// zero or more new "chain" findings.
@@ -35,7 +35,12 @@ impl CorrelationEngine {
     /// Construct an engine with all built-in rules registered.
     pub fn new() -> Self {
         Self {
-            rules: vec![Box::new(TlsWeaknessRule), Box::new(AdminExposedRule)],
+            rules: vec![
+                Box::new(TlsWeaknessRule),
+                Box::new(AdminExposedRule),
+                Box::new(SsrfInternalRule),
+                Box::new(SourceCodeSecretsRule),
+            ],
         }
     }
 
@@ -83,7 +88,7 @@ mod tests {
     #[test]
     fn correlation_engine_runs_all_rules() {
         let engine = CorrelationEngine::new();
-        assert_eq!(engine.rules.len(), 2, "all 2 rules should be registered");
+        assert_eq!(engine.rules.len(), 4, "all 4 rules should be registered");
     }
 
     #[test]
