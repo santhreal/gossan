@@ -32,6 +32,20 @@ pub enum DiscoverySource {
     SecurityTrails,
     Shodan,
     GitHub,
+    Censys,
+    BinaryEdge,
+    FullHunt,
+    Chaos,
+    Bevigil,
+    Fofa,
+    HunterIo,
+    Netlas,
+    ZoomEye,
+    C99,
+    Quake,
+    ThreatBook,
+    // Passive sources (no API key / scraping)
+    DnsDumpster,
 }
 
 /// A discovered domain — the entry point for most scans.
