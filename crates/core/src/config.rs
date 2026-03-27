@@ -8,20 +8,22 @@ use crate::Severity;
 
 /// API keys for optional paid/rate-limited subdomain sources.
 /// All fields also read from environment variables (takes precedence over struct values).
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ApiKeys {
-    /// VirusTotal — $VT_API_KEY. Free tier: 500 req/day, 4 req/min.
+    /// VirusTotal — `$VT_API_KEY`. Free tier: 500 req/day, 4 req/min.
     pub virustotal: Option<String>,
-    /// SecurityTrails — $ST_API_KEY.
+    /// SecurityTrails — `$ST_API_KEY`.
     pub securitytrails: Option<String>,
-    /// Shodan — $SHODAN_API_KEY.
+    /// Shodan — `$SHODAN_API_KEY`.
     pub shodan: Option<String>,
-    /// GitHub personal access token — $GITHUB_TOKEN. Used for code-search subdomain discovery.
+    /// GitHub personal access token — `$GITHUB_TOKEN`. Used for code-search subdomain discovery.
     pub github: Option<String>,
 }
 
 impl ApiKeys {
     /// Load API keys from environment variables, overriding any struct values.
+    #[must_use]
     pub fn resolve(mut self) -> Self {
         if let Ok(v) = std::env::var("VT_API_KEY") {
             self.virustotal = Some(v);
@@ -108,6 +110,7 @@ pub struct Config {
 
 impl Config {
     /// Per-request timeout as a [`Duration`].
+    #[must_use]
     pub fn timeout(&self) -> Duration {
         Duration::from_secs(self.timeout_secs)
     }
@@ -175,6 +178,7 @@ impl Default for Config {
 ///
 /// Each field corresponds to a scanner crate. Use [`ModuleConfig::all`] to
 /// enable everything.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ModuleConfig {
     /// Subdomain enumeration (passive + brute-force).
@@ -191,7 +195,7 @@ pub struct ModuleConfig {
     pub hidden: bool,
     /// Cloud storage bucket discovery (S3, GCS, Azure, DO Spaces).
     pub cloud: bool,
-    /// Raw SYN port scanning (requires root/CAP_NET_RAW).
+    /// Raw SYN port scanning (requires root/`CAP_NET_RAW`).
     pub synscan: bool,
     /// Headless browser rendering and XHR trapping.
     pub headless: bool,
@@ -201,6 +205,7 @@ pub struct ModuleConfig {
 
 impl ModuleConfig {
     /// Returns a config with every scanner module enabled.
+    #[must_use]
     pub fn all() -> Self {
         Self {
             subdomain: true,

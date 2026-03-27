@@ -1,64 +1,57 @@
-github.io:GitHub Pages
-herokuapp.com:Heroku
+agilecrm.com:AgileCRM
 amazonaws.com:AWS S3/Elastic Beanstalk
-cloudapp.net:Azure Cloud App
+apigee.net:Apigee
 azurewebsites.net:Azure Web App
-trafficmanager.net:Azure Traffic Manager
-fastly.net:Fastly CDN
-sendgrid.net:SendGrid
-helpscoutdocs.com:HelpScout
-ghost.io:Ghost
-surge.sh:Surge
-netlify.app:Netlify
-render.com:Render
-fly.dev:Fly.io
-vercel.app:Vercel
-pantheonsite.io:Pantheon
-zendesk.com:Zendesk
-freshdesk.com:Freshdesk
-intercom.io:Intercom
-strikingly.com:Strikingly
+bigcartel.com:BigCartel
 bitbucket.io:Bitbucket Pages
-readme.io:Readme.io
-desk.com:Desk
-ghost.io:Ghost
-cargo.site:Cargo Collective
-cargocollective.com:Cargo Collective
-kinsta.com:Kinsta
-launchrock.com:Launchrock
-pingdom.com:Pingdom
-vwo.com:Visual Website Optimizer
-wufoo.com:Wufoo
-uservoice.com:UserVoice
-webflow.com:Webflow
+bounceme.net:Bounceme
+bta.sh:Besy
 campaignmonitor.com:Campaign Monitor
-statuspage.io:StatusPage
+canny.io:Canny
+cargocollective.com:Cargo Collective
+cargo.site:Cargo Collective
+cloudapp.net:Azure Cloud App
 createsend.com:Campaign Monitor
+desk.com:Desk
+fastly.net:Fastly CDN
+fly.dev:Fly.io
+freshdesk.com:Freshdesk
+frontify.com:Frontify
+getresponse.com:GetResponse
+ghost.io:Ghost
+github.io:GitHub Pages
+helpscoutdocs.com:HelpScout
+herokuapp.com:Heroku
+hubspot.net:HubSpot
+intercom.io:Intercom
+kinsta.com:Kinsta
+kustomer.com:Kustomer
+landingi.com:Landingi
+launchrock.com:Launchrock
+mashery.com:Mashery
 myshopify.com:Shopify
+netlify.app:Netlify
+pantheonsite.io:Pantheon
+pingdom.com:Pingdom
+readme.io:Readme.io
+render.com:Render
+retool.com:Retool
+sendgrid.net:SendGrid
+smugmug.com:SmugMug
+squarespace.com:Squarespace
+statuspage.io:StatusPage
+strikingly.com:Strikingly
+surge.sh:Surge
+thinkific.com:Thinkific
+trafficmanager.net:Azure Traffic Manager
+uberflip.com:Uberflip
+unbouncepages.com:Unbounce
+uservoice.com:UserVoice
+vercel.app:Vercel
+vwo.com:Visual Website Optimizer
+webflow.com:Webflow
 wix.com:Wix
 wixsite.com:Wix
-squarespace.com:Squarespace
-thinkific.com:Thinkific
 wordpress.com:WordPress
-unbouncepages.com:Unbounce
-landingi.com:Landingi
-smugmug.com:SmugMug
-bigcartel.com:BigCartel
-hubspot.net:HubSpot
-bounceme.net:Bounceme
+wufoo.com:Wufoo
 zendesk.com:Zendesk
-freshdesk.com:Freshdesk
-cargocollective.com:Cargo Collective
-bta.sh:Besy
-bta.sh:bta.sh
-frontify.com:Frontify
-canny.io:Canny
-retool.com:Retool
-apigee.net:Apigee
-mashery.com:Mashery
-agilecrm.com:AgileCRM
-getresponse.com:GetResponse
-kustomer.com:Kustomer
-uberflip.com:Uberflip
-strikingly.com:Strikingly
-readme.io:Readme.io
