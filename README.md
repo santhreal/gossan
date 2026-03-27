@@ -2,10 +2,9 @@
 
 # gossan
 
-**Fast, modular attack surface discovery.** Subdomains, ports, tech stack, hidden paths, cloud assets, DNS security, origin IP — all in one scan.
+[![CI](https://github.com/santhsecurity/gossan/actions/workflows/ci.yml/badge.svg)](https://github.com/santhsecurity/gossan/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Crates.io](https://img.shields.io/crates/v/gossan)](https://crates.io/crates/gossan)
 
-[![CI](https://github.com/santhsecurity/gossan/actions/workflows/ci.yml/badge.svg)](https://github.com/santhsecurity/gossan/actions)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+**Fast, modular attack surface discovery.** Subdomains, ports, tech stack, hidden paths, cloud assets, DNS security, origin IP — all in one scan.
 
 ## Install
 

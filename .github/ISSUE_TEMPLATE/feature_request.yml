@@ -1,0 +1,69 @@
+name: Feature Request
+description: Suggest a new feature or enhancement
+title: "[FEATURE] "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature! Please provide as much detail as possible to help us understand and evaluate your request.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What problem are you trying to solve? What pain point do you have?
+      placeholder: Describe the problem or limitation you're facing...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe the solution you'd like to see
+      placeholder: Describe what you want to happen...
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: What alternative solutions or workarounds have you considered?
+      placeholder: Describe any alternative approaches...
+
+  - type: textarea
+    id: usecase
+    attributes:
+      label: Use Case
+      description: Provide a concrete example of how you would use this feature
+      placeholder: |
+        As a [type of user], I want to [perform some action] so that [achieve some goal].
+        
+        Example:
+        ```rust
+        // Show how the API might look
+        ```
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission Checklist
+      description: Please confirm the following
+      options:
+        - label: I have searched existing issues to ensure this is not a duplicate
+          required: true
+        - label: This feature aligns with the project's goals and architecture
+          required: true
+        - label: I am willing to contribute to the implementation (optional)
+          required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other context, mockups, or references
+      placeholder: Diagrams, links to similar features in other projects, etc.
