@@ -2,8 +2,10 @@
 //! Queries the latest CommonCrawl index for URLs matching *.{domain}
 //! and extracts unique hostnames.
 
-use gossan_core::{Config, DiscoverySource, DomainTarget, Target};
+use gossan_core::{Config, DiscoverySource, DomainTarget, HostRateLimiter, Target};
 use serde::Deserialize;
+
+use crate::{get_text, is_subdomain_of};
 
 #[derive(Deserialize)]
 struct CdxRecord {
@@ -14,6 +16,7 @@ pub async fn query(
     domain: &str,
     _config: &Config,
     client: &reqwest::Client,
+    rate_limiter: &HostRateLimiter,
 ) -> anyhow::Result<Vec<Target>> {
     // Query the latest available index; fl=url limits response to URL field only
     let url = format!(
@@ -21,7 +24,7 @@ pub async fn query(
         domain
     );
 
-    let text = client.get(&url).send().await?.text().await?;
+    let text = get_text(client, &url, rate_limiter).await?;
 
     // Response is NDJSON (one JSON object per line)
     let mut targets = Vec::new();
@@ -36,7 +39,7 @@ pub async fn query(
             continue;
         };
         let host = host.trim().to_lowercase();
-        if host.ends_with(domain) && host.len() > domain.len() {
+        if is_subdomain_of(&host, domain) {
             targets.push(Target::Domain(DomainTarget {
                 domain: host,
                 source: DiscoverySource::CommonCrawl,

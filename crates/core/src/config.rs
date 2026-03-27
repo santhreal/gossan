@@ -93,6 +93,9 @@ pub struct Config {
     pub user_agent: String,
     /// Optional HTTP proxy for all outbound requests.
     pub proxy: Option<String>,
+    /// Accept invalid HTTPS certificates. Disabled by default.
+    #[serde(default)]
+    pub insecure_tls: bool,
     /// Optional Cookie header for authenticated crawling.
     pub cookie: Option<String>,
     pub modules: ModuleConfig,
@@ -163,6 +166,7 @@ impl Default for Config {
             )
             .to_string(),
             proxy: None,
+            insecure_tls: false,
             cookie: None,
             modules: ModuleConfig::default(),
             output: OutputConfig::default(),

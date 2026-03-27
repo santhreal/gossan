@@ -18,7 +18,7 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use gossan_core::{Config, DiscoverySource, DomainTarget, ScanInput, Scanner, Target};
-use secfinding::{Finding, Severity};
+use secfinding::{Evidence, Finding, Severity};
 
 #[cfg(feature = "checkpoint")]
 use gossan_checkpoint::CheckpointStore;
@@ -84,15 +84,21 @@ fn finish(pb: &ProgressBar, msg: &str) {
 
 fn dedup(mut findings: Vec<Finding>) -> Vec<Finding> {
     let mut seen = HashSet::new();
-    findings.retain(|f| {
-        seen.insert(format!(
-            "{}|{}|{}",
-            f.scanner,
-            f.target.as_str(),
-            f.title.to_lowercase()
-        ))
-    });
+    findings.retain(|f| seen.insert(finding_dedup_key(f)));
     findings
+}
+
+fn finding_dedup_key(f: &Finding) -> String {
+    let evidence = serde_json::to_string(&f.evidence).unwrap_or_default();
+    format!(
+        "{}|{}|{}|{}|{}|{}",
+        f.scanner,
+        f.target.as_str(),
+        f.title.to_lowercase(),
+        f.detail.to_lowercase(),
+        evidence,
+        f.exploit_hint.as_deref().unwrap_or_default()
+    )
 }
 
 fn apply_min_severity(findings: Vec<Finding>, min: Option<Severity>) -> Vec<Finding> {
@@ -113,13 +119,56 @@ fn dedup_web_assets(targets: Vec<Target>) -> Vec<Target> {
                 let ip = w.service.host.ip;
                 let port = w.service.port;
                 let hash = w.body_hash.as_deref().unwrap_or("nohash");
-                let key = format!("{}:{}-{}-{}", ip, port, w.status, hash);
+                let hostname = w.url.host_str().unwrap_or_default().to_lowercase();
+                let key = format!("{}|{}:{}-{}-{}", hostname, ip, port, w.status, hash);
                 seen.insert(key)
             } else {
                 true
             }
         })
         .collect()
+}
+
+fn make_subdomain_discovery_findings(targets: &[Target]) -> Vec<Finding> {
+    targets
+        .iter()
+        .filter_map(|target| {
+            let Target::Domain(d) = target else {
+                return None;
+            };
+            let source_label = format!("{:?}", d.source)
+                .to_lowercase()
+                .replace("discoverysource::", "");
+            Some(
+                Finding::builder("subdomain", d.domain.as_str(), Severity::Info)
+                    .title(format!("Subdomain: {}", d.domain))
+                    .detail(format!("Discovered via {}", source_label))
+                    .tag("subdomain")
+                    .tag("discovery")
+                    .evidence(Evidence::Raw(format!("source={source_label}")))
+                    .build()
+                    .expect("finding builder: required fields are set"),
+            )
+        })
+        .collect()
+}
+
+fn target_streaming_key(target: &Target) -> String {
+    match target {
+        Target::Domain(d) => format!("domain:{}", d.domain.to_lowercase()),
+        Target::Host(h) => format!(
+            "host:{}:{}",
+            h.ip,
+            h.domain.as_deref().unwrap_or_default().to_lowercase()
+        ),
+        Target::Service(s) => format!(
+            "service:{}:{}:{}",
+            s.host.ip,
+            s.port,
+            s.host.domain.as_deref().unwrap_or_default().to_lowercase()
+        ),
+        Target::Web(w) => format!("web:{}", w.url),
+    }
 }
 
 fn broadcast(tx: &tokio::sync::mpsc::UnboundedSender<Finding>, findings: &[Finding]) {
@@ -226,6 +275,53 @@ pub async fn run_full(
 
     let mut all_findings: Vec<Finding> = Vec::new();
     let mut all_targets: Vec<Target> = vec![seed_target(seed)];
+    let _stream_portscan = cfg!(feature = "subdomain")
+        && cfg!(feature = "portscan")
+        && config.modules.subdomain
+        && config.modules.portscan
+        && restored!("subdomain").is_none()
+        && restored!("portscan").is_none();
+    #[cfg(all(feature = "subdomain", feature = "portscan"))]
+    let mut streaming_portscan = if _stream_portscan {
+        let (target_tx, mut target_rx) = tokio::sync::mpsc::unbounded_channel::<Target>();
+        let _ = target_tx.send(seed_target(seed));
+        let seed = seed.to_string();
+        let config = config.clone();
+        let live_tx = live_tx.clone();
+        Some((
+            target_tx,
+            tokio::spawn(async move {
+                let mut out = gossan_core::ScanOutput::empty();
+                let mut seen = HashSet::new();
+                while let Some(target) = target_rx.recv().await {
+                    if !seen.insert(target_streaming_key(&target)) {
+                        continue;
+                    }
+                    let stage_out = PortScanner
+                        .run(
+                            ScanInput {
+                                seed: seed.clone(),
+                                targets: vec![target],
+                                live_tx: Some(live_tx.clone()),
+                                target_tx: None,
+                            },
+                            &config,
+                        )
+                        .await?;
+                    out.findings.extend(stage_out.findings);
+                    out.targets.extend(stage_out.targets);
+                }
+                Ok::<gossan_core::ScanOutput, anyhow::Error>(out)
+            }),
+        ))
+    } else {
+        None
+    };
+    #[cfg(not(all(feature = "subdomain", feature = "portscan")))]
+    let mut streaming_portscan: Option<(
+        tokio::sync::mpsc::UnboundedSender<Target>,
+        tokio::task::JoinHandle<anyhow::Result<gossan_core::ScanOutput>>,
+    )> = None;
 
     // ── Stage 1: Subdomain (streaming) ───────────────────────────────────
     #[cfg(feature = "subdomain")]
@@ -239,6 +335,7 @@ pub async fn run_full(
                     r.targets.len()
                 );
                 all_findings.extend(r.findings.clone());
+                all_findings.extend(make_subdomain_discovery_findings(&r.targets));
                 all_targets.extend(r.targets.clone());
             }
         } else {
@@ -249,19 +346,21 @@ pub async fn run_full(
                         seed: seed.to_string(),
                         targets: all_targets.clone(),
                         live_tx: Some(live_tx.clone()),
-                        target_tx: None,
+                        target_tx: streaming_portscan.as_ref().map(|(tx, _)| tx.clone()),
                     },
                     &config,
                 )
                 .await?;
 
             let n = out.targets.len();
-            broadcast(&live_tx, &out.findings);
+            let mut stage_findings = out.findings;
+            stage_findings.extend(make_subdomain_discovery_findings(&out.targets));
+            broadcast(&live_tx, &stage_findings);
             #[cfg(feature = "checkpoint")]
             if let Some(cp) = &checkpointer {
-                cp.save("subdomain", &out.targets, &out.findings);
+                cp.save("subdomain", &out.targets, &stage_findings);
             }
-            all_findings.extend(out.findings);
+            all_findings.extend(stage_findings);
             all_targets.extend(out.targets);
             finish(
                 &pb,
@@ -284,6 +383,28 @@ pub async fn run_full(
                 all_findings.extend(r.findings.clone());
                 all_targets.extend(r.targets.clone());
             }
+        } else if let Some((target_tx, handle)) = streaming_portscan.take() {
+            let pb = spinner(&mp, "portscan   · streaming discovered hosts");
+            drop(target_tx);
+            let out = handle.await??;
+            let (svcs, nf) = (out.targets.len(), out.findings.len());
+            broadcast(&live_tx, &out.findings);
+            #[cfg(feature = "checkpoint")]
+            if let Some(cp) = &checkpointer {
+                cp.save("portscan", &out.targets, &out.findings);
+            }
+            all_findings.extend(out.findings);
+            all_targets.extend(out.targets);
+            finish(
+                &pb,
+                &format!(
+                    "portscan   → {} open port{}  ({} finding{})",
+                    svcs,
+                    if svcs == 1 { "" } else { "s" },
+                    nf,
+                    if nf == 1 { "" } else { "s" }
+                ),
+            );
         } else {
             let t = all_targets
                 .iter()
@@ -983,14 +1104,10 @@ async fn dispatch_module(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gossan_core::{DiscoverySource, DomainTarget, Target};
-    use secfinding::{Finding, Severity};
+    use gossan_core::Target;
+    use secfinding::{Evidence, Finding, Severity};
 
     fn finding(title: &str, severity: Severity) -> Finding {
-        let _ = Target::Domain(DomainTarget {
-            domain: "example.com".into(),
-            source: DiscoverySource::Seed,
-        });
         Finding::builder("test", "example.com", severity)
             .title(title.to_string())
             .detail("detail".to_string())
@@ -1012,6 +1129,24 @@ mod tests {
         let a = finding("SQL Injection", Severity::High);
         let b = finding("sql injection", Severity::High);
         assert_eq!(dedup(vec![a, b]).len(), 1);
+    }
+
+    #[test]
+    fn dedup_keeps_findings_with_distinct_evidence_scope() {
+        let a = Finding::builder("test", "example.com", Severity::High)
+            .title("SQL injection")
+            .detail("param id")
+            .evidence(Evidence::Raw("GET /?id=1".into()))
+            .build()
+            .expect("finding builder: required fields are set");
+        let b = Finding::builder("test", "example.com", Severity::High)
+            .title("SQL injection")
+            .detail("param user_id")
+            .evidence(Evidence::Raw("GET /?user_id=1".into()))
+            .build()
+            .expect("finding builder: required fields are set");
+
+        assert_eq!(dedup(vec![a, b]).len(), 2);
     }
 
     #[test]
@@ -1047,6 +1182,54 @@ mod tests {
                 assert_eq!(s.host.domain.as_deref(), Some("example.com"));
             }
         }
+    }
+
+    #[test]
+    fn dedup_web_assets_keeps_distinct_hostnames() {
+        use gossan_core::{HostTarget, Protocol, ServiceTarget, WebAssetTarget};
+        use std::net::{IpAddr, Ipv4Addr};
+
+        let ip = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10));
+        let service = ServiceTarget {
+            host: HostTarget {
+                ip,
+                domain: Some("a.example.com".into()),
+            },
+            port: 443,
+            protocol: Protocol::Tcp,
+            banner: None,
+            tls: true,
+        };
+        let first = Target::Web(Box::new(WebAssetTarget {
+            url: url::Url::parse("https://a.example.com").unwrap(),
+            service: service.clone(),
+            tech: vec![],
+            status: 200,
+            title: None,
+            favicon_hash: None,
+            body_hash: Some("same".into()),
+            forms: vec![],
+            params: vec![],
+        }));
+        let second = Target::Web(Box::new(WebAssetTarget {
+            url: url::Url::parse("https://b.example.com").unwrap(),
+            service: ServiceTarget {
+                host: HostTarget {
+                    ip,
+                    domain: Some("b.example.com".into()),
+                },
+                ..service
+            },
+            tech: vec![],
+            status: 200,
+            title: None,
+            favicon_hash: None,
+            body_hash: Some("same".into()),
+            forms: vec![],
+            params: vec![],
+        }));
+
+        assert_eq!(dedup_web_assets(vec![first, second]).len(), 2);
     }
 
     #[test]
