@@ -9,8 +9,7 @@
 //! 2. Add it to [`providers()`] — that's the only change needed in this file.
 
 extern crate self as reqwest;
-pub use stealthreq::http::{Client, Method, Proxy, Request, Response, StatusCode, Url};
-pub use stealthreq::http::{header, redirect};
+pub use upstream_reqwest::{header, redirect, Client, Method, Proxy, Request, Response, StatusCode, Url};
 
 mod azure;
 mod common;

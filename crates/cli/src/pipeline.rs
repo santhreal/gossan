@@ -1104,7 +1104,7 @@ async fn dispatch_module(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gossan_core::Target;
+    use gossan_core::{Target, Url};
     use secfinding::{Evidence, Finding, Severity};
 
     fn finding(title: &str, severity: Severity) -> Finding {
@@ -1201,7 +1201,7 @@ mod tests {
             tls: true,
         };
         let first = Target::Web(Box::new(WebAssetTarget {
-            url: url::Url::parse("https://a.example.com").unwrap(),
+            url: Url::parse("https://a.example.com").unwrap(),
             service: service.clone(),
             tech: vec![],
             status: 200,
@@ -1212,7 +1212,7 @@ mod tests {
             params: vec![],
         }));
         let second = Target::Web(Box::new(WebAssetTarget {
-            url: url::Url::parse("https://b.example.com").unwrap(),
+            url: Url::parse("https://b.example.com").unwrap(),
             service: ServiceTarget {
                 host: HostTarget {
                     ip,

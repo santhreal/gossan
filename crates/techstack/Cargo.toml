@@ -10,14 +10,14 @@ categories.workspace = true
 
 [dependencies]
 gossan-core = { version = "0.2", path = "../core" }
-truestack    = { version = "0.1", path = "../../../truestack" }
+truestack    = "0.1.0"
 async-trait = { workspace = true }
 serde       = { workspace = true }
 serde_json  = { workspace = true }
 anyhow      = { workspace = true }
 tracing     = { workspace = true }
 tokio       = { workspace = true }
-stealthreq  = { workspace = true }
+upstream_reqwest = { workspace = true }
 futures     = { workspace = true }
 sha2        = { workspace = true }
 hex         = { workspace = true }
