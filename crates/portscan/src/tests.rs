@@ -34,7 +34,7 @@ fn scanner_accepts_domains_and_hosts_only() {
 fn risky_ports_list_contains_high_value_targets() {
     for port in [23, 2375, 6379, 9200, 10250, 30303] {
         assert!(
-            RISKY.iter().any(|r| r.port == port),
+            rules::risky_services().iter().any(|r| r.port == port),
             "missing risky port {port}"
         );
     }
@@ -125,22 +125,23 @@ fn port_mode_custom_can_represent_explicit_ranges() {
 fn top_ports_tables_are_nonempty_and_unique() {
     use std::collections::HashSet;
 
-    assert!(!top_ports::TOP_100.is_empty());
-    assert!(!top_ports::TOP_1000.is_empty());
+    assert!(!rules::top_100().is_empty());
+    assert!(!rules::top_1000().is_empty());
     assert_eq!(
-        top_ports::TOP_100.iter().collect::<HashSet<_>>().len(),
-        top_ports::TOP_100.len()
+        rules::top_100().iter().collect::<HashSet<_>>().len(),
+        rules::top_100().len()
     );
     assert_eq!(
-        top_ports::TOP_1000.iter().collect::<HashSet<_>>().len(),
-        top_ports::TOP_1000.len()
+        rules::top_1000().iter().collect::<HashSet<_>>().len(),
+        rules::top_1000().len()
     );
 }
 
 #[test]
 fn default_portset_includes_common_web_and_database_ports() {
+    let ports = rules::default_ports();
     for port in [80, 443, 5432, 6379, 8080] {
-        assert!(PORTS.contains(&port), "missing default port {port}");
+        assert!(ports.contains(&port), "missing default port {port}");
     }
 }
 
