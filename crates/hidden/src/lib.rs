@@ -7,10 +7,15 @@
 //!   OAuth/OIDC misconfiguration · API version enumeration · rate limit absence ·
 //!   cookie security flags · dependency confusion · tech-specific CMS probes
 
+extern crate self as reqwest;
+pub use stealthreq::http::{Client, Method, Proxy, Request, Response, StatusCode, Url};
+pub use stealthreq::http::{header, redirect};
+
 mod api_versions;
 mod cookies;
 mod cors;
 mod csp;
+mod debug_endpoints;
 mod error_disclosure;
 mod favicon;
 mod git_env;
@@ -111,6 +116,9 @@ impl Scanner for HiddenScanner {
                     if let Target::Web(asset) = &target {
                         f.extend(tech_probes::probe(&cf, asset, &target).await);
                     }
+
+                    // ── Debug/monitoring endpoint exposure ──────────────────────────
+                    run_probe!("debug_endpoints", debug_endpoints::probe(&cf, &target));
 
                     f
                 }

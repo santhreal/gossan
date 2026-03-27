@@ -17,6 +17,10 @@
 //! | Favicon hash (Shodan) | `favicon` | Optional | 80 |
 //! | DNS history (SecurityTrails/ViewDNS) | `dns_history` | Optional | 85-90 |
 
+extern crate self as reqwest;
+pub use stealthreq::http::{Client, Method, Proxy, Request, Response, StatusCode, Url};
+pub use stealthreq::http::{header, redirect};
+
 pub mod scanners;
 pub mod types;
 

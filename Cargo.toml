@@ -37,7 +37,7 @@ thiserror    = "1"
 anyhow       = "1"
 tracing      = "0.1"
 url          = { version = "2", features = ["serde"] }
-reqwest      = { version = "0.12", features = ["rustls-tls", "http2", "gzip", "json"], default-features = false }
+stealthreq   = { path = "../../libs/offensive/stealthreq" }
 futures      = "0.3"
 indicatif    = { version = "0.17", features = ["rayon"] }
 governor     = "0.6"
@@ -60,3 +60,5 @@ scantarget = { version = "0.2", path = "../../libs/scanner/scantarget" }
 scanclient = { version = "0.2", path = "../../libs/scanner/scanclient" }
 codewalk = { path = "../../libs/runtime/codewalk" }
 multimatch = { path = "../../libs/offensive/multimatch" }
+scanstate = { path = "../../libs/scanner/scanstate" }
+runtime-headless = { path = "../../libs/runtime/headless" }

@@ -496,7 +496,10 @@ mod tests {
 
     #[test]
     fn sendgrid_key_detected() {
-        let sg_key = format!("SG.ngeVfQFYQlKU0ufo8x5d1A.{}", "TwL2iGABf9DHoTf-09kqeF8tAmbihYzrnopKc-1s5cr");
+        let sg_key = format!(
+            "SG.ngeVfQFYQlKU0ufo8x5d1A.{}",
+            "TwL2iGABf9DHoTf-09kqeF8tAmbihYzrnopKc-1s5cr"
+        );
         let js = format!(r#"const sg = "{sg_key}";"#);
         let findings = scan("app.js", &js, &target());
         assert!(findings.iter().any(|f| f.title.contains("SendGrid")));

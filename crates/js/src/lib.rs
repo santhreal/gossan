@@ -2,6 +2,10 @@
 //! Finds <script src> URLs, fetches each JS file, extracts endpoints,
 //! detects hardcoded secrets, and probes for source maps.
 
+extern crate self as reqwest;
+pub use stealthreq::http::{Client, Method, Proxy, Request, Response, StatusCode, Url};
+pub use stealthreq::http::{header, redirect};
+
 mod endpoints;
 mod secrets;
 mod wasm;

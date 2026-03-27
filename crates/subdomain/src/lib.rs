@@ -7,6 +7,10 @@
 //! Every confirmed target is emitted via `input.emit_target()` immediately
 //! so the port scanner can start while subdomain discovery is still running.
 
+extern crate self as reqwest;
+pub use stealthreq::http::{Client, Method, Proxy, Request, Response, StatusCode, Url};
+pub use stealthreq::http::{header, redirect};
+
 mod alienvault;
 mod bruteforce;
 mod certspotter;
