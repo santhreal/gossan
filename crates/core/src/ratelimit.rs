@@ -108,7 +108,10 @@ pub fn build_client(config: &Config, follow_redirects: bool) -> anyhow::Result<r
         .tcp_keepalive(Duration::from_secs(30));
 
     if let Some(proxy_url) = &config.proxy {
-        builder = builder.proxy(reqwest::Proxy::all(proxy_url)?);
+        let route = crate::net::build_proxy_route(Some(proxy_url))
+            .map_err(|e| anyhow::anyhow!("invalid proxy URL: {e}"))?;
+        builder = proxywire::apply_reqwest_route(builder, &route)
+            .map_err(|e| anyhow::anyhow!("proxy configuration failed: {e}"))?;
     }
 
     Ok(builder.build()?)

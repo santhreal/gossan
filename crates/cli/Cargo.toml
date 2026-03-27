@@ -2,7 +2,7 @@
 name = "gossan"
 version.workspace = true
 edition.workspace = true
-authors = ["Santh <contact@santh.io>"]
+authors = ["CORUM COLLECTIVE LLC <contact@santh.io>"]
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true

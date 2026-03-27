@@ -28,4 +28,4 @@ governor    = { workspace = true }
 nonzero_ext = { workspace = true }
 secfinding = { workspace = true }
 toml = "0.8"
-tokio-socks = "0.5"
+proxywire = { path = "../../../../libs/runtime/proxywire" }
