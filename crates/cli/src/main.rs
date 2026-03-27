@@ -88,25 +88,39 @@ struct Cli {
     )]
     ports: Option<String>,
 
-    // ── API keys (also read from env: VT_API_KEY, ST_API_KEY, SHODAN_API_KEY, GITHUB_TOKEN) ──
+    // ── API keys (also read from env vars) ──
     #[arg(long, global = true, env = "VT_API_KEY", help = "VirusTotal API key")]
     vt_key: Option<String>,
-    #[arg(
-        long,
-        global = true,
-        env = "ST_API_KEY",
-        help = "SecurityTrails API key"
-    )]
+    #[arg(long, global = true, env = "ST_API_KEY", help = "SecurityTrails API key")]
     st_key: Option<String>,
     #[arg(long, global = true, env = "SHODAN_API_KEY", help = "Shodan API key")]
     shodan_key: Option<String>,
-    #[arg(
-        long,
-        global = true,
-        env = "GITHUB_TOKEN",
-        help = "GitHub token for code-search subdomain discovery"
-    )]
+    #[arg(long, global = true, env = "GITHUB_TOKEN", help = "GitHub token for code-search subdomain discovery")]
     github_token: Option<String>,
+    #[arg(long, global = true, env = "CENSYS_API_KEY", help = "Censys API key (format: api_id:api_secret)")]
+    censys_key: Option<String>,
+    #[arg(long, global = true, env = "BINARYEDGE_API_KEY", help = "BinaryEdge API key")]
+    binaryedge_key: Option<String>,
+    #[arg(long, global = true, env = "FULLHUNT_API_KEY", help = "FullHunt API key")]
+    fullhunt_key: Option<String>,
+    #[arg(long, global = true, env = "CHAOS_API_KEY", help = "Chaos (ProjectDiscovery) API key")]
+    chaos_key: Option<String>,
+    #[arg(long, global = true, env = "BEVIGIL_API_KEY", help = "Bevigil API key")]
+    bevigil_key: Option<String>,
+    #[arg(long, global = true, env = "FOFA_API_KEY", help = "FOFA API key (format: email:key)")]
+    fofa_key: Option<String>,
+    #[arg(long, global = true, env = "HUNTER_API_KEY", help = "Hunter.io API key")]
+    hunter_key: Option<String>,
+    #[arg(long, global = true, env = "NETLAS_API_KEY", help = "Netlas API key")]
+    netlas_key: Option<String>,
+    #[arg(long, global = true, env = "ZOOMEYE_API_KEY", help = "ZoomEye API key")]
+    zoomeye_key: Option<String>,
+    #[arg(long, global = true, env = "C99_API_KEY", help = "C99 API key")]
+    c99_key: Option<String>,
+    #[arg(long, global = true, env = "QUAKE_API_KEY", help = "Quake (360) API key")]
+    quake_key: Option<String>,
+    #[arg(long, global = true, env = "THREATBOOK_API_KEY", help = "ThreatBook API key")]
+    threatbook_key: Option<String>,
 
     // ── Checkpoint / resume ────────────────────────────────────────────────
     #[arg(
@@ -246,6 +260,18 @@ async fn main() -> anyhow::Result<()> {
         securitytrails: cli.st_key,
         shodan: cli.shodan_key,
         github: cli.github_token,
+        censys: cli.censys_key,
+        binaryedge: cli.binaryedge_key,
+        fullhunt: cli.fullhunt_key,
+        chaos: cli.chaos_key,
+        bevigil: cli.bevigil_key,
+        fofa: cli.fofa_key,
+        hunter: cli.hunter_key,
+        netlas: cli.netlas_key,
+        zoomeye: cli.zoomeye_key,
+        c99: cli.c99_key,
+        quake: cli.quake_key,
+        threatbook: cli.threatbook_key,
     }
     .resolve(); // merge with env vars
 
