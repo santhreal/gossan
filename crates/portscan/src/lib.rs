@@ -2,9 +2,19 @@
 //! Probes common ports, reads first bytes to identify service version.
 //! On TLS ports: extracts cert SANs, expiry, and self-signed status.
 //! Emits findings for high-risk exposed services (Docker, k8s, Redis, etc.)
+//!
+//! # Configuration
+//!
+//! Port lists and risky service definitions are loaded from TOML files:
+//! - `rules/top_ports.toml` - Port list definitions (default, top_100, top_1000)
+//! - `rules/risky_services.toml` - High-risk service definitions
+//!
+//! Users can extend these by placing custom `*.toml` files in a `rules/` directory.
+//! See the `rules` module documentation for details.
 
 pub mod cve;
 pub mod jarm;
+pub mod rules;
 pub mod tls;
 pub mod top_ports;
 
@@ -19,64 +29,6 @@ use gossan_core::{
 use secfinding::{Evidence, Finding, FindingBuilder, Severity};
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
-
-const PORTS: &[u16] = &[
-    21, 22, 23, 25, 53, 80, 110, 143, 389, 443, 445, 465, 587, 636, 993, 995, 1433, 1521, 2181,
-    2375, 2376, 3000, 3306, 3389, 4369, 4443, 5432, 5601, 5900, 5984, 6379, 7001, 7474, 8000, 8080,
-    8086, 8443, 8545, 8546, 8888, 9000, 9090, 9092, 9200, 9300, 10250, 11211, 27017, 27018, 30303,
-    50070,
-];
-
-struct RiskyService {
-    port: u16,
-    name: &'static str,
-    severity: Severity,
-    detail: &'static str,
-}
-
-const RISKY: &[RiskyService] = &[
-    RiskyService { port: 2375, name: "Docker daemon (no TLS)", severity: Severity::Critical,
-        detail: "Docker API exposed without TLS — full container control and host escape possible." },
-    RiskyService { port: 2376, name: "Docker daemon (TLS)", severity: Severity::High,
-        detail: "Docker TLS API exposed — verify client certificate requirements." },
-    RiskyService { port: 6379, name: "Redis exposed", severity: Severity::Critical,
-        detail: "Redis port exposed — often unauthenticated, allows data exfiltration and RCE via cron/SSH key write." },
-    RiskyService { port: 9200, name: "Elasticsearch HTTP API", severity: Severity::High,
-        detail: "Elasticsearch REST API exposed — may allow unauthenticated data access." },
-    RiskyService { port: 9300, name: "Elasticsearch Transport", severity: Severity::High,
-        detail: "Elasticsearch transport port exposed — cluster join attacks possible." },
-    RiskyService { port: 27017, name: "MongoDB exposed", severity: Severity::Critical,
-        detail: "MongoDB port exposed — often unauthenticated, full database access." },
-    RiskyService { port: 5984, name: "CouchDB HTTP API", severity: Severity::High,
-        detail: "CouchDB HTTP API exposed — check for Futon/Fauxton admin interface." },
-    RiskyService { port: 10250, name: "Kubernetes kubelet API", severity: Severity::Critical,
-        detail: "Kubernetes kubelet API exposed — allows exec into pods and node metadata exfiltration." },
-    RiskyService { port: 4369, name: "Erlang EPMD exposed", severity: Severity::High,
-        detail: "Erlang EPMD exposed — enables RabbitMQ/Erlang cluster attacks." },
-    RiskyService { port: 2181, name: "ZooKeeper exposed", severity: Severity::High,
-        detail: "ZooKeeper port exposed — Kafka cluster metadata accessible." },
-    RiskyService { port: 9092, name: "Kafka broker exposed", severity: Severity::High,
-        detail: "Kafka broker port exposed — may allow unauthenticated message consumption/production." },
-    RiskyService { port: 11211, name: "Memcached exposed", severity: Severity::Critical,
-        detail: "Memcached exposed — plaintext key-value access, DDoS amplification vector." },
-    RiskyService { port: 50070, name: "Hadoop NameNode HTTP", severity: Severity::High,
-        detail: "Hadoop NameNode web UI exposed — filesystem metadata and HDFS access." },
-    RiskyService { port: 8086, name: "InfluxDB HTTP API", severity: Severity::High,
-        detail: "InfluxDB API exposed — check for unauthenticated time-series data access." },
-    RiskyService { port: 5601, name: "Kibana exposed", severity: Severity::Medium,
-        detail: "Kibana UI exposed — may allow Elasticsearch access and Console RCE." },
-    RiskyService { port: 7474, name: "Neo4j Browser exposed", severity: Severity::Medium,
-        detail: "Neo4j browser/HTTP API exposed — check authentication requirements." },
-    RiskyService { port: 23, name: "Telnet service", severity: Severity::Critical,
-        detail: "Telnet service exposed — plaintext protocol, immediate compromise risk." },
-    // Web3 / Blockchain
-    RiskyService { port: 8545, name: "Ethereum JSON-RPC exposed", severity: Severity::Critical,
-        detail: "Ethereum node JSON-RPC (geth/besu) exposed — unauthenticated access allows reading wallet balances, sending transactions, and draining funds. eth_sendTransaction with unlocked accounts = theft." },
-    RiskyService { port: 8546, name: "Ethereum WebSocket RPC exposed", severity: Severity::Critical,
-        detail: "Ethereum node WebSocket RPC exposed — same risk as HTTP JSON-RPC: wallet drain, transaction injection." },
-    RiskyService { port: 30303, name: "Ethereum P2P devp2p exposed", severity: Severity::Medium,
-        detail: "Ethereum P2P port exposed — allows peer discovery, chain sync analysis, and eclipse attacks on the node." },
-];
 
 /// TCP port scanner with banner grabbing, TLS inspection, and CVE correlation.
 ///
@@ -187,9 +139,9 @@ impl Scanner for PortScanner {
 
         let custom_buf: Vec<u16>;
         let active_ports: &[u16] = match &config.port_mode {
-            PortMode::Default => PORTS,
-            PortMode::Top100 => top_ports::TOP_100,
-            PortMode::Top1000 => top_ports::TOP_1000,
+            PortMode::Default => rules::default_ports(),
+            PortMode::Top100 => rules::top_100(),
+            PortMode::Top1000 => rules::top_1000(),
             PortMode::Full => {
                 custom_buf = (1u16..=65535).collect();
                 &custom_buf
@@ -272,9 +224,9 @@ async fn probe_port(
     let mut extra_targets: Vec<Target> = Vec::new();
 
     // Emit finding for high-risk port exposure
-    if let Some(r) = RISKY.iter().find(|r| r.port == port) {
+    if let Some(r) = rules::risky_services().iter().find(|r| r.port == port) {
         let target = Target::Service(svc.clone());
-        let mut f = finding_builder(&target, r.severity, r.name, r.detail)
+        let mut f = finding_builder(&target, r.severity, r.name.clone(), r.detail.clone())
             .tag("exposure")
             .tag("network");
         if let Some(b) = &banner {

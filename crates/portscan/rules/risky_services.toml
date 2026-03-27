@@ -1,0 +1,156 @@
+# Risky service definitions for port scanning.
+#
+# This file defines high-risk services that should be flagged when exposed.
+# Each service has a port, name, severity level, and detailed explanation.
+#
+# Users can extend these definitions by creating a custom TOML file and loading it
+# via the scanner configuration. Community contributions welcome!
+#
+# Severity levels: "info", "low", "medium", "high", "critical"
+#
+# Format:
+# [[service]]
+# port = 2375
+# name = "Docker daemon (no TLS)"
+# severity = "critical"
+# detail = "Description of the risk..."
+
+# Docker
+[[service]]
+port = 2375
+name = "Docker daemon (no TLS)"
+severity = "critical"
+detail = "Docker API exposed without TLS — full container control and host escape possible."
+
+[[service]]
+port = 2376
+name = "Docker daemon (TLS)"
+severity = "high"
+detail = "Docker TLS API exposed — verify client certificate requirements."
+
+# Data stores
+[[service]]
+port = 6379
+name = "Redis exposed"
+severity = "critical"
+detail = "Redis port exposed — often unauthenticated, allows data exfiltration and RCE via cron/SSH key write."
+
+[[service]]
+port = 9200
+name = "Elasticsearch HTTP API"
+severity = "high"
+detail = "Elasticsearch REST API exposed — may allow unauthenticated data access."
+
+[[service]]
+port = 9300
+name = "Elasticsearch Transport"
+severity = "high"
+detail = "Elasticsearch transport port exposed — cluster join attacks possible."
+
+[[service]]
+port = 27017
+name = "MongoDB exposed"
+severity = "critical"
+detail = "MongoDB port exposed — often unauthenticated, full database access."
+
+[[service]]
+port = 5984
+name = "CouchDB HTTP API"
+severity = "high"
+detail = "CouchDB HTTP API exposed — check for Futon/Fauxton admin interface."
+
+[[service]]
+port = 11211
+name = "Memcached exposed"
+severity = "critical"
+detail = "Memcached exposed — plaintext key-value access, DDoS amplification vector."
+
+[[service]]
+port = 8086
+name = "InfluxDB HTTP API"
+severity = "high"
+detail = "InfluxDB API exposed — check for unauthenticated time-series data access."
+
+[[service]]
+port = 7474
+name = "Neo4j Browser exposed"
+severity = "medium"
+detail = "Neo4j browser/HTTP API exposed — check authentication requirements."
+
+# Container orchestration
+[[service]]
+port = 10250
+name = "Kubernetes kubelet API"
+severity = "critical"
+detail = "Kubernetes kubelet API exposed — allows exec into pods and node metadata exfiltration."
+
+# Message queues
+[[service]]
+port = 4369
+name = "Erlang EPMD exposed"
+severity = "high"
+detail = "Erlang EPMD exposed — enables RabbitMQ/Erlang cluster attacks."
+
+[[service]]
+port = 2181
+name = "ZooKeeper exposed"
+severity = "high"
+detail = "ZooKeeper port exposed — Kafka cluster metadata accessible."
+
+[[service]]
+port = 9092
+name = "Kafka broker exposed"
+severity = "high"
+detail = "Kafka broker port exposed — may allow unauthenticated message consumption/production."
+
+# Big data
+[[service]]
+port = 50070
+name = "Hadoop NameNode HTTP"
+severity = "high"
+detail = "Hadoop NameNode web UI exposed — filesystem metadata and HDFS access."
+
+# Legacy protocols
+[[service]]
+port = 23
+name = "Telnet service"
+severity = "critical"
+detail = "Telnet service exposed — plaintext protocol, immediate compromise risk."
+
+# Web3 / Blockchain
+[[service]]
+port = 8545
+name = "Ethereum JSON-RPC exposed"
+severity = "critical"
+detail = "Ethereum node JSON-RPC (geth/besu) exposed — unauthenticated access allows reading wallet balances, sending transactions, and draining funds. eth_sendTransaction with unlocked accounts = theft."
+
+[[service]]
+port = 8546
+name = "Ethereum WebSocket RPC exposed"
+severity = "critical"
+detail = "Ethereum node WebSocket RPC exposed — same risk as HTTP JSON-RPC: wallet drain, transaction injection."
+
+[[service]]
+port = 30303
+name = "Ethereum P2P devp2p exposed"
+severity = "medium"
+detail = "Ethereum P2P port exposed — allows peer discovery, chain sync analysis, and eclipse attacks on the node."
+
+# Analytics and monitoring
+[[service]]
+port = 5601
+name = "Kibana exposed"
+severity = "medium"
+detail = "Kibana UI exposed — may allow Elasticsearch access and Console RCE."
+
+[[service]]
+port = 9000
+name = "Portainer/Dashboard exposed"
+severity = "high"
+detail = "Common dashboard/management port — verify authentication and access controls."
+
+[[service]]
+port = 9090
+name = "Prometheus exposed"
+severity = "medium"
+detail = "Prometheus monitoring UI exposed — may leak service topology and metrics."
