@@ -17,7 +17,7 @@ serde_json  = { workspace = true }
 anyhow      = { workspace = true }
 tracing     = { workspace = true }
 tokio       = { workspace = true }
-reqwest     = { workspace = true }
+stealthreq  = { workspace = true }
 futures     = { workspace = true }
 sha2        = { workspace = true }
 hex         = { workspace = true }

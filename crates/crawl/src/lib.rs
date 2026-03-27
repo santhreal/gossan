@@ -9,6 +9,10 @@
 //! The output is a set of enriched `WebAssetTarget` values ready for
 //! downstream vulnerability scanning (Karyx routing, Calyx templates, etc.).
 
+extern crate self as reqwest;
+pub use stealthreq::http::{Client, Method, Proxy, Request, Response, StatusCode, Url};
+pub use stealthreq::http::{header, redirect};
+
 mod extract;
 
 use std::collections::HashSet;
@@ -18,7 +22,6 @@ use gossan_core::{
     build_client, Config, DiscoveredForm, DiscoveredParam, ParamLocation, ParamSource, ScanInput,
     ScanOutput, Scanner, Target, WebAssetTarget,
 };
-use url::Url;
 
 /// Authenticated web crawler that discovers forms and parameters.
 pub struct CrawlScanner;

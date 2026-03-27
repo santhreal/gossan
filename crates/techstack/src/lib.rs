@@ -4,6 +4,10 @@
 //! lives in the standalone [`truestack`] crate. This module adapts
 //! `truestack` results into the panoram scanner pipeline.
 
+extern crate self as reqwest;
+pub use stealthreq::http::{Client, Method, Proxy, Request, Response, StatusCode, Url};
+pub use stealthreq::http::{header, redirect};
+
 mod bridge;
 
 use async_trait::async_trait;

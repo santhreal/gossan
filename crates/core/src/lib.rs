@@ -10,6 +10,10 @@
 //!
 //! All 14 scanner crates depend on `gossan-core` for these shared types.
 
+extern crate self as reqwest;
+pub use stealthreq::http::{Client, Method, Proxy, Request, Response, StatusCode, Url};
+pub use stealthreq::http::{header, redirect};
+
 pub mod config;
 pub mod error;
 pub mod finding;

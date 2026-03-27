@@ -9,7 +9,7 @@ categories = ["network-programming", "command-line-utilities"]
 
 [dependencies]
 gossan-core = { version = "0.2", path = "../core" }
-reqwest = { workspace = true }
+stealthreq = { workspace = true }
 tracing = { workspace = true }
 anyhow = { workspace = true }
 hickory-resolver = { workspace = true }

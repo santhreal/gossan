@@ -8,6 +8,10 @@
 //! 1. Create `src/{provider}.rs` and implement [`CloudProvider`].
 //! 2. Add it to [`providers()`] — that's the only change needed in this file.
 
+extern crate self as reqwest;
+pub use stealthreq::http::{Client, Method, Proxy, Request, Response, StatusCode, Url};
+pub use stealthreq::http::{header, redirect};
+
 mod azure;
 mod common;
 mod do_spaces;
