@@ -2,21 +2,32 @@
 name    = "gossan-dns"
 version.workspace = true
 edition.workspace = true
-description      = "DNS security scanner for gossan (SPF, DMARC, DKIM, CAA, zone transfer, subdomain takeover)"
+description      = "DNS security scanner — SPF/DMARC/DKIM email auth, zone transfer (AXFR), subdomain takeover, CAA/NS posture"
 license.workspace = true
 readme = "../../README.md"
-keywords = ["security", "recon", "dns", "takeover", "scanner"]
+keywords = ["security", "dns", "dmarc", "spf", "takeover"]
 categories = ["command-line-utilities", "network-programming"]
 authors.workspace = true
 repository.workspace = true
 
+[features]
+default  = ["email", "axfr", "takeover", "posture"]
+## SPF + DMARC + DKIM email authentication auditing.
+## Recursive SPF include resolution, DMARC policy analysis, DKIM selector probing.
+email    = []
+## DNS zone transfer (AXFR) detection with wire-protocol parsing.
+axfr     = []
+## Subdomain takeover detection via dangling CNAME, NS, and MX records.
+takeover = []
+## DNS posture: CAA certificate restrictions, NS resilience, MX enumeration.
+posture  = []
+
 [dependencies]
-gossan-core = { version = "0.2", path = "../core" }
+gossan-core      = { version = "0.2", path = "../core" }
 async-trait      = { workspace = true }
 anyhow           = { workspace = true }
 tracing          = { workspace = true }
 tokio            = { workspace = true }
 futures          = { workspace = true }
 hickory-resolver = { workspace = true }
-mhost            = { version = "0.11", default-features = false }
 secfinding       = { workspace = true }

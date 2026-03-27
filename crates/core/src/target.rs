@@ -79,18 +79,19 @@ pub struct ServiceTarget {
 
 impl ServiceTarget {
     /// Returns `true` if this service is likely HTTP/HTTPS based on port or banner.
+    #[must_use]
     pub fn is_web(&self) -> bool {
         matches!(self.port, 80 | 443 | 8080 | 8443 | 8000 | 8888)
             || self
                 .banner
                 .as_deref()
-                .map(|b| b.starts_with("HTTP"))
-                .unwrap_or(false)
+                .is_some_and(|b| b.starts_with("HTTP"))
     }
 
     /// Constructs the base URL for this service (e.g. `https://example.com:8443/`).
     ///
     /// Returns `None` if URL construction fails.
+    #[must_use]
     pub fn base_url(&self) -> Option<Url> {
         let scheme = if self.tls || self.port == 443 || self.port == 8443 {
             "https"
@@ -105,7 +106,7 @@ impl ServiceTarget {
             ("https", 443) | ("http", 80) => String::new(),
             _ => format!(":{}", self.port),
         };
-        Url::parse(&format!("{}://{}{}", scheme, host, port_str)).ok()
+        Url::parse(&format!("{scheme}://{host}{port_str}")).ok()
     }
 }
 
@@ -120,6 +121,7 @@ pub struct Technology {
 }
 
 /// Technology category for fingerprinting classification.
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TechCategory {
@@ -146,6 +148,7 @@ pub enum TechCategory {
 }
 
 /// A confirmed HTTP(S) asset with resolved tech stack.
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebAssetTarget {
     pub url: Url,
@@ -234,6 +237,7 @@ pub enum Target {
 
 impl Target {
     /// Returns the domain name associated with this target, if any.
+    #[must_use]
     pub fn domain(&self) -> Option<&str> {
         match self {
             Target::Domain(d) => Some(&d.domain),

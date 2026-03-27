@@ -8,6 +8,10 @@ use crate::Target;
 
 /// A helper function to create a `Finding` seamlessly using gossan's `Target` type.
 /// The `Target` is converted into a string domain for `secfinding::Finding`.
+/// 
+/// # Panics
+/// Panics if the internal builder fails to guarantee required fields are set.
+#[allow(clippy::needless_pass_by_value)]
 #[must_use]
 pub fn make_finding(
     scanner: impl Into<String>,
@@ -28,8 +32,11 @@ pub fn make_finding(
 }
 
 pub trait FindingExt {
+    #[must_use]
     fn with_evidence(self, ev: Evidence) -> Self;
+    #[must_use]
     fn with_tag(self, tag: impl Into<String>) -> Self;
+    #[must_use]
     fn with_exploit_hint(self, hint: impl Into<String>) -> Self;
 }
 

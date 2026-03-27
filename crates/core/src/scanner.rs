@@ -9,7 +9,7 @@ pub struct ScanInput {
     pub seed: String,
     /// Targets fed from upstream scanners, or the seed parsed into a target for the first stage.
     pub targets: Vec<Target>,
-    /// If set, scanners emit findings here in real-time (before returning ScanOutput).
+    /// If set, scanners emit findings here in real-time (before returning `ScanOutput`).
     /// Enables live progress output in the CLI without changing the Scanner trait API.
     pub live_tx: Option<UnboundedSender<Finding>>,
     /// If set, scanners emit discovered targets here in real-time.
@@ -45,6 +45,7 @@ pub struct ScanOutput {
 
 impl ScanOutput {
     /// Create an empty output with no findings and no targets.
+    #[must_use]
     pub fn empty() -> Self {
         Self {
             findings: Vec::new(),
@@ -72,6 +73,6 @@ pub trait Scanner: Send + Sync {
     /// The pipeline uses this to route targets — scanners only see what they accept.
     fn accepts(&self, target: &Target) -> bool;
 
-    /// Execute the scan. Must not panic — use anyhow::Result for all errors.
+    /// Execute the scan. Must not panic — use `anyhow::Result` for all errors.
     async fn run(&self, input: ScanInput, config: &Config) -> anyhow::Result<ScanOutput>;
 }

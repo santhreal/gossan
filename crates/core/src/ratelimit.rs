@@ -30,6 +30,7 @@ pub struct HostRateLimiter {
 
 impl HostRateLimiter {
     /// `rps_per_host`: max requests per second per unique hostname.
+    #[must_use]
     pub fn new(rps_per_host: u32) -> Self {
         Self {
             limiters: RwLock::new(HashMap::new()),
@@ -72,6 +73,9 @@ impl HostRateLimiter {
 ///
 /// `follow_redirects`: pass `true` for normal probing; `false` where you need to
 /// see `3xx` responses directly (e.g. open-redirect detection, 403-bypass).
+/// 
+/// # Errors
+/// Returns an error if the proxy URL is invalid or invalid TLS settings occur.
 pub fn build_client(config: &Config, follow_redirects: bool) -> anyhow::Result<reqwest::Client> {
     let redirect_policy = if follow_redirects {
         reqwest::redirect::Policy::limited(10)
@@ -107,19 +111,20 @@ pub fn build_client(config: &Config, follow_redirects: bool) -> anyhow::Result<r
 ///
 /// Backoff schedule: 500 ms → 1 s → 2 s → 4 s → give up.
 ///
-/// Returns the first non-429 response, or an error if all retries are exhausted
-/// or a non-retryable error occurs.
+/// # Errors
+/// Returns an error if all retries are exhausted or a non-retryable error occurs.
 pub async fn get_with_backoff(
     client: &reqwest::Client,
     url: &str,
     rate_limiter: Option<&HostRateLimiter>,
 ) -> anyhow::Result<reqwest::Response> {
+    const MAX_RETRIES: u32 = 4;
+
     let host = {
         let parsed = url::Url::parse(url)?;
         parsed.host_str().unwrap_or(url).to_string()
     };
 
-    const MAX_RETRIES: u32 = 4;
     for attempt in 0..MAX_RETRIES {
         if let Some(rl) = rate_limiter {
             rl.until_ready(&host).await;
@@ -144,5 +149,5 @@ pub async fn get_with_backoff(
             Err(e) => return Err(e.into()),
         }
     }
-    anyhow::bail!("max retries exceeded for {}", url)
+    anyhow::bail!("max retries exceeded for {url}")
 }

@@ -1,5 +1,9 @@
 use tokio::net::TcpStream;
 
+/// Create a TCP connection, optionally routing through a SOCKS5 proxy.
+/// 
+/// # Errors
+/// Returns an I/O error if the proxy connection fails, or if direct TCP connect fails.
 pub async fn connect_tcp(addr: &str, port: u16, proxy: Option<&str>) -> std::io::Result<TcpStream> {
     if let Some(p) = proxy {
         let p_addr = p
