@@ -1,0 +1,64 @@
+github.io:GitHub Pages
+herokuapp.com:Heroku
+amazonaws.com:AWS S3/Elastic Beanstalk
+cloudapp.net:Azure Cloud App
+azurewebsites.net:Azure Web App
+trafficmanager.net:Azure Traffic Manager
+fastly.net:Fastly CDN
+sendgrid.net:SendGrid
+helpscoutdocs.com:HelpScout
+ghost.io:Ghost
+surge.sh:Surge
+netlify.app:Netlify
+render.com:Render
+fly.dev:Fly.io
+vercel.app:Vercel
+pantheonsite.io:Pantheon
+zendesk.com:Zendesk
+freshdesk.com:Freshdesk
+intercom.io:Intercom
+strikingly.com:Strikingly
+bitbucket.io:Bitbucket Pages
+readme.io:Readme.io
+desk.com:Desk
+ghost.io:Ghost
+cargo.site:Cargo Collective
+cargocollective.com:Cargo Collective
+kinsta.com:Kinsta
+launchrock.com:Launchrock
+pingdom.com:Pingdom
+vwo.com:Visual Website Optimizer
+wufoo.com:Wufoo
+uservoice.com:UserVoice
+webflow.com:Webflow
+campaignmonitor.com:Campaign Monitor
+statuspage.io:StatusPage
+createsend.com:Campaign Monitor
+myshopify.com:Shopify
+wix.com:Wix
+wixsite.com:Wix
+squarespace.com:Squarespace
+thinkific.com:Thinkific
+wordpress.com:WordPress
+unbouncepages.com:Unbounce
+landingi.com:Landingi
+smugmug.com:SmugMug
+bigcartel.com:BigCartel
+hubspot.net:HubSpot
+bounceme.net:Bounceme
+zendesk.com:Zendesk
+freshdesk.com:Freshdesk
+cargocollective.com:Cargo Collective
+bta.sh:Besy
+bta.sh:bta.sh
+frontify.com:Frontify
+canny.io:Canny
+retool.com:Retool
+apigee.net:Apigee
+mashery.com:Mashery
+agilecrm.com:AgileCRM
+getresponse.com:GetResponse
+kustomer.com:Kustomer
+uberflip.com:Uberflip
+strikingly.com:Strikingly
+readme.io:Readme.io

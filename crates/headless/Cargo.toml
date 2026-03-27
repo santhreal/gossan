@@ -1,0 +1,22 @@
+[package]
+name    = "gossan-headless"
+version.workspace = true
+edition.workspace = true
+description      = "Headless Chromium browser engine for executing JavaScript and trapping dynamic XHRs in gossan"
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+gossan-core = { version = "0.2", path = "../core" }
+async-trait  = { workspace = true }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+anyhow       = { workspace = true }
+tracing      = { workspace = true }
+tokio        = { workspace = true }
+url          = { workspace = true }
+futures      = { workspace = true }
+chromiumoxide = { version = "0.5", features = ["tokio-runtime"] }
+secfinding = { workspace = true }
