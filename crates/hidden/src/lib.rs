@@ -12,6 +12,7 @@ pub use stealthreq::http::{Client, Method, Proxy, Request, Response, StatusCode,
 pub use stealthreq::http::{header, redirect};
 
 mod api_versions;
+mod backup_files;
 mod cookies;
 mod cors;
 mod csp;
@@ -119,6 +120,9 @@ impl Scanner for HiddenScanner {
 
                     // ── Debug/monitoring endpoint exposure ──────────────────────────
                     run_probe!("debug_endpoints", debug_endpoints::probe(&cf, &target));
+
+                    // ── Backup/config file exposure ──────────────────────────────────
+                    run_probe!("backup_files", backup_files::probe(&cf, &target));
 
                     f
                 }
