@@ -1,0 +1,48 @@
+# DigitalOcean Spaces region definitions.
+#
+# DO Spaces is S3-compatible object storage with regional endpoints.
+# Buckets are probed across all regions to discover exposures.
+#
+# URL format: https://{bucket}.{region}.digitaloceanspaces.com/
+#
+# Users can extend these definitions by creating a custom TOML file.
+
+[[region]]
+id = "nyc3"
+location = "New York City"
+country = "US"
+
+[[region]]
+id = "sgp1"
+location = "Singapore"
+country = "SG"
+
+[[region]]
+id = "ams3"
+location = "Amsterdam"
+country = "NL"
+
+[[region]]
+id = "fra1"
+location = "Frankfurt"
+country = "DE"
+
+[[region]]
+id = "sfo2"
+location = "San Francisco"
+country = "US"
+
+[[region]]
+id = "sfo3"
+location = "San Francisco 3"
+country = "US"
+
+[[region]]
+id = "lon1"
+location = "London"
+country = "GB"
+
+[[region]]
+id = "blr1"
+location = "Bangalore"
+country = "IN"

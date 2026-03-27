@@ -140,34 +140,34 @@ enum Command {
         /// Target domain, or '-' to read from stdin
         target: String,
         #[cfg(feature = "subdomain")]
-        #[arg(long)]
+        #[arg(long, help = "Skip subdomain discovery module")]
         no_subdomain: bool,
         #[cfg(feature = "portscan")]
-        #[arg(long)]
+        #[arg(long, help = "Skip port scanning module")]
         no_ports: bool,
         #[cfg(feature = "techstack")]
-        #[arg(long)]
+        #[arg(long, help = "Skip tech stack fingerprinting module")]
         no_tech: bool,
         #[cfg(feature = "dns")]
-        #[arg(long)]
+        #[arg(long, help = "Skip DNS security audit module")]
         no_dns: bool,
         #[cfg(feature = "js")]
-        #[arg(long)]
+        #[arg(long, help = "Skip JavaScript analysis module")]
         no_js: bool,
         #[cfg(feature = "hidden")]
-        #[arg(long)]
+        #[arg(long, help = "Skip hidden endpoint probing module")]
         no_hidden: bool,
         #[cfg(feature = "cloud")]
-        #[arg(long)]
+        #[arg(long, help = "Skip cloud asset discovery module")]
         no_cloud: bool,
         #[cfg(feature = "synscan")]
-        #[arg(long)]
+        #[arg(long, help = "Skip SYN port scanning module")]
         no_synscan: bool,
         #[cfg(feature = "headless")]
-        #[arg(long)]
+        #[arg(long, help = "Skip headless browser module")]
         no_headless: bool,
         #[cfg(feature = "crawl")]
-        #[arg(long)]
+        #[arg(long, help = "Skip web crawling module")]
         no_crawl: bool,
     },
 

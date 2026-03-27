@@ -1,0 +1,22 @@
+[package]
+name = "gossan-stealthreq"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage = "https://santh.io"
+repository.workspace = true
+description = "Stealth HTTP request module for gossan — user-agent rotation, jitter, and anti-detection — part of the Santh security research ecosystem"
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+gossan-core = { version = "0.2", path = "../core" }
+upstream_reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+toml = { workspace = true }
+rand = "0.8"

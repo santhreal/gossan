@@ -1,0 +1,64 @@
+# Azure Blob Storage container definitions.
+#
+# Common container names in Azure Blob Storage accounts.
+# These containers are probed to discover public exposures.
+#
+# The $web container is special — it's the static website hosting container
+# and is the highest-value target for reconnaissance.
+#
+# Users can extend these definitions by creating a custom TOML file.
+
+[[container]]
+name = "$web"
+description = "static website hosting container"
+severity_if_exposed = "critical"
+
+[[container]]
+name = "public"
+description = "public assets container"
+severity_if_exposed = "high"
+
+[[container]]
+name = "assets"
+description = "static assets container"
+severity_if_exposed = "high"
+
+[[container]]
+name = "static"
+description = "static files container"
+severity_if_exposed = "high"
+
+[[container]]
+name = "files"
+description = "file storage container"
+severity_if_exposed = "high"
+
+[[container]]
+name = "uploads"
+description = "user uploads container"
+severity_if_exposed = "critical"
+
+[[container]]
+name = "media"
+description = "media files container"
+severity_if_exposed = "high"
+
+[[container]]
+name = "images"
+description = "image storage container"
+severity_if_exposed = "high"
+
+[[container]]
+name = "docs"
+description = "documents container"
+severity_if_exposed = "high"
+
+[[container]]
+name = "backup"
+description = "backup storage container"
+severity_if_exposed = "critical"
+
+[[container]]
+name = "data"
+description = "general data container"
+severity_if_exposed = "high"
