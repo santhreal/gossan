@@ -19,7 +19,8 @@ serde_json       = { workspace = true }
 anyhow           = { workspace = true }
 tracing          = { workspace = true }
 tokio            = { workspace = true }
-stealthreq       = { workspace = true }
+upstream_reqwest = { workspace = true }
 futures          = { workspace = true }
 hickory-resolver = { workspace = true }
+secfinding       = { workspace = true }
 url          = { workspace = true }

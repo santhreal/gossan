@@ -14,7 +14,7 @@ categories.workspace = true
 gossan-core = { version = "0.2", path = "../core" }
 async-trait = "0.1"
 futures = "0.3"
-stealthreq = { workspace = true }
+upstream_reqwest = { workspace = true }
 scraper = "0.22"
 tracing = "0.1"
 url = "2"

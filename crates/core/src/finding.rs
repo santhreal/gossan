@@ -8,7 +8,7 @@ use crate::Target;
 
 /// A helper function to create a `Finding` seamlessly using gossan's `Target` type.
 /// The `Target` is converted into a string domain for `secfinding::Finding`.
-/// 
+///
 /// # Panics
 /// Panics if the internal builder fails to guarantee required fields are set.
 #[allow(clippy::needless_pass_by_value)]
