@@ -23,7 +23,7 @@ futures     = { workspace = true }
 chrono      = { workspace = true }
 uuid        = { workspace = true }
 tokio       = { workspace = true }
-stealthreq  = { workspace = true }
+upstream_reqwest = { workspace = true }
 governor    = { workspace = true }
 nonzero_ext = { workspace = true }
 secfinding = { workspace = true }

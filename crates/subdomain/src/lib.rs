@@ -8,8 +8,7 @@
 //! so the port scanner can start while subdomain discovery is still running.
 
 extern crate self as reqwest;
-pub use stealthreq::http::{Client, Method, Proxy, Request, Response, StatusCode, Url};
-pub use stealthreq::http::{header, redirect};
+pub use upstream_reqwest::{header, redirect, Client, Method, Proxy, Request, Response, StatusCode, Url};
 
 mod alienvault;
 mod bruteforce;
@@ -27,11 +26,15 @@ mod wayback;
 use std::collections::HashSet;
 
 use async_trait::async_trait;
-use gossan_core::{build_client, Config, ScanInput, ScanOutput, Scanner, Target};
+use gossan_core::{
+    build_client, send_with_backoff, Config, HostRateLimiter, ScanInput, ScanOutput, Scanner,
+    Target,
+};
 use hickory_resolver::{
     config::{NameServerConfigGroup, ResolverConfig, ResolverOpts},
     TokioAsyncResolver,
 };
+use secfinding::{Evidence, Finding, Severity};
 
 pub struct SubdomainScanner;
 
@@ -51,6 +54,7 @@ impl Scanner for SubdomainScanner {
         let mut out = ScanOutput::empty();
         // Build one HTTP client, shared across all passive sources for this domain
         let client = build_client(config, true)?;
+        let passive_rate_limiter = HostRateLimiter::new(config.rate_limit);
 
         for target in &input.targets {
             let Target::Domain(d) = target else { continue };
@@ -62,26 +66,17 @@ impl Scanner for SubdomainScanner {
             }
 
             // ── All passive sources + bruteforce in parallel ─────────────────
-            macro_rules! source {
-                ($name:expr, $result:expr) => {
-                    match $result {
-                        Ok(v)  => v,
-                        Err(e) => { tracing::warn!(source = $name, err = %e, "subdomain source error"); vec![] }
-                    }
-                };
-            }
-
             let (ct, cs, wb, ht, rd, av, us, cc, vt, st, brute) = tokio::join!(
-                ct::query(&d.domain, config, &client),
-                certspotter::query(&d.domain, config, &client),
-                wayback::query(&d.domain, config, &client),
-                hackertarget::query(&d.domain, config, &client),
-                rapiddns::query(&d.domain, config, &client),
-                alienvault::query(&d.domain, config, &client),
-                urlscan::query(&d.domain, config, &client),
-                commoncrawl::query(&d.domain, config, &client),
-                virustotal::query(&d.domain, config, &client),
-                securitytrails::query(&d.domain, config, &client),
+                ct::query(&d.domain, config, &client, &passive_rate_limiter),
+                certspotter::query(&d.domain, config, &client, &passive_rate_limiter),
+                wayback::query(&d.domain, config, &client, &passive_rate_limiter),
+                hackertarget::query(&d.domain, config, &client, &passive_rate_limiter),
+                rapiddns::query(&d.domain, config, &client, &passive_rate_limiter),
+                alienvault::query(&d.domain, config, &client, &passive_rate_limiter),
+                urlscan::query(&d.domain, config, &client, &passive_rate_limiter),
+                commoncrawl::query(&d.domain, config, &client, &passive_rate_limiter),
+                virustotal::query(&d.domain, config, &client, &passive_rate_limiter),
+                securitytrails::query(&d.domain, config, &client, &passive_rate_limiter),
                 async {
                     if has_wildcard {
                         Ok(vec![])
@@ -91,37 +86,37 @@ impl Scanner for SubdomainScanner {
                 },
             );
 
-            for t in source!("ct", ct) {
+            for t in take_targets("ct", &d.domain, &mut out, &input, ct) {
                 emit_and_push(&input, &mut out, t);
             }
-            for t in source!("certspotter", cs) {
+            for t in take_targets("certspotter", &d.domain, &mut out, &input, cs) {
                 emit_and_push(&input, &mut out, t);
             }
-            for t in source!("wayback", wb) {
+            for t in take_targets("wayback", &d.domain, &mut out, &input, wb) {
                 emit_and_push(&input, &mut out, t);
             }
-            for t in source!("hackertarget", ht) {
+            for t in take_targets("hackertarget", &d.domain, &mut out, &input, ht) {
                 emit_and_push(&input, &mut out, t);
             }
-            for t in source!("rapiddns", rd) {
+            for t in take_targets("rapiddns", &d.domain, &mut out, &input, rd) {
                 emit_and_push(&input, &mut out, t);
             }
-            for t in source!("alienvault", av) {
+            for t in take_targets("alienvault", &d.domain, &mut out, &input, av) {
                 emit_and_push(&input, &mut out, t);
             }
-            for t in source!("urlscan", us) {
+            for t in take_targets("urlscan", &d.domain, &mut out, &input, us) {
                 emit_and_push(&input, &mut out, t);
             }
-            for t in source!("commoncrawl", cc) {
+            for t in take_targets("commoncrawl", &d.domain, &mut out, &input, cc) {
                 emit_and_push(&input, &mut out, t);
             }
-            for t in source!("virustotal", vt) {
+            for t in take_targets("virustotal", &d.domain, &mut out, &input, vt) {
                 emit_and_push(&input, &mut out, t);
             }
-            for t in source!("securitytrails", st) {
+            for t in take_targets("securitytrails", &d.domain, &mut out, &input, st) {
                 emit_and_push(&input, &mut out, t);
             }
-            for t in source!("bruteforce", brute) {
+            for t in take_targets("bruteforce", &d.domain, &mut out, &input, brute) {
                 /* bruteforce already emits via target_tx */
                 out.targets.push(t);
             }
@@ -162,6 +157,70 @@ impl Scanner for SubdomainScanner {
 fn emit_and_push(input: &ScanInput, out: &mut ScanOutput, t: Target) {
     input.emit_target(t.clone());
     out.targets.push(t);
+}
+
+fn take_targets(
+    source: &'static str,
+    domain: &str,
+    out: &mut ScanOutput,
+    input: &ScanInput,
+    result: anyhow::Result<Vec<Target>>,
+) -> Vec<Target> {
+    match result {
+        Ok(targets) => targets,
+        Err(err) => {
+            tracing::warn!(source, domain, err = %err, "subdomain source error");
+            let finding = Finding::builder("subdomain", domain, Severity::Low)
+                .title(format!("Subdomain source failed: {source}"))
+                .detail(format!(
+                    "Passive source {source} failed while enumerating {domain}. Fix: inspect connectivity, credentials, and upstream throttling. Error: {err}"
+                ))
+                .tag("subdomain")
+                .tag("source-error")
+                .evidence(Evidence::Raw(err.to_string()))
+                .build()
+                .expect("finding builder: required fields are set");
+            input.emit(finding.clone());
+            out.findings.push(finding);
+            Vec::new()
+        }
+    }
+}
+
+pub(crate) fn is_subdomain_of(candidate: &str, domain: &str) -> bool {
+    let candidate = candidate.trim_end_matches('.');
+    let domain = domain.trim_end_matches('.');
+    candidate
+        .strip_suffix(domain)
+        .is_some_and(|prefix| prefix.ends_with('.'))
+}
+
+pub(crate) async fn get_text(
+    client: &reqwest::Client,
+    url: &str,
+    rate_limiter: &HostRateLimiter,
+) -> anyhow::Result<String> {
+    send_with_backoff(url, Some(rate_limiter), || async {
+        Ok::<reqwest::Response, anyhow::Error>(client.get(url).send().await?)
+    })
+    .await?
+    .text()
+    .await
+    .map_err(Into::into)
+}
+
+pub(crate) async fn get_json<T: serde::de::DeserializeOwned>(
+    client: &reqwest::Client,
+    url: &str,
+    rate_limiter: &HostRateLimiter,
+) -> anyhow::Result<T> {
+    send_with_backoff(url, Some(rate_limiter), || async {
+        Ok::<reqwest::Response, anyhow::Error>(client.get(url).send().await?)
+    })
+    .await?
+    .json()
+    .await
+    .map_err(Into::into)
 }
 
 /// Returns true if the domain has a wildcard DNS record.
@@ -237,6 +296,13 @@ mod tests {
             ..Config::default()
         };
         assert!(build_resolver(&config).is_ok());
+    }
+
+    #[test]
+    fn is_subdomain_of_requires_label_boundary() {
+        assert!(is_subdomain_of("api.example.com", "example.com"));
+        assert!(!is_subdomain_of("badexample.com", "example.com"));
+        assert!(!is_subdomain_of("example.com", "example.com"));
     }
 
     #[tokio::test]

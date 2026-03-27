@@ -12,6 +12,7 @@
 //! ```
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,6 +21,12 @@ use governor::{DefaultDirectRateLimiter, Quota, RateLimiter};
 use tokio::sync::RwLock;
 
 use crate::Config;
+
+fn is_timeout_error(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<upstream_reqwest::Error>()
+        .is_some_and(upstream_reqwest::Error::is_timeout)
+}
 
 /// Per-hostname rate limiter.  Creates an independent token-bucket governor for
 /// each unique hostname the first time it is seen; subsequent calls reuse it.
@@ -73,7 +80,7 @@ impl HostRateLimiter {
 ///
 /// `follow_redirects`: pass `true` for normal probing; `false` where you need to
 /// see `3xx` responses directly (e.g. open-redirect detection, 403-bypass).
-/// 
+///
 /// # Errors
 /// Returns an error if the proxy URL is invalid or invalid TLS settings occur.
 pub fn build_client(config: &Config, follow_redirects: bool) -> anyhow::Result<reqwest::Client> {
@@ -94,7 +101,7 @@ pub fn build_client(config: &Config, follow_redirects: bool) -> anyhow::Result<r
         .timeout(config.timeout())
         .user_agent(&config.user_agent)
         .default_headers(headers)
-        .danger_accept_invalid_certs(true)
+        .danger_accept_invalid_certs(config.insecure_tls)
         .redirect(redirect_policy)
         .pool_max_idle_per_host(20)
         .pool_idle_timeout(Duration::from_secs(90))
@@ -118,6 +125,25 @@ pub async fn get_with_backoff(
     url: &str,
     rate_limiter: Option<&HostRateLimiter>,
 ) -> anyhow::Result<reqwest::Response> {
+    send_with_backoff(url, rate_limiter, || async {
+        Ok::<reqwest::Response, anyhow::Error>(client.get(url).send().await?)
+    })
+    .await
+}
+
+/// Retry an HTTP request, backing off exponentially on 429 responses.
+///
+/// # Errors
+/// Returns an error if all retries are exhausted or a non-retryable error occurs.
+pub async fn send_with_backoff<F, Fut>(
+    url: &str,
+    rate_limiter: Option<&HostRateLimiter>,
+    mut send_request: F,
+) -> anyhow::Result<reqwest::Response>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = anyhow::Result<reqwest::Response>>,
+{
     const MAX_RETRIES: u32 = 4;
 
     let host = {
@@ -130,7 +156,7 @@ pub async fn get_with_backoff(
             rl.until_ready(&host).await;
         }
 
-        match client.get(url).send().await {
+        match send_request().await {
             Ok(resp) if resp.status().as_u16() == 429 => {
                 let delay = Duration::from_millis(500 * 2u64.pow(attempt));
                 tracing::debug!(
@@ -142,11 +168,11 @@ pub async fn get_with_backoff(
                 tokio::time::sleep(delay).await;
             }
             Ok(resp) => return Ok(resp),
-            Err(e) if attempt + 1 < MAX_RETRIES && e.is_timeout() => {
+            Err(e) if attempt + 1 < MAX_RETRIES && is_timeout_error(&e) => {
                 let delay = Duration::from_millis(200 * 2u64.pow(attempt));
                 tokio::time::sleep(delay).await;
             }
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(e),
         }
     }
     anyhow::bail!("max retries exceeded for {url}")

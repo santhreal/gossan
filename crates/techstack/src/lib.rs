@@ -5,8 +5,7 @@
 //! `truestack` results into the panoram scanner pipeline.
 
 extern crate self as reqwest;
-pub use stealthreq::http::{Client, Method, Proxy, Request, Response, StatusCode, Url};
-pub use stealthreq::http::{header, redirect};
+pub use upstream_reqwest::{header, redirect, Client, Method, Proxy, Request, Response, StatusCode, Url};
 
 mod bridge;
 
