@@ -24,3 +24,5 @@ futures          = { workspace = true }
 hickory-resolver = { workspace = true }
 secfinding       = { workspace = true }
 url          = { workspace = true }
+regex        = { workspace = true }
+base64       = { workspace = true }

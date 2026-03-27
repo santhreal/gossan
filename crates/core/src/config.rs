@@ -19,6 +19,30 @@ pub struct ApiKeys {
     pub shodan: Option<String>,
     /// GitHub personal access token — `$GITHUB_TOKEN`. Used for code-search subdomain discovery.
     pub github: Option<String>,
+    /// Censys — `$CENSYS_API_KEY`. Format: "api_id:api_secret".
+    pub censys: Option<String>,
+    /// BinaryEdge — `$BINARYEDGE_API_KEY`.
+    pub binaryedge: Option<String>,
+    /// FullHunt — `$FULLHUNT_API_KEY`.
+    pub fullhunt: Option<String>,
+    /// Chaos (ProjectDiscovery) — `$CHAOS_API_KEY`.
+    pub chaos: Option<String>,
+    /// Bevigil — `$BEVIGIL_API_KEY`.
+    pub bevigil: Option<String>,
+    /// FOFA — `$FOFA_API_KEY`. Format: "email:key".
+    pub fofa: Option<String>,
+    /// Hunter.io — `$HUNTER_API_KEY`.
+    pub hunter: Option<String>,
+    /// Netlas — `$NETLAS_API_KEY`.
+    pub netlas: Option<String>,
+    /// ZoomEye — `$ZOOMEYE_API_KEY`.
+    pub zoomeye: Option<String>,
+    /// C99 — `$C99_API_KEY`.
+    pub c99: Option<String>,
+    /// Quake (360) — `$QUAKE_API_KEY`.
+    pub quake: Option<String>,
+    /// ThreatBook — `$THREATBOOK_API_KEY`.
+    pub threatbook: Option<String>,
 }
 
 impl ApiKeys {
@@ -36,6 +60,42 @@ impl ApiKeys {
         }
         if let Ok(v) = std::env::var("GITHUB_TOKEN") {
             self.github = Some(v);
+        }
+        if let Ok(v) = std::env::var("CENSYS_API_KEY") {
+            self.censys = Some(v);
+        }
+        if let Ok(v) = std::env::var("BINARYEDGE_API_KEY") {
+            self.binaryedge = Some(v);
+        }
+        if let Ok(v) = std::env::var("FULLHUNT_API_KEY") {
+            self.fullhunt = Some(v);
+        }
+        if let Ok(v) = std::env::var("CHAOS_API_KEY") {
+            self.chaos = Some(v);
+        }
+        if let Ok(v) = std::env::var("BEVIGIL_API_KEY") {
+            self.bevigil = Some(v);
+        }
+        if let Ok(v) = std::env::var("FOFA_API_KEY") {
+            self.fofa = Some(v);
+        }
+        if let Ok(v) = std::env::var("HUNTER_API_KEY") {
+            self.hunter = Some(v);
+        }
+        if let Ok(v) = std::env::var("NETLAS_API_KEY") {
+            self.netlas = Some(v);
+        }
+        if let Ok(v) = std::env::var("ZOOMEYE_API_KEY") {
+            self.zoomeye = Some(v);
+        }
+        if let Ok(v) = std::env::var("C99_API_KEY") {
+            self.c99 = Some(v);
+        }
+        if let Ok(v) = std::env::var("QUAKE_API_KEY") {
+            self.quake = Some(v);
+        }
+        if let Ok(v) = std::env::var("THREATBOOK_API_KEY") {
+            self.threatbook = Some(v);
         }
         self
     }

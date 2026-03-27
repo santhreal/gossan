@@ -1,8 +1,15 @@
-//! Subdomain discovery — 9 concurrent sources + DNS bruteforce + permutation engine.
+//! Subdomain discovery — 26 concurrent sources + DNS bruteforce + permutation engine.
 //!
 //! Sources (no API key):  crt.sh, CertSpotter, Wayback Machine, HackerTarget,
-//!                        RapidDNS, AlienVault OTX, Urlscan.io, CommonCrawl
-//! Sources (API key):     VirusTotal ($VT_API_KEY), SecurityTrails ($ST_API_KEY)
+//!                        RapidDNS, AlienVault OTX, Urlscan.io, CommonCrawl, DNSdumpster
+//! Sources (API key):     VirusTotal ($VT_API_KEY), SecurityTrails ($ST_API_KEY),
+//!                        Shodan ($SHODAN_API_KEY), Censys ($CENSYS_API_KEY),
+//!                        BinaryEdge ($BINARYEDGE_API_KEY), FullHunt ($FULLHUNT_API_KEY),
+//!                        GitHub ($GITHUB_TOKEN), Chaos ($CHAOS_API_KEY),
+//!                        Bevigil ($BEVIGIL_API_KEY), FOFA ($FOFA_API_KEY),
+//!                        Hunter.io ($HUNTER_API_KEY), Netlas ($NETLAS_API_KEY),
+//!                        ZoomEye ($ZOOMEYE_API_KEY), C99 ($C99_API_KEY),
+//!                        Quake ($QUAKE_API_KEY), ThreatBook ($THREATBOOK_API_KEY)
 //!
 //! Every confirmed target is emitted via `input.emit_target()` immediately
 //! so the port scanner can start while subdomain discovery is still running.
@@ -11,17 +18,32 @@ extern crate self as reqwest;
 pub use upstream_reqwest::{header, redirect, Client, Method, Proxy, Request, Response, StatusCode, Url};
 
 mod alienvault;
+mod bevigil;
+mod binaryedge;
 mod bruteforce;
+mod c99;
+mod censys;
 mod certspotter;
+mod chaos;
 mod commoncrawl;
 mod ct;
+mod dnsdumpster;
+mod fofa;
+mod fullhunt;
+mod github;
 mod hackertarget;
+mod hunter;
+mod netlas;
 mod permutations;
+mod quake;
 mod rapiddns;
 mod securitytrails;
+mod shodan;
+mod threatbook;
 mod urlscan;
 mod virustotal;
 mod wayback;
+mod zoomeye;
 
 use std::collections::HashSet;
 
@@ -58,7 +80,7 @@ impl Scanner for SubdomainScanner {
 
         for target in &input.targets {
             let Target::Domain(d) = target else { continue };
-            tracing::info!(domain = %d.domain, "subdomain scan — 10 sources");
+            tracing::info!(domain = %d.domain, "subdomain scan — 26 sources");
 
             let has_wildcard = detect_wildcard(&d.domain, config).await;
             if has_wildcard {
@@ -66,7 +88,7 @@ impl Scanner for SubdomainScanner {
             }
 
             // ── All passive sources + bruteforce in parallel ─────────────────
-            let (ct, cs, wb, ht, rd, av, us, cc, vt, st, brute) = tokio::join!(
+            let (ct, cs, wb, ht, rd, av, us, cc, dd, vt, st, sd, cn, be, fh, gh, ch, bv, ff, hu, nl, ze, c9, qk, tb, brute) = tokio::join!(
                 ct::query(&d.domain, config, &client, &passive_rate_limiter),
                 certspotter::query(&d.domain, config, &client, &passive_rate_limiter),
                 wayback::query(&d.domain, config, &client, &passive_rate_limiter),
@@ -75,8 +97,23 @@ impl Scanner for SubdomainScanner {
                 alienvault::query(&d.domain, config, &client, &passive_rate_limiter),
                 urlscan::query(&d.domain, config, &client, &passive_rate_limiter),
                 commoncrawl::query(&d.domain, config, &client, &passive_rate_limiter),
+                dnsdumpster::query(&d.domain, config, &client, &passive_rate_limiter),
                 virustotal::query(&d.domain, config, &client, &passive_rate_limiter),
                 securitytrails::query(&d.domain, config, &client, &passive_rate_limiter),
+                shodan::query(&d.domain, config, &client, &passive_rate_limiter),
+                censys::query(&d.domain, config, &client, &passive_rate_limiter),
+                binaryedge::query(&d.domain, config, &client, &passive_rate_limiter),
+                fullhunt::query(&d.domain, config, &client, &passive_rate_limiter),
+                github::query(&d.domain, config, &client, &passive_rate_limiter),
+                chaos::query(&d.domain, config, &client, &passive_rate_limiter),
+                bevigil::query(&d.domain, config, &client, &passive_rate_limiter),
+                fofa::query(&d.domain, config, &client, &passive_rate_limiter),
+                hunter::query(&d.domain, config, &client, &passive_rate_limiter),
+                netlas::query(&d.domain, config, &client, &passive_rate_limiter),
+                zoomeye::query(&d.domain, config, &client, &passive_rate_limiter),
+                c99::query(&d.domain, config, &client, &passive_rate_limiter),
+                quake::query(&d.domain, config, &client, &passive_rate_limiter),
+                threatbook::query(&d.domain, config, &client, &passive_rate_limiter),
                 async {
                     if has_wildcard {
                         Ok(vec![])
@@ -110,10 +147,55 @@ impl Scanner for SubdomainScanner {
             for t in take_targets("commoncrawl", &d.domain, &mut out, &input, cc) {
                 emit_and_push(&input, &mut out, t);
             }
+            for t in take_targets("dnsdumpster", &d.domain, &mut out, &input, dd) {
+                emit_and_push(&input, &mut out, t);
+            }
             for t in take_targets("virustotal", &d.domain, &mut out, &input, vt) {
                 emit_and_push(&input, &mut out, t);
             }
             for t in take_targets("securitytrails", &d.domain, &mut out, &input, st) {
+                emit_and_push(&input, &mut out, t);
+            }
+            for t in take_targets("shodan", &d.domain, &mut out, &input, sd) {
+                emit_and_push(&input, &mut out, t);
+            }
+            for t in take_targets("censys", &d.domain, &mut out, &input, cn) {
+                emit_and_push(&input, &mut out, t);
+            }
+            for t in take_targets("binaryedge", &d.domain, &mut out, &input, be) {
+                emit_and_push(&input, &mut out, t);
+            }
+            for t in take_targets("fullhunt", &d.domain, &mut out, &input, fh) {
+                emit_and_push(&input, &mut out, t);
+            }
+            for t in take_targets("github", &d.domain, &mut out, &input, gh) {
+                emit_and_push(&input, &mut out, t);
+            }
+            for t in take_targets("chaos", &d.domain, &mut out, &input, ch) {
+                emit_and_push(&input, &mut out, t);
+            }
+            for t in take_targets("bevigil", &d.domain, &mut out, &input, bv) {
+                emit_and_push(&input, &mut out, t);
+            }
+            for t in take_targets("fofa", &d.domain, &mut out, &input, ff) {
+                emit_and_push(&input, &mut out, t);
+            }
+            for t in take_targets("hunter", &d.domain, &mut out, &input, hu) {
+                emit_and_push(&input, &mut out, t);
+            }
+            for t in take_targets("netlas", &d.domain, &mut out, &input, nl) {
+                emit_and_push(&input, &mut out, t);
+            }
+            for t in take_targets("zoomeye", &d.domain, &mut out, &input, ze) {
+                emit_and_push(&input, &mut out, t);
+            }
+            for t in take_targets("c99", &d.domain, &mut out, &input, c9) {
+                emit_and_push(&input, &mut out, t);
+            }
+            for t in take_targets("quake", &d.domain, &mut out, &input, qk) {
+                emit_and_push(&input, &mut out, t);
+            }
+            for t in take_targets("threatbook", &d.domain, &mut out, &input, tb) {
                 emit_and_push(&input, &mut out, t);
             }
             for t in take_targets("bruteforce", &d.domain, &mut out, &input, brute) {
