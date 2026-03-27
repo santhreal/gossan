@@ -1,10 +1,12 @@
 [package]
-name    = "gossan-cloud"
+name = "gossan-cloud"
 version.workspace = true
 edition.workspace = true
-description      = "Cloud asset discovery scanner for gossan (S3, GCS, Azure Blob, DigitalOcean Spaces)"
+authors = ["Santh <contact@santh.io>"]
 license.workspace = true
+homepage = "https://santh.io"
 repository.workspace = true
+description = "Cloud asset discovery scanner for gossan (S3, GCS, Azure Blob, DigitalOcean Spaces) — part of the Santh security research ecosystem"
 keywords.workspace = true
 categories.workspace = true
 

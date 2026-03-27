@@ -2,9 +2,12 @@
 name = "gossan-origin"
 version.workspace = true
 edition.workspace = true
+authors = ["Santh <contact@santh.io>"]
 license.workspace = true
-description = "Discovers the true origin IP of web assets behind CDNs/WAFs"
-keywords = ["security", "origin-ip", "cdn-bypass", "waf", "recon"]
+homepage = "https://santh.io"
+repository = "https://github.com/santhsecurity/gossan"
+description = "Discovers the true origin IP of web assets behind CDNs/WAFs — part of the Santh security research ecosystem"
+keywords = ["santh", "security", "origin-ip", "cdn-bypass", "waf", "recon"]
 categories = ["network-programming", "command-line-utilities"]
 
 [dependencies]

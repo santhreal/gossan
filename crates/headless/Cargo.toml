@@ -1,10 +1,12 @@
 [package]
-name    = "gossan-headless"
+name = "gossan-headless"
 version.workspace = true
 edition.workspace = true
-description      = "Headless Chromium browser engine for executing JavaScript and trapping dynamic XHRs in gossan"
+authors = ["Santh <contact@santh.io>"]
 license.workspace = true
+homepage = "https://santh.io"
 repository.workspace = true
+description = "Headless Chromium browser engine for executing JavaScript and trapping dynamic XHRs in gossan — part of the Santh security research ecosystem"
 keywords.workspace = true
 categories.workspace = true
 

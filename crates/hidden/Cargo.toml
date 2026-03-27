@@ -1,10 +1,12 @@
 [package]
-name    = "gossan-hidden"
+name = "gossan-hidden"
 version.workspace = true
 edition.workspace = true
-description      = "Hidden endpoint and misconfiguration scanner for gossan (CORS, SSRF, JWT, Swagger, cache deception)"
+authors = ["Santh <contact@santh.io>"]
 license.workspace = true
+homepage = "https://santh.io"
 repository.workspace = true
+description = "Hidden endpoint and misconfiguration scanner for gossan (CORS, SSRF, JWT, Swagger, cache deception) — part of the Santh security research ecosystem"
 keywords.workspace = true
 categories.workspace = true
 

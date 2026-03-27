@@ -1,3 +1,5 @@
+> Part of the [Santh](https://santh.io) security research ecosystem.
+
 # gossan
 
 **Fast, modular attack surface discovery.** Subdomains, ports, tech stack, hidden paths, cloud assets, DNS security, origin IP — all in one scan.

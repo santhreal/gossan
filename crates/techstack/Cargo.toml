@@ -1,10 +1,12 @@
 [package]
-name    = "gossan-techstack"
+name = "gossan-techstack"
 version.workspace = true
 edition.workspace = true
-description      = "Tech stack fingerprinting scanner for panoram — powered by truestack"
+authors = ["Santh <contact@santh.io>"]
 license.workspace = true
+homepage = "https://santh.io"
 repository.workspace = true
+description = "Tech stack fingerprinting scanner for panoram — powered by truestack — part of the Santh security research ecosystem"
 keywords.workspace = true
 categories.workspace = true
 

@@ -2,9 +2,11 @@
 name = "gossan-crawl"
 version.workspace = true
 edition.workspace = true
-description = "Authenticated web crawler — form extraction, parameter discovery, link following"
+authors = ["Santh <contact@santh.io>"]
 license.workspace = true
+homepage = "https://santh.io"
 repository.workspace = true
+description = "Authenticated web crawler — form extraction, parameter discovery, link following — part of the Santh security research ecosystem"
 keywords.workspace = true
 categories.workspace = true
 

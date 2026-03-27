@@ -1,10 +1,12 @@
 [package]
-name    = "gossan-checkpoint"
+name = "gossan-checkpoint"
 version.workspace = true
 edition.workspace = true
-description      = "Scan checkpoint and resume for gossan — persists stage results to SQLite"
+authors = ["Santh <contact@santh.io>"]
 license.workspace = true
+homepage = "https://santh.io"
 repository.workspace = true
+description = "Scan checkpoint and resume for gossan — persists stage results to SQLite — part of the Santh security research ecosystem"
 keywords.workspace = true
 categories.workspace = true
 

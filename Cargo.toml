@@ -17,15 +17,15 @@ default-members = ["crates/cli"]
 resolver = "2"
 
 [workspace.package]
-version      = "0.2.0"
-edition      = "2021"
-authors      = ["Santh <hello@santh.io>"]
-license      = "MIT"
-repository   = "https://github.com/santhsecurity/gossan"
-homepage     = "https://github.com/santhsecurity/gossan"
-documentation= "https://docs.rs/gossan"
-keywords     = ["security", "recon", "attack-surface", "pentest", "scanner"]
-categories   = ["command-line-utilities", "network-programming"]
+version = "0.2.0"
+edition = "2021"
+authors = ["Santh <contact@santh.io>"]
+license = "MIT"
+repository = "https://github.com/santhsecurity/gossan"
+homepage = "https://santh.io"
+description = "Santh security research tool"
+keywords = ["santh", "security", "recon", "attack-surface", "pentest", "scanner"]
+categories = ["command-line-utilities", "network-programming"]
 rust-version = "1.80"
 
 [workspace.dependencies]

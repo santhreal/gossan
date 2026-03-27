@@ -1,10 +1,12 @@
 [package]
-name    = "gossan-synscan"
+name = "gossan-synscan"
 version.workspace = true
 edition.workspace = true
-description      = "High-performance raw socket SYN port scanner for gossan"
+authors = ["Santh <contact@santh.io>"]
 license.workspace = true
+homepage = "https://santh.io"
 repository.workspace = true
+description = "High-performance raw socket SYN port scanner for gossan — part of the Santh security research ecosystem"
 keywords.workspace = true
 categories.workspace = true
 

@@ -1,10 +1,12 @@
 [package]
-name    = "gossan-js"
+name = "gossan-js"
 version.workspace = true
 edition.workspace = true
-description      = "JavaScript analysis scanner for gossan (secret detection, prototype pollution, WASM inspection)"
+authors = ["Santh <contact@santh.io>"]
 license.workspace = true
+homepage = "https://santh.io"
 repository.workspace = true
+description = "JavaScript analysis scanner for gossan (secret detection, prototype pollution, WASM inspection) — part of the Santh security research ecosystem"
 keywords.workspace = true
 categories.workspace = true
 
