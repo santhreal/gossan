@@ -1,0 +1,24 @@
+[package]
+name    = "gossan-subdomain"
+version.workspace = true
+edition.workspace = true
+description      = "Subdomain discovery scanner for gossan (CT logs, Wayback, permutations, DNS bruteforce)"
+license.workspace = true
+readme = "../../README.md"
+keywords = ["security", "recon", "subdomain", "dns", "scanner"]
+categories = ["command-line-utilities", "network-programming"]
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+gossan-core = { version = "0.2", path = "../core" }
+async-trait      = { workspace = true }
+serde            = { workspace = true }
+serde_json       = { workspace = true }
+anyhow           = { workspace = true }
+tracing          = { workspace = true }
+tokio            = { workspace = true }
+reqwest          = { workspace = true }
+futures          = { workspace = true }
+hickory-resolver = { workspace = true }
+url          = { workspace = true }

@@ -1,0 +1,20 @@
+[package]
+name    = "gossan-checkpoint"
+version.workspace = true
+edition.workspace = true
+description      = "Scan checkpoint and resume for gossan — persists stage results to SQLite"
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+gossan-core = { version = "0.2", path = "../core" }
+anyhow      = { workspace = true }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+tracing     = { workspace = true }
+chrono      = { workspace = true }
+uuid        = { workspace = true }
+rusqlite    = { workspace = true }
+secfinding  = { workspace = true }
