@@ -1,0 +1,22 @@
+[package]
+name    = "gossan-dns"
+version.workspace = true
+edition.workspace = true
+description      = "DNS security scanner for gossan (SPF, DMARC, DKIM, CAA, zone transfer, subdomain takeover)"
+license.workspace = true
+readme = "../../README.md"
+keywords = ["security", "recon", "dns", "takeover", "scanner"]
+categories = ["command-line-utilities", "network-programming"]
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+gossan-core = { version = "0.2", path = "../core" }
+async-trait      = { workspace = true }
+anyhow           = { workspace = true }
+tracing          = { workspace = true }
+tokio            = { workspace = true }
+futures          = { workspace = true }
+hickory-resolver = { workspace = true }
+mhost            = { version = "0.11", default-features = false }
+secfinding       = { workspace = true }

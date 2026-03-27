@@ -1,0 +1,20 @@
+[package]
+name    = "gossan-synscan"
+version.workspace = true
+edition.workspace = true
+description      = "High-performance raw socket SYN port scanner for gossan"
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+gossan-core = { version = "0.2", path = "../core" }
+async-trait  = { workspace = true }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+tracing      = { workspace = true }
+anyhow       = { workspace = true }
+pnet         = "0.34"
+tokio        = { workspace = true }
+futures      = { workspace = true }

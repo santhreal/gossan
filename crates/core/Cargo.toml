@@ -1,0 +1,30 @@
+[package]
+name    = "gossan-core"
+version.workspace = true
+edition.workspace = true
+description      = "Core types, traits, and shared networking utilities for the gossan attack-surface scanner"
+license.workspace = true
+readme = "../../README.md"
+keywords = ["security", "recon", "attack-surface", "scanner", "networking"]
+categories = ["command-line-utilities", "network-programming"]
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+thiserror   = { workspace = true }
+anyhow      = { workspace = true }
+tracing     = { workspace = true }
+url         = { workspace = true }
+futures     = { workspace = true }
+chrono      = { workspace = true }
+uuid        = { workspace = true }
+tokio       = { workspace = true }
+reqwest     = { workspace = true }
+governor    = { workspace = true }
+nonzero_ext = { workspace = true }
+secfinding = { workspace = true }
+toml = "0.8"
+tokio-socks = "0.5"
