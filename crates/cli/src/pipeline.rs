@@ -206,6 +206,40 @@ pub async fn run_full(
         }};
     }
 
+    /// Abstracted Stage Runner macro ensuring absolute consistency across the ecosystem pipeline.
+    macro_rules! run_standard_stage {
+        ($id:expr, $desc:expr, $scanner:expr, $input_targets:expr, $fmt:expr, $all_f:ident, $all_t:ident, $tx:ident) => {{
+            if let Some(_r) = restored!($id) {
+                #[cfg(feature = "checkpoint")]
+                {
+                    tracing::info!("{}: restored from checkpoint ({} targets)", $id, _r.targets.len());
+                    $all_f.extend(_r.findings.clone());
+                    $all_t.extend(_r.targets.clone());
+                }
+            } else {
+                let pb = spinner(&mp, $desc);
+                let out = $scanner.run(
+                    ScanInput {
+                        seed: seed.to_string(),
+                        targets: $input_targets,
+                        live_tx: Some($tx.clone()),
+                        target_tx: None,
+                    },
+                    &config,
+                ).await?;
+                let (t_len, f_len) = (out.targets.len(), out.findings.len());
+                broadcast(&$tx, &out.findings);
+                #[cfg(feature = "checkpoint")]
+                if let Some(cp) = &checkpointer {
+                    cp.save($id, &out.targets, &out.findings);
+                }
+                $all_f.extend(out.findings);
+                $all_t.extend(out.targets);
+                finish(&pb, &$fmt(t_len, f_len));
+            }
+        }};
+    }
+
     // ── Live Critical/High stream ─────────────────────────────────────────
     let (live_tx, mut live_rx) = tokio::sync::mpsc::unbounded_channel::<Finding>();
     let mp_live = mp.clone();
@@ -230,154 +264,48 @@ pub async fn run_full(
     // ── Stage 1: Subdomain (streaming) ───────────────────────────────────
     #[cfg(feature = "subdomain")]
     if config.modules.subdomain {
-        if let Some(_restored) = restored!("subdomain") {
-            #[cfg(feature = "checkpoint")]
-            {
-                let r = _restored;
-                tracing::info!(
-                    "subdomain: restored from checkpoint ({} targets)",
-                    r.targets.len()
-                );
-                all_findings.extend(r.findings.clone());
-                all_targets.extend(r.targets.clone());
-            }
-        } else {
-            let pb = spinner(&mp, "subdomain  · CT · CertSpotter · Wayback · HackerTarget · RapidDNS · OTX · Urlscan · CommonCrawl · bruteforce");
-            let out = SubdomainScanner
-                .run(
-                    ScanInput {
-                        seed: seed.to_string(),
-                        targets: all_targets.clone(),
-                        live_tx: Some(live_tx.clone()),
-                        target_tx: None,
-                    },
-                    &config,
-                )
-                .await?;
-
-            let n = out.targets.len();
-            broadcast(&live_tx, &out.findings);
-            #[cfg(feature = "checkpoint")]
-            if let Some(cp) = &checkpointer {
-                cp.save("subdomain", &out.targets, &out.findings);
-            }
-            all_findings.extend(out.findings);
-            all_targets.extend(out.targets);
-            finish(
-                &pb,
-                &format!("subdomain  → {} host{}", n, if n == 1 { "" } else { "s" }),
-            );
-        }
+        run_standard_stage!(
+            "subdomain",
+            "subdomain  · CT · CertSpotter · Wayback · HackerTarget · RapidDNS · OTX · Urlscan · CommonCrawl · bruteforce",
+            SubdomainScanner,
+            all_targets.clone(),
+            |t, _| format!("subdomain  → {t} host{}", if t == 1 { "" } else { "s" }),
+            all_findings,
+            all_targets,
+            live_tx
+        );
     }
 
     // ── Stage 2: Port scan ────────────────────────────────────────────────
     #[cfg(feature = "portscan")]
     if config.modules.portscan {
-        if let Some(_restored) = restored!("portscan") {
-            #[cfg(feature = "checkpoint")]
-            {
-                let r = _restored;
-                tracing::info!(
-                    "portscan: restored from checkpoint ({} services)",
-                    r.targets.len()
-                );
-                all_findings.extend(r.findings.clone());
-                all_targets.extend(r.targets.clone());
-            }
-        } else {
-            let t = all_targets
-                .iter()
-                .filter(|t| matches!(t, Target::Domain(_) | Target::Host(_)))
-                .count();
-            let pb = spinner(
-                &mp,
-                &format!("portscan   · {} host{}", t, if t == 1 { "" } else { "s" }),
-            );
-            let out = PortScanner
-                .run(
-                    ScanInput {
-                        seed: seed.to_string(),
-                        targets: all_targets.clone(),
-                        live_tx: Some(live_tx.clone()),
-                        target_tx: None,
-                    },
-                    &config,
-                )
-                .await?;
-            let (svcs, nf) = (out.targets.len(), out.findings.len());
-            broadcast(&live_tx, &out.findings);
-            #[cfg(feature = "checkpoint")]
-            if let Some(cp) = &checkpointer {
-                cp.save("portscan", &out.targets, &out.findings);
-            }
-            all_findings.extend(out.findings);
-            all_targets.extend(out.targets);
-            finish(
-                &pb,
-                &format!(
-                    "portscan   → {} open port{}  ({} finding{})",
-                    svcs,
-                    if svcs == 1 { "" } else { "s" },
-                    nf,
-                    if nf == 1 { "" } else { "s" }
-                ),
-            );
-        }
+        let t = all_targets.iter().filter(|t| matches!(t, Target::Domain(_) | Target::Host(_))).count();
+        run_standard_stage!(
+            "portscan",
+            &format!("portscan   · {t} host{}", if t == 1 { "" } else { "s" }),
+            PortScanner,
+            all_targets.clone(),
+            |svcs, nf| format!("portscan   → {svcs} open port{}  ({nf} finding{})", if svcs == 1 { "" } else { "s" }, if nf == 1 { "" } else { "s" }),
+            all_findings,
+            all_targets,
+            live_tx
+        );
     }
 
     // ── Stage 2.5: SYN scan ────────────────────────────────────────────────
     #[cfg(feature = "synscan")]
     if config.modules.synscan {
-        if let Some(_restored) = restored!("synscan") {
-            #[cfg(feature = "checkpoint")]
-            {
-                let r = _restored;
-                tracing::info!(
-                    "synscan: restored from checkpoint ({} services)",
-                    r.targets.len()
-                );
-                all_findings.extend(r.findings.clone());
-                all_targets.extend(r.targets.clone());
-            }
-        } else {
-            let t = all_targets
-                .iter()
-                .filter(|t| matches!(t, Target::Domain(_) | Target::Host(_)))
-                .count();
-            let pb = spinner(
-                &mp,
-                &format!("synscan    · {} host{}", t, if t == 1 { "" } else { "s" }),
-            );
-            let out = SynScanner
-                .run(
-                    ScanInput {
-                        seed: seed.to_string(),
-                        targets: all_targets.clone(),
-                        live_tx: Some(live_tx.clone()),
-                        target_tx: None,
-                    },
-                    &config,
-                )
-                .await?;
-            let (svcs, nf) = (out.targets.len(), out.findings.len());
-            broadcast(&live_tx, &out.findings);
-            #[cfg(feature = "checkpoint")]
-            if let Some(cp) = &checkpointer {
-                cp.save("synscan", &out.targets, &out.findings);
-            }
-            all_findings.extend(out.findings);
-            all_targets.extend(out.targets);
-            finish(
-                &pb,
-                &format!(
-                    "synscan    → {} open port{}  ({} finding{})",
-                    svcs,
-                    if svcs == 1 { "" } else { "s" },
-                    nf,
-                    if nf == 1 { "" } else { "s" }
-                ),
-            );
-        }
+        let t = all_targets.iter().filter(|t| matches!(t, Target::Domain(_) | Target::Host(_))).count();
+        run_standard_stage!(
+            "synscan",
+            &format!("synscan    · {t} host{}", if t == 1 { "" } else { "s" }),
+            SynScanner,
+            all_targets.clone(),
+            |svcs, nf| format!("synscan    → {svcs} open port{}  ({nf} finding{})", if svcs == 1 { "" } else { "s" }, if nf == 1 { "" } else { "s" }),
+            all_findings,
+            all_targets,
+            live_tx
+        );
     }
 
     // ── Stage 3: TechStack + DNS (concurrent) ────────────────────────────
@@ -626,145 +554,47 @@ pub async fn run_full(
     // ── Stage 4.5: Headless (concurrently executing full browser analysis on web assets)
     #[cfg(feature = "headless")]
     if config.modules.headless {
-        let pb = spinner(&mp, "headless   · dom-rendering and xhr trapping");
-        let out = if let Some(_r) = restored!("headless") {
-            #[cfg(feature = "checkpoint")]
-            {
-                tracing::info!("headless: restored from checkpoint");
-                gossan_core::ScanOutput {
-                    targets: _r.targets.clone(),
-                    findings: _r.findings.clone(),
-                }
-            }
-            #[cfg(not(feature = "checkpoint"))]
-            {
-                gossan_core::ScanOutput::empty()
-            }
-        } else {
-            HeadlessScanner
-                .run(
-                    ScanInput {
-                        seed: seed.to_string(),
-                        targets: web_targets.clone(),
-                        live_tx: Some(live_tx.clone()),
-                        target_tx: None,
-                    },
-                    &config,
-                )
-                .await?
-        };
-        let n = out.findings.len();
-        finish(
-            &pb,
-            &format!(
-                "headless   → {} finding{}",
-                n,
-                if n == 1 { "" } else { "s" }
-            ),
+        // Run standard stage requires identical lengths for args, headless only produces findings so we ignore targets
+        run_standard_stage!(
+            "headless",
+            "headless   · dom-rendering and xhr trapping",
+            HeadlessScanner,
+            web_targets.clone(),
+            |_, nf| format!("headless   → {nf} finding{}", if nf == 1 { "" } else { "s" }),
+            all_findings,
+            all_targets,
+            live_tx
         );
-        broadcast(&live_tx, &out.findings);
-        #[cfg(feature = "checkpoint")]
-        if let Some(cp) = &checkpointer {
-            cp.save("headless", &out.targets, &out.findings);
-        }
-        all_findings.extend(out.findings);
     }
 
     // ── Stage 4.6: Crawl (authenticated crawling, form extraction, param discovery)
     #[cfg(feature = "crawl")]
     if config.modules.crawl {
-        let pb = spinner(&mp, "crawl      · forms + params + link following");
-        let out = if let Some(_r) = restored!("crawl") {
-            #[cfg(feature = "checkpoint")]
-            {
-                tracing::info!("crawl: restored from checkpoint");
-                gossan_core::ScanOutput {
-                    targets: _r.targets.clone(),
-                    findings: _r.findings.clone(),
-                }
-            }
-            #[cfg(not(feature = "checkpoint"))]
-            {
-                gossan_core::ScanOutput::empty()
-            }
-        } else {
-            CrawlScanner
-                .run(
-                    ScanInput {
-                        seed: seed.to_string(),
-                        targets: web_targets.clone(),
-                        live_tx: Some(live_tx.clone()),
-                        target_tx: None,
-                    },
-                    &config,
-                )
-                .await?
-        };
-        let (nt, nf) = (out.targets.len(), out.findings.len());
-        finish(
-            &pb,
-            &format!(
-                "crawl      → {} page{}  ({} form{})",
-                nt,
-                if nt == 1 { "" } else { "s" },
-                nf,
-                if nf == 1 { "" } else { "s" }
-            ),
+        run_standard_stage!(
+            "crawl",
+            "crawl      · forms + params + link following",
+            CrawlScanner,
+            web_targets.clone(),
+            |nt, nf| format!("crawl      → {nt} page{}  ({nf} form{})", if nt == 1 { "" } else { "s" }, if nf == 1 { "" } else { "s" }),
+            all_findings,
+            all_targets,
+            live_tx
         );
-        broadcast(&live_tx, &out.findings);
-        #[cfg(feature = "checkpoint")]
-        if let Some(cp) = &checkpointer {
-            cp.save("crawl", &out.targets, &out.findings);
-        }
-        all_findings.extend(out.findings);
-        all_targets.extend(out.targets);
     }
 
     // ── Stage 5: Cloud ────────────────────────────────────────────────────
     #[cfg(feature = "cloud")]
     if config.modules.cloud {
-        let pb = spinner(&mp, "cloud      · S3 / GCS / Azure / DO Spaces");
-        let out = if let Some(_r) = restored!("cloud") {
-            #[cfg(feature = "checkpoint")]
-            {
-                tracing::info!("cloud: restored from checkpoint");
-                gossan_core::ScanOutput {
-                    targets: _r.targets.clone(),
-                    findings: _r.findings.clone(),
-                }
-            }
-            #[cfg(not(feature = "checkpoint"))]
-            {
-                gossan_core::ScanOutput::empty()
-            }
-        } else {
-            CloudScanner
-                .run(
-                    ScanInput {
-                        seed: seed.to_string(),
-                        targets: all_targets.clone(),
-                        live_tx: Some(live_tx.clone()),
-                        target_tx: None,
-                    },
-                    &config,
-                )
-                .await?
-        };
-        let n = out.findings.len();
-        finish(
-            &pb,
-            &format!(
-                "cloud      → {} finding{}",
-                n,
-                if n == 1 { "" } else { "s" }
-            ),
+        run_standard_stage!(
+            "cloud",
+            "cloud      · S3 / GCS / Azure / DO Spaces",
+            CloudScanner,
+            all_targets.clone(),
+            |_, nf| format!("cloud      → {nf} finding{}", if nf == 1 { "" } else { "s" }),
+            all_findings,
+            all_targets,
+            live_tx
         );
-        broadcast(&live_tx, &out.findings);
-        #[cfg(feature = "checkpoint")]
-        if let Some(cp) = &checkpointer {
-            cp.save("cloud", &out.targets, &out.findings);
-        }
-        all_findings.extend(out.findings);
     }
 
     drop(live_tx);

@@ -1,14 +1,14 @@
 [package]
-name             = "gossan"
+name = "gossan"
 version.workspace = true
 edition.workspace = true
-description      = "Fast, modular attack surface discovery — subdomains, ports, tech stack, secrets, hidden endpoints, cloud assets"
+authors = ["Santh <contact@santh.io>"]
 license.workspace = true
+homepage.workspace = true
 repository.workspace = true
-homepage.workspace   = true
-keywords.workspace   = true
+description = "Fast, modular attack surface discovery — subdomains, ports, tech stack, secrets, hidden endpoints, cloud assets — part of the Santh security research ecosystem"
+keywords.workspace = true
 categories.workspace = true
-rust-version.workspace = true
 
 [[bin]]
 name = "gossan"
@@ -22,6 +22,7 @@ path = "src/main.rs"
 #
 # This produces a binary with only subdomain discovery + tech-stack scanning —
 # no port scanner, no DNS audit, no JS analysis, no cloud enumeration compiled in.
+
 [features]
 default = [
     "subdomain", "portscan", "techstack", "dns",

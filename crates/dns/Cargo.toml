@@ -1,14 +1,15 @@
 [package]
-name    = "gossan-dns"
+name = "gossan-dns"
 version.workspace = true
 edition.workspace = true
-description      = "DNS security scanner — SPF/DMARC/DKIM email auth, zone transfer (AXFR), subdomain takeover, CAA/NS posture"
-license.workspace = true
-readme = "../../README.md"
-keywords = ["security", "dns", "dmarc", "spf", "takeover"]
-categories = ["command-line-utilities", "network-programming"]
 authors.workspace = true
+license.workspace = true
+homepage = "https://santh.io"
 repository.workspace = true
+description = "DNS security scanner — SPF/DMARC/DKIM email auth, zone transfer (AXFR), subdomain takeover, CAA/NS posture — part of the Santh security research ecosystem"
+readme = "../../README.md"
+keywords = ["santh", "security", "dns", "dmarc", "spf", "takeover"]
+categories = ["command-line-utilities", "network-programming"]
 
 [features]
 default  = ["email", "axfr", "takeover", "posture"]

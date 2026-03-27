@@ -1,10 +1,12 @@
 [package]
-name    = "gossan-correlation"
+name = "gossan-correlation"
 version.workspace = true
 edition.workspace = true
-description      = "Cross-module finding correlation engine for gossan (attack chain detection)"
+authors = ["Santh <contact@santh.io>"]
 license.workspace = true
+homepage = "https://santh.io"
 repository.workspace = true
+description = "Cross-module finding correlation engine for gossan (attack chain detection) — part of the Santh security research ecosystem"
 keywords.workspace = true
 categories.workspace = true
 

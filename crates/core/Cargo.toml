@@ -1,14 +1,15 @@
 [package]
-name    = "gossan-core"
+name = "gossan-core"
 version.workspace = true
 edition.workspace = true
-description      = "Core types, traits, and shared networking utilities for the gossan attack-surface scanner"
-license.workspace = true
-readme = "../../README.md"
-keywords = ["security", "recon", "attack-surface", "scanner", "networking"]
-categories = ["command-line-utilities", "network-programming"]
 authors.workspace = true
+license.workspace = true
+homepage = "https://santh.io"
 repository.workspace = true
+description = "Core types, traits, and shared networking utilities for the gossan attack-surface scanner — part of the Santh security research ecosystem"
+readme = "../../README.md"
+keywords = ["santh", "security", "recon", "attack-surface", "scanner", "networking"]
+categories = ["command-line-utilities", "network-programming"]
 
 [dependencies]
 async-trait = { workspace = true }
