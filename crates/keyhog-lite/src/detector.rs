@@ -99,6 +99,49 @@ pub enum DetectorError {
     Io(#[from] std::io::Error),
 }
 
+/// Embedded detector corpus. Snapshot of the curated TOML rule-set
+/// shipped *inside* the published crate so end users never depend on
+/// a sibling-checkout filesystem path. Refresh this directory by
+/// re-copying from upstream `keyhog/detectors/` and bumping the crate
+/// patch version.
+const EMBEDDED_DETECTORS: include_dir::Dir<'_> =
+    include_dir::include_dir!("$CARGO_MANIFEST_DIR/detectors");
+
+/// Load the detector corpus that ships baked into this crate.
+///
+/// Always succeeds — never returns an error — because the corpus is
+/// validated at compile time by the build itself: any TOML that fails
+/// to parse is skipped with a `tracing::warn` exactly the way
+/// [`load_detectors`] handles on-disk corruption. Use this in any
+/// downstream code that runs from `cargo install`-style binaries
+/// (gossan-js, gossan-scm, gossan-crawl, etc.) where no monorepo
+/// sibling path exists.
+#[must_use]
+pub fn embedded_detectors() -> Vec<Detector> {
+    let mut out = Vec::with_capacity(EMBEDDED_DETECTORS.files().count());
+    for file in EMBEDDED_DETECTORS.files() {
+        if file.path().extension().and_then(|e| e.to_str()) != Some("toml") {
+            continue;
+        }
+        let Some(s) = file.contents_utf8() else {
+            tracing::warn!(
+                path = %file.path().display(),
+                "keyhog-lite: embedded detector is not utf-8, skipping"
+            );
+            continue;
+        };
+        match toml::from_str::<Detector>(s) {
+            Ok(d) => out.push(d),
+            Err(e) => tracing::warn!(
+                path = %file.path().display(),
+                err = %e,
+                "keyhog-lite: skipping malformed embedded detector"
+            ),
+        }
+    }
+    out
+}
+
 /// Load every `*.toml` in `dir` as a detector. Files that fail to parse
 /// are skipped with a `tracing::warn` — a single malformed contribution
 /// MUST NOT block the rest of the scan. Returns an error only when the
@@ -219,6 +262,61 @@ regex = "x"
         );
         let detectors = load_detectors(tmp.path()).expect("load");
         assert_eq!(detectors.len(), 1);
+    }
+
+    #[test]
+    fn embedded_detectors_corpus_is_non_empty_and_well_formed() {
+        // Substantive guarantee: the published crate must ship a real
+        // corpus, not an empty stub. If this number ever drops below
+        // 500, something deleted detectors during a refresh.
+        let corpus = embedded_detectors();
+        assert!(
+            corpus.len() >= 500,
+            "embedded corpus too small: {} (expected >= 500)",
+            corpus.len()
+        );
+        // Every detector must carry a non-empty id and at least one pattern.
+        for d in &corpus {
+            assert!(!d.meta.id.is_empty(), "detector with empty id");
+            assert!(
+                !d.meta.patterns.is_empty(),
+                "detector {} has no patterns",
+                d.meta.id
+            );
+        }
+        // Ids must be unique — duplicate ids would let a detector
+        // shadow another and silently change scan output.
+        let mut ids: Vec<&str> = corpus.iter().map(|d| d.meta.id.as_str()).collect();
+        ids.sort_unstable();
+        let before = ids.len();
+        ids.dedup();
+        assert_eq!(
+            before,
+            ids.len(),
+            "embedded corpus contains duplicate detector ids"
+        );
+    }
+
+    #[test]
+    fn embedded_detectors_compile_into_a_working_scanner() {
+        // Adversarial: if any embedded TOML carries a regex that the
+        // scanner refuses, the corpus is silently broken at runtime.
+        let corpus = embedded_detectors();
+        let scanner = crate::CompiledScanner::compile(corpus).expect("embedded corpus must compile");
+        // A non-placeholder AWS access key string. The scanner has a
+        // placeholder filter that rejects literal "EXAMPLE" tails (the
+        // canonical AWS docs key), so we pick an unrelated 16-char tail
+        // that still satisfies (AKIA|ASIA)[0-9A-Z]{16}.
+        let chunk = crate::Chunk {
+            data: "export AWS_KEY=AKIAQYAB7XJ4MZK5T2HV\n".to_string(),
+            metadata: crate::ChunkMetadata::default(),
+        };
+        let matches = scanner.scan(&chunk);
+        assert!(
+            matches.iter().any(|m| m.detector_id.contains("aws")),
+            "embedded corpus did not detect AKIA test key; matched: {:?}",
+            matches.iter().map(|m| &m.detector_id).collect::<Vec<_>>()
+        );
     }
 
     #[test]

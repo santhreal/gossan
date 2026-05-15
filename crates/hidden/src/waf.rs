@@ -35,7 +35,12 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
         })
         .collect();
 
-    let body = resp.bytes().await.unwrap_or_default();
+    // Bound the response body — wafrift only needs a few KB of header
+    // + body to fingerprint, so capping at MAX_BODY_BYTES protects
+    // against a hostile origin streaming MB or GB to OOM the scanner.
+    let body = crate::soft404::read_limited(resp, crate::MAX_BODY_BYTES)
+        .await
+        .unwrap_or_default();
 
     // wafrift_detect::detect now returns a Vec<DetectedWaf> (it can match
     // multiple WAFs simultaneously — e.g. a CloudFront-fronted Cloudflare

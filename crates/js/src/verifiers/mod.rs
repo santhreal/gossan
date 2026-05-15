@@ -25,21 +25,13 @@ impl Default for VerifierEngine {
 }
 
 impl VerifierEngine {
-    /// Build the verifier. Detector loading is best-effort — a missing
-    /// directory or malformed file degrades the engine to "no-op" but
-    /// never panics or blocks initialization.
+    /// Build the verifier. Detectors come from
+    /// [`gossan_keyhog_lite::embedded_detectors`] — the corpus baked
+    /// into the published `gossan-keyhog-lite` crate, so this works
+    /// identically under `cargo install` and under monorepo dev.
     #[must_use]
     pub fn new() -> Self {
-        let detector_dir = std::path::Path::new("../../../../software/keyhog/detectors");
-        let detectors = if detector_dir.exists() {
-            gossan_keyhog_lite::load_detectors(detector_dir).unwrap_or_default()
-        } else {
-            tracing::warn!(
-                "KeyHog detectors directory not found at {:?}, live verification will be limited",
-                detector_dir
-            );
-            Vec::new()
-        };
+        let detectors = gossan_keyhog_lite::embedded_detectors();
 
         let engine = VerificationEngine::new(&detectors, VerifyConfig::default())
             // VerificationEngine::new is infallible (returns Infallible),

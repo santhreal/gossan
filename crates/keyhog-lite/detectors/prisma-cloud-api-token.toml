@@ -1,0 +1,48 @@
+# Docs: https://pan.dev/compute/api/access-api-self-hosted/
+# Format: JWT token obtained from /api/v1/authenticate endpoint, or Basic auth with username:password
+# Verify: GET /api/v1/policies/runtime/container with Bearer token
+# Prefix: none (JWT format)
+
+[detector]
+id = "prisma-cloud-api-token"
+name = "Prisma Cloud API Token"
+service = "prisma-cloud"
+severity = "critical"
+keywords = ["prisma", "twistlock", "PRISMA", "TWISTLOCK"]
+
+[[detector.patterns]]
+regex = "(?:prisma|twistlock|PRISMA|TWISTLOCK)[_\\s]*(?:API[_\\s]*)?(?:TOKEN|KEY|SECRET)[=:\\s\"'']+(eyJ[a-zA-Z0-9_-]*\\.[a-zA-Z0-9_-]*\\.[a-zA-Z0-9_-]*)"
+description = "Prisma Cloud JWT token with context anchor"
+group = 1
+
+[[detector.patterns]]
+regex = "(?:prisma|twistlock|PRISMA|TWISTLOCK)[_\\s]*(?:CONSOLE[_\\s]*)?(?:URL|ADDRESS)[=:\\s\"'']+(https?://[^\\s\"'']+)"
+description = "Prisma Cloud console URL with context anchor"
+group = 1
+
+# Console URL companion: needed to template the verify host. Pin to the
+# documented Prisma Cloud Compute SaaS hosts; self-hosted Twistlock
+# deployments live on customer-chosen hosts and aren't safely verifiable
+# without an explicit per-customer URL — those will fall to Unverifiable.
+[[detector.companions]]
+name = "prisma_console"
+regex = 'https?://[a-zA-Z0-9-]+\.(?:prismacloud\.io|paloaltonetworks\.com|twistlock\.com)'
+within_lines = 5
+
+[detector.verify]
+method = "GET"
+# Earlier this used single-brace `{console}` which interpolate.rs ignored;
+# the URL went out as a literal `{console}/api/...` segment.
+url = "{{companion.prisma_console}}/api/v1/policies/runtime/container"
+allowed_domains = [
+    "prismacloud.io",
+    "paloaltonetworks.com",
+    "twistlock.com",
+]
+
+[detector.verify.auth]
+type = "bearer"
+field = "match"
+
+[detector.verify.success]
+status = 200

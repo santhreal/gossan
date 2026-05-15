@@ -43,6 +43,25 @@ pub struct ScanClient {
     max_response_size: usize,
 }
 
+/// Emit a single tracing warning when TLS validation has been turned
+/// off via `Config::insecure_tls`. Using a process-scoped one-shot
+/// avoids spamming the log every time a per-scanner `ScanClient` is
+/// rebuilt while still guaranteeing at least one user-visible signal
+/// that the security floor is degraded.
+pub(crate) fn warn_insecure_tls_once(insecure: bool) {
+    static WARNED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    if insecure {
+        WARNED.get_or_init(|| {
+            tracing::warn!(
+                "insecure_tls=true: HTTPS certificate validation is DISABLED for the entire scan. \
+                 Findings about TLS posture (cert chain, hostname mismatch, expiry) and any \
+                 secret/credential exfiltration via MITM cannot be trusted. Re-run without \
+                 insecure_tls before reporting."
+            );
+        });
+    }
+}
+
 /// DNS resolver bridge for reqwest.
 struct HickoryResolver(Arc<TokioAsyncResolver>);
 
@@ -84,6 +103,8 @@ impl ScanClient {
     /// Returns an error if the underlying reqwest client cannot be constructed
     /// (e.g. invalid proxy URL).
     pub fn from_config(config: &Config, resolver: Arc<TokioAsyncResolver>) -> anyhow::Result<Self> {
+        warn_insecure_tls_once(config.insecure_tls);
+
         let mut headers = reqwest::header::HeaderMap::new();
         if let Some(cookie_val) = &config.cookie {
             if let Ok(hv) = reqwest::header::HeaderValue::from_str(cookie_val) {
@@ -128,6 +149,8 @@ impl ScanClient {
         config: &Config,
         resolver: Arc<TokioAsyncResolver>,
     ) -> anyhow::Result<Self> {
+        warn_insecure_tls_once(config.insecure_tls);
+
         let mut headers = reqwest::header::HeaderMap::new();
         if let Some(cookie_val) = &config.cookie {
             if let Ok(hv) = reqwest::header::HeaderValue::from_str(cookie_val) {

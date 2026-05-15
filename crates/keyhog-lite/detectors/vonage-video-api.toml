@@ -1,0 +1,46 @@
+# Docs: https://api.support.vonage.com/hc/en-us/articles/10670829386396-How-to-find-my-Video-API-Authentication-Credentials
+# Format: API Key is an 8-character alphanumeric string, API Secret is a 16-character alphanumeric string
+# Verify: https://api.support.vonage.com/hc/en-us/articles/10670829386396
+# Prefix: none (requires context anchoring)
+
+[detector]
+id = "vonage-video-api"
+name = "Vonage Video API Key"
+service = "vonage"
+severity = "critical"
+keywords = ["VONAGE_API_KEY", "VONAGE_API_SECRET", "vonage", "api_key", "api_secret", "video"]
+
+[[detector.patterns]]
+regex = "(?:VONAGE_API_KEY|vonage_api_key)[\"\\'\\s]*[=:]\\s*[\"\\']?([a-f0-9]{8})[\"\\']?"
+description = "Vonage Video API Key (8 hex characters) with context anchor"
+group = 1
+
+[[detector.patterns]]
+regex = "(?:VONAGE_API_SECRET|vonage_api_secret)[\"\\'\\s]*[=:]\\s*[\"\\']?([a-f0-9]{16})[\"\\']?"
+description = "Vonage Video API Secret (16 hex characters) with context anchor"
+group = 1
+
+[[detector.companions]]
+name = "vonage_api_secret"
+# Original anchored form: capture group is auto-detected by the scanner
+# (compiler.rs:369), so `{{companion.vonage_api_secret}}` resolves to just
+# the 16-hex secret value, not the surrounding `VONAGE_API_SECRET=...`
+# declaration. Without the anchor we'd false-fire on every random 16-hex
+# string in scope.
+regex = "(?:VONAGE_API_SECRET|vonage_api_secret)[\"\\'\\s]*[=:]\\s*[\"\\']?([a-f0-9]{16})[\"\\']?"
+within_lines = 5
+[detector.verify]
+method = "GET"
+# Earlier this used single-brace `{match}` which interpolate.rs ignored;
+# the URL went out as a literal `{match}` segment. `{{match}}` is the
+# correct token.
+url = "https://api.opentok.com/v2/project/{{match}}/archive"
+allowed_domains = ["opentok.com"]
+
+[detector.verify.auth]
+type = "basic"
+username = "match"
+password = "companion.vonage_api_secret"
+
+[detector.verify.success]
+status = 200

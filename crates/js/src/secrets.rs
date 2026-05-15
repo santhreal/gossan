@@ -32,21 +32,13 @@ pub fn take_raw_secret(hash: &str) -> Option<String> {
 }
 
 /// Initialize the KeyHog scanner by loading and compiling all detectors.
+///
+/// Sources detectors from `gossan_keyhog_lite::embedded_detectors()` —
+/// the curated corpus baked into the published `gossan-keyhog-lite`
+/// crate. This guarantees a working scanner under `cargo install`
+/// without depending on any sibling-checkout filesystem path.
 fn get_scanner() -> Option<&'static CompiledScanner> {
     KEYHOG_SCANNER.get_or_init(|| {
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
-        let detector_dir = if !manifest_dir.is_empty() {
-            let path =
-                std::path::Path::new(&manifest_dir).join("../../../../software/keyhog/detectors");
-            if path.exists() {
-                path
-            } else {
-                std::path::PathBuf::from("../../../../software/keyhog/detectors")
-            }
-        } else {
-            std::path::PathBuf::from("../../../../software/keyhog/detectors")
-        };
-
         let empty_fallback = || -> CompiledScanner {
             // Compile with zero detectors — a no-op scanner that matches nothing.
             // This compile call with an empty vec genuinely cannot fail,
@@ -55,8 +47,6 @@ fn get_scanner() -> Option<&'static CompiledScanner> {
                 Ok(s) => s,
                 Err(e) => {
                     tracing::error!("failed to compile empty keyhog scanner: {e}");
-                    // As an absolute last resort, return an empty-compiled scanner
-                    // by re-trying — if this also fails, we have a serious environment issue
                     CompiledScanner::compile(Vec::new()).unwrap_or_else(|e2| {
                         tracing::error!(
                             "keyhog scanner cannot compile even with zero detectors: {e2}"
@@ -67,24 +57,13 @@ fn get_scanner() -> Option<&'static CompiledScanner> {
             }
         };
 
-        if !detector_dir.exists() {
+        let detectors = gossan_keyhog_lite::embedded_detectors();
+        if detectors.is_empty() {
             tracing::warn!(
-                "KeyHog detectors directory not found at {:?}, secret detection will be skipped",
-                detector_dir
+                "embedded KeyHog detector corpus is empty; secret detection will be skipped"
             );
             return empty_fallback();
         }
-
-        let detectors = match gossan_keyhog_lite::load_detectors(&detector_dir) {
-            Ok(d) => d,
-            Err(e) => {
-                tracing::error!(
-                    "failed to load KeyHog detectors from {:?}: {e}",
-                    detector_dir
-                );
-                return empty_fallback();
-            }
-        };
 
         match CompiledScanner::compile(detectors) {
             Ok(s) => s,

@@ -22,7 +22,9 @@ mod scanner;
 mod verifier;
 
 pub use dedup::{dedup_matches, DedupScope};
-pub use detector::{load_detectors, Companion, Detector, DetectorError, DetectorMeta, Pattern};
+pub use detector::{
+    embedded_detectors, load_detectors, Companion, Detector, DetectorError, DetectorMeta, Pattern,
+};
 pub use scanner::{Chunk, ChunkMetadata, CompiledScanner, Match, MatchLocation, ScannerError};
 pub use verifier::{
     RawMatch, VerificationEngine, VerificationResult, VerifiedFinding, VerifyConfig,

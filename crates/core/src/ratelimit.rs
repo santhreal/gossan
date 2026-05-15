@@ -84,6 +84,8 @@ pub fn build_client(
         reqwest::redirect::Policy::none()
     };
 
+    crate::transport::warn_insecure_tls_once(config.insecure_tls);
+
     let mut headers = reqwest::header::HeaderMap::new();
     if let Some(cookie_val) = &config.cookie {
         if let Ok(hv) = reqwest::header::HeaderValue::from_str(cookie_val) {
