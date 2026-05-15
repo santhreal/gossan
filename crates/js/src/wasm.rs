@@ -18,6 +18,12 @@ use regex::Regex;
 use secfinding::{Evidence, Finding, Severity};
 use std::sync::OnceLock;
 
+/// Maximum WASM binary size accepted from a server before we treat it
+/// as a DoS attempt and skip the file. 32 MiB matches the upper bound
+/// of realistic browser-shipped WASM bundles (game engines, ML demos)
+/// while bounding scanner memory.
+const MAX_WASM_BYTES: usize = 32 * 1024 * 1024;
+
 fn wasm_url_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| {
@@ -165,8 +171,13 @@ pub async fn probe(
             continue;
         }
 
-        let Ok(bytes) = resp.bytes().await else {
-            continue;
+        // Bound the read at MAX_WASM_BYTES via streaming check —
+        // `resp.bytes()` is unbounded and would let a hostile origin
+        // OOM the scanner by streaming arbitrary content from a path
+        // that just happens to end in `.wasm`.
+        let bytes = match gossan_core::read_response_limited(resp, MAX_WASM_BYTES).await {
+            Ok(b) => b,
+            Err(_) => continue,
         };
 
         // Verify WASM magic bytes: \0asm

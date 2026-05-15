@@ -1,0 +1,42 @@
+# Docs: https://weaviate.io/developers/weaviate/configuration/authentication
+# Format: Alphanumeric string, typically 32+ characters (no fixed prefix)
+# Verify: https://weaviate.io/developers/weaviate/api/rest/v1
+# Prefix: none (requires context anchoring)
+
+[detector]
+id = "weaviate-api-key"
+name = "Weaviate API Key"
+service = "weaviate"
+severity = "high"
+keywords = ["WEAVIATE_API_KEY", "weaviate_api_key", "WEAVIATE_APIKEY", "weaviateApiKey"]
+
+[[detector.patterns]]
+regex = "(?:WEAVIATE[_-]?API[_-]?KEY|weaviate[_-]?api[_-]?key)[=:\\s\"'']+([a-zA-Z0-9_-]{32,})"
+description = "Weaviate API key with context anchor"
+group = 1
+
+# Weaviate is self-hosted: every deployment lives under a customer-chosen
+# host with no fixed apex domain. The previous verify used single-brace
+# `{host}` (which the interpolator didn't honor) and had no allowlist —
+# unsafe to verify. We capture the host via companion only when a
+# `WEAVIATE_URL=` / `WEAVIATE_HOST=` declaration is nearby, and pin the
+# allowlist to the Weaviate Cloud Service network. For self-hosted
+# deployments we deliberately Unverifiable rather than blindly POST a
+# Bearer token to an attacker-controlled hostname.
+[[detector.companions]]
+name = "weaviate_url"
+regex = 'https://[a-z0-9-]+\.weaviate\.(?:network|io|cloud)'
+within_lines = 5
+
+[detector.verify]
+method = "GET"
+url = "{{companion.weaviate_url}}/v1/meta"
+allowed_domains = ["weaviate.network", "weaviate.io", "weaviate.cloud"]
+
+[detector.verify.auth]
+type = "bearer"
+field = "match"
+
+[detector.verify.success]
+status = 200
+json_path = "version"

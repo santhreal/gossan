@@ -133,25 +133,38 @@ pub fn is_catch_all(baseline: Option<&BaselineFingerprint>) -> bool {
 }
 
 /// Read a response body up to `limit` bytes. Returns `None` if the body
-/// exceeds the limit (potential catch-all / oversized response).
+/// exceeds the limit (potential catch-all / oversized / hostile origin
+/// streaming gigabytes to OOM the scanner).
+///
+/// Reads via `bytes_stream` and aborts as soon as the running total
+/// crosses `limit` — never materialises the full body in RAM. The
+/// optional `Content-Length` short-circuit is kept as a fast reject
+/// for honest servers, but the streaming check is the actual safety
+/// guarantee for adversarial ones that omit or lie about it.
 pub async fn read_limited(resp: reqwest::Response, limit: usize) -> Option<Vec<u8>> {
-    // Check Content-Length first if available
+    use futures::StreamExt;
+
     if let Some(cl) = resp.content_length() {
         if cl > limit as u64 {
             return None;
         }
     }
 
-    match resp.bytes().await {
-        Ok(bytes) => {
-            if bytes.len() > limit {
-                None
-            } else {
-                Some(bytes.to_vec())
-            }
+    let mut buf: Vec<u8> = Vec::with_capacity(limit.min(8 * 1024));
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = match chunk {
+            Ok(c) => c,
+            // Mid-read failure is reported as an empty body, matching
+            // the previous swallowing behaviour at this call site.
+            Err(_) => return Some(Vec::new()),
+        };
+        if buf.len() + chunk.len() > limit {
+            return None;
         }
-        Err(_) => Some(Vec::new()),
+        buf.extend_from_slice(&chunk);
     }
+    Some(buf)
 }
 
 /// Compute a normalized hash of response bytes.
@@ -261,5 +274,51 @@ mod tests {
             hashes: vec![1, 2, 3],
         };
         assert!(!is_catch_all(Some(&base)));
+    }
+
+    /// Honest server, body within cap → returns the buffered bytes.
+    /// Proving positive for the streaming reader.
+    #[tokio::test]
+    async fn read_limited_returns_body_when_under_cap() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("hello world"))
+            .mount(&server)
+            .await;
+
+        let resp = reqwest::get(server.uri()).await.expect("request");
+        let result = read_limited(resp, 64 * 1024).await;
+        assert_eq!(result.as_deref(), Some(&b"hello world"[..]));
+    }
+
+    /// Adversarial: server returns a body larger than the cap. The
+    /// streaming guard MUST trip and return `None` — without
+    /// materialising the full body in RAM. Pre-fix, this returned a
+    /// fully-buffered `Some(huge_vec)` because `.bytes().await` ignored
+    /// the cap and the post-check happened too late to matter.
+    #[tokio::test]
+    async fn read_limited_rejects_body_exceeding_cap() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        // 1 MiB body, 64 KiB cap.
+        let payload = vec![b'A'; 1024 * 1024];
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(payload))
+            .mount(&server)
+            .await;
+
+        let resp = reqwest::get(server.uri()).await.expect("request");
+        let result = read_limited(resp, 64 * 1024).await;
+        assert!(
+            result.is_none(),
+            "read_limited returned Some(len={:?}) for a body larger than the cap — \
+             OOM guard regressed",
+            result.as_ref().map(Vec::len)
+        );
     }
 }

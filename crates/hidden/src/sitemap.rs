@@ -137,9 +137,13 @@ async fn extract_sitemap_urls_recursive(
             .unwrap_or("")
             .to_string();
 
-        let bytes = match resp.bytes().await {
-            Ok(b) => b,
-            Err(_) => continue,
+        // Cap the *compressed* read at MAX_GZIP_UNCOMPRESSED — gzip
+        // expansion is bounded separately by `decompress_gzip`. A
+        // hostile sitemap server streaming gigabytes would otherwise
+        // OOM the scanner before the parser ever sees the data.
+        let bytes = match crate::soft404::read_limited(resp, MAX_GZIP_UNCOMPRESSED).await {
+            Some(b) => b,
+            None => continue,
         };
 
         let body = if content_encoding.eq_ignore_ascii_case("gzip")

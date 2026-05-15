@@ -101,7 +101,10 @@ pub async fn discover_org_assets(
         return Ok(());
     }
 
-    let group: GitlabGroup = match resp.json().await {
+    // Bound the JSON read — GitLab.com group payloads are <100 KiB
+    // even for huge orgs; capping at 4 MiB protects against a hostile
+    // self-hosted GitLab instance streaming gigabytes from /groups/.
+    let group: GitlabGroup = match gossan_core::net::bounded_json(resp, 4 * 1024 * 1024).await {
         Ok(g) => g,
         Err(e) => {
             warn!(group = group_name, err = %e, "gitlab: group json decode failed");
@@ -142,13 +145,17 @@ pub async fn discover_org_assets(
             break;
         }
 
-        let projects: Vec<GitlabProject> = match resp.json().await {
-            Ok(p) => p,
-            Err(e) => {
-                warn!(page, err = %e, "gitlab: projects json decode failed");
-                break;
-            }
-        };
+        // Same bound reasoning as the group call above. PER_PAGE caps
+        // the count, but a hostile server could pad each project entry
+        // arbitrarily — cap the response itself.
+        let projects: Vec<GitlabProject> =
+            match gossan_core::net::bounded_json(resp, 8 * 1024 * 1024).await {
+                Ok(p) => p,
+                Err(e) => {
+                    warn!(page, err = %e, "gitlab: projects json decode failed");
+                    break;
+                }
+            };
 
         if projects.is_empty() {
             break;
