@@ -16,7 +16,7 @@ categories.workspace = true
 status = "alpha"
 [dependencies]
 gossan-core = { version = "0.3", path = "../core" }
-gossan-graph = { path = "../graph" }
+gossan-graph = { version = "0.3", path = "../graph" }
 tracing     = { workspace = true }
 secfinding  = { workspace = true }
 idna        = "1"

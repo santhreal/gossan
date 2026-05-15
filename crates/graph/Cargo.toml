@@ -21,7 +21,7 @@ thiserror   = { workspace = true }
 anyhow      = { workspace = true }
 tracing     = { workspace = true }
 uuid        = { workspace = true, features = ["v5"] }
-gossan-core = { path = "../core" }
+gossan-core = { version = "0.3", path = "../core" }
 secfinding  = { workspace = true }
 chrono      = { workspace = true }
 regex       = { workspace = true }

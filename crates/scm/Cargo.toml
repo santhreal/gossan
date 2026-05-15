@@ -27,7 +27,7 @@ serde_json  = { workspace = true }
 octocrab    = { workspace = true }
 gitlab      = { workspace = true }
 gix         = { workspace = true, features = ["blocking-network-client"] }
-gossan-keyhog-lite = { path = "../keyhog-lite" }
+gossan-keyhog-lite = { version = "0.3", path = "../keyhog-lite" }
 secfinding  = { workspace = true }
 tempfile    = "3"
 regex       = { workspace = true }

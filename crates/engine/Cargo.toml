@@ -20,7 +20,7 @@ default = []
 xdp = ["netforge/xdp-backend"]
 
 [dependencies]
-gossan-core = { path = "../core" }
+gossan-core = { version = "0.3", path = "../core" }
 netforge = { workspace = true }
 async-trait.workspace = true
 tokio.workspace = true
@@ -31,7 +31,7 @@ url = "2"
 secfinding = { workspace = true }
 crossbeam-channel = "0.5"
 futures = "0.3"
-gossan-classify = { path = "../classify" }
+gossan-classify = { version = "0.3", path = "../classify" }
 
 # Used in scan.rs to pin TX threads to dedicated CPU cores.
 [target.'cfg(target_os = "linux")'.dependencies]
