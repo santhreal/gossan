@@ -17,7 +17,7 @@
 )]
 
 //! JavaScript analysis scanner.
-//! Finds <script src> URLs, fetches each JS file, extracts endpoints,
+//! Finds `<script src>` URLs, fetches each JS file, extracts endpoints,
 //! detects hardcoded secrets, and probes for source maps.
 
 pub mod endpoints;

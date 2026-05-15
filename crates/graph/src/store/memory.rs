@@ -3,7 +3,7 @@
 //! Holds nodes + edges in `Vec`s. Useful for short-lived scans where
 //! the persistence cost of sqlite/graphml/json isn't justified, and as
 //! the simplest implementation against which the
-//! [`GraphBackend`](super::GraphBackend) trait shape can be verified.
+//! [`GraphBackend`] trait shape can be verified.
 
 use crate::schema::{EdgeType, NodeType};
 use crate::{Edge, Node};
