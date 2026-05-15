@@ -40,7 +40,7 @@ proptest! {
         for c in &candidates {
             assert!(check_seen.insert(c.ip), "Still contains duplicates after deduplication");
         }
-        
+
         // Assert sorting is maintained
         for i in 1..candidates.len() {
             assert!(candidates[i-1].confidence >= candidates[i].confidence);

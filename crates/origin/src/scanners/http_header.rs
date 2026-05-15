@@ -4,10 +4,10 @@
 //! the origin server IP or internal hostname. Many reverse proxies
 //! and load balancers inject headers that leak backend identity.
 
+use serde::Deserialize;
 use std::collections::HashSet;
 use std::net::IpAddr;
 use std::str::FromStr;
-use serde::Deserialize;
 use std::sync::OnceLock;
 
 use crate::util::{bounded_text, is_routable_ip};
@@ -75,7 +75,11 @@ fn leak_headers() -> &'static [LeakHeader] {
 /// Sends requests to both HTTP and HTTPS endpoints and inspects
 /// response headers for values that look like IP addresses or
 /// internal hostnames that could identify the origin server.
-pub async fn scan(domain: String, config: &Config, client: &gossan_core::ScanClient) -> anyhow::Result<Vec<OriginCandidate>> {
+pub async fn scan(
+    domain: String,
+    config: &Config,
+    client: &gossan_core::ScanClient,
+) -> anyhow::Result<Vec<OriginCandidate>> {
     let mut candidates = Vec::new();
     let mut seen_ips = HashSet::new();
 
@@ -157,7 +161,11 @@ mod tests {
     fn leak_headers_include_critical_ones() {
         let names: Vec<_> = leak_headers().iter().map(|h| h.name.clone()).collect();
         for expected in ["x-served-by", "x-backend-server", "x-real-ip", "cf-ray"] {
-            assert!(names.contains(&expected.to_string()), "missing header: {}", expected);
+            assert!(
+                names.contains(&expected.to_string()),
+                "missing header: {}",
+                expected
+            );
         }
     }
 
@@ -168,7 +176,7 @@ mod tests {
             .filter(|h| h.confidence >= 80)
             .map(|h| h.name.clone())
             .collect();
-        
+
         assert!(
             high_confidence.contains(&"x-backend-server".to_string()),
             "x-backend-server should have high confidence"

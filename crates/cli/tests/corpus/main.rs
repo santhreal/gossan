@@ -5,6 +5,6 @@
 // pulls `gossan-js` in via the cli's optional dep). Without the gate
 // `cargo test --workspace` failed at compile time on stock checkouts.
 #[cfg(feature = "js")]
-mod secret_detection;
-#[cfg(feature = "js")]
 mod noise_reduction;
+#[cfg(feature = "js")]
+mod secret_detection;

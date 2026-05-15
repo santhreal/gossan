@@ -37,7 +37,10 @@ fn intel_query_by_ip_under_10ms_on_1m_records() {
     for chunk in records.chunks(50_000) {
         db.insert_batch(chunk).expect("insert batch");
     }
-    eprintln!("intel insert: {RECORD_COUNT} records in {:?}", start.elapsed());
+    eprintln!(
+        "intel insert: {RECORD_COUNT} records in {:?}",
+        start.elapsed()
+    );
 
     // Sample 100 queries, take the median. A single query can spike
     // because of OS page-cache warm-up; the median is the reliable

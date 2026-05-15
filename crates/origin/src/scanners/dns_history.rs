@@ -22,11 +22,7 @@ async fn query_securitytrails(
 ) -> anyhow::Result<Vec<(IpAddr, String)>> {
     let url = format!("https://api.securitytrails.com/v1/history/{}/dns/a", domain);
 
-    let req = client
-        .inner()
-        .get(&url)
-        .header("APIKEY", api_key)
-        .build()?;
+    let req = client.inner().get(&url).header("APIKEY", api_key).build()?;
 
     let response = client.execute(req).await?;
 
@@ -53,7 +49,8 @@ async fn query_securitytrails(
                                 .get("first_seen")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("unknown");
-                            results.push((ip, format!("securitytrails (first_seen: {})", first_seen)));
+                            results
+                                .push((ip, format!("securitytrails (first_seen: {})", first_seen)));
                         }
                     }
                 }
@@ -112,7 +109,11 @@ async fn query_viewdns(
 }
 
 /// Scan DNS history services for the domain's pre-CDN IP addresses.
-pub async fn scan(domain: String, config: &Config, client: &ScanClient) -> anyhow::Result<Vec<OriginCandidate>> {
+pub async fn scan(
+    domain: String,
+    config: &Config,
+    client: &ScanClient,
+) -> anyhow::Result<Vec<OriginCandidate>> {
     let mut candidates = Vec::new();
     let mut seen_ips = HashSet::new();
 

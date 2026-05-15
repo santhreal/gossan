@@ -51,8 +51,11 @@ impl CloudProvider for GcsProvider {
 
             match status {
                 200 => {
-                    let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
-                    gossan_core::try_push_finding(crate::finding_builder(
+                    let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
+                        .await
+                        .unwrap_or_default();
+                    gossan_core::try_push_finding(
+                        crate::finding_builder(
                             target,
                             Severity::Critical,
                             format!("GCS bucket publicly listed: {}", name),
@@ -78,12 +81,15 @@ impl CloudProvider for GcsProvider {
                             "# List objects:\ngsutil ls gs://{}\n\
                              # Download everything:\ngsutil -m cp -r gs://{}/* .",
                             name, name
-                        )), &mut findings);
+                        )),
+                        &mut findings,
+                    );
                     try_write(client, name, url, target, &mut findings).await;
                     break; // found — no need to try second URL form
                 }
                 403 => {
-                    gossan_core::try_push_finding(crate::finding_builder(
+                    gossan_core::try_push_finding(
+                        crate::finding_builder(
                             target,
                             Severity::Low,
                             format!("GCS bucket exists (access denied): {}", name),
@@ -98,7 +104,9 @@ impl CloudProvider for GcsProvider {
                             body_excerpt: None,
                         })
                         .tag("gcs")
-                        .tag("cloud"), &mut findings);
+                        .tag("cloud"),
+                        &mut findings,
+                    );
                     try_write(client, name, url, target, &mut findings).await;
                     break;
                 }
@@ -141,7 +149,8 @@ async fn try_write(
     let status = resp.status().as_u16();
     if matches!(status, 200 | 204) {
         let _ = client.delete(&put_url).send().await;
-        gossan_core::try_push_finding(crate::finding_builder(
+        gossan_core::try_push_finding(
+            crate::finding_builder(
                 target,
                 Severity::Critical,
                 format!("GCS bucket writable without authentication: {}", bucket),
@@ -160,6 +169,8 @@ async fn try_write(
             .tag("gcs")
             .tag("cloud")
             .tag("file-upload")
-            .tag("exposure"), findings);
+            .tag("exposure"),
+            findings,
+        );
     }
 }

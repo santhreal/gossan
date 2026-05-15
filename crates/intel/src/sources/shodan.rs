@@ -69,8 +69,12 @@ impl IntelSource for ShodanSource {
             enrichment.tags = tags;
         }
 
-        enrichment.raw.insert("os".to_string(), serde_json::to_value(body.os)?);
-        enrichment.raw.insert("isp".to_string(), serde_json::to_value(body.isp)?);
+        enrichment
+            .raw
+            .insert("os".to_string(), serde_json::to_value(body.os)?);
+        enrichment
+            .raw
+            .insert("isp".to_string(), serde_json::to_value(body.isp)?);
 
         Ok(enrichment)
     }

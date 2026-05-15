@@ -33,54 +33,277 @@ struct BackupCheck {
 
 const BACKUP_CHECKS: &[BackupCheck] = &[
     // ── Generic archives ──────────────────────────────────────────
-    BackupCheck { path: "/backup.zip",          title: "Backup archive (zip) exposed",        severity: Severity::Critical, content_probe: None,                magic: &[b"PK\x03\x04"] },
-    BackupCheck { path: "/backup.tar",          title: "Backup archive (tar) exposed",        severity: Severity::Critical, content_probe: None,                magic: &[b"\x1f\x8b", b"ustar"] },
-    BackupCheck { path: "/backup.tar.gz",       title: "Backup archive (tar.gz) exposed",     severity: Severity::Critical, content_probe: None,                magic: &[b"\x1f\x8b"] },
-    BackupCheck { path: "/site.zip",            title: "Site snapshot exposed",               severity: Severity::Critical, content_probe: None,                magic: &[b"PK\x03\x04"] },
-    BackupCheck { path: "/website.zip",         title: "Website snapshot exposed",            severity: Severity::Critical, content_probe: None,                magic: &[b"PK\x03\x04"] },
-    BackupCheck { path: "/www.zip",             title: "wwwroot snapshot exposed",            severity: Severity::Critical, content_probe: None,                magic: &[b"PK\x03\x04"] },
-    BackupCheck { path: "/htdocs.zip",          title: "htdocs snapshot exposed",             severity: Severity::Critical, content_probe: None,                magic: &[b"PK\x03\x04"] },
-    BackupCheck { path: "/public_html.zip",     title: "public_html snapshot exposed",        severity: Severity::Critical, content_probe: None,                magic: &[b"PK\x03\x04"] },
-    BackupCheck { path: "/admin.zip",           title: "/admin snapshot exposed",             severity: Severity::Critical, content_probe: None,                magic: &[b"PK\x03\x04"] },
-
+    BackupCheck {
+        path: "/backup.zip",
+        title: "Backup archive (zip) exposed",
+        severity: Severity::Critical,
+        content_probe: None,
+        magic: &[b"PK\x03\x04"],
+    },
+    BackupCheck {
+        path: "/backup.tar",
+        title: "Backup archive (tar) exposed",
+        severity: Severity::Critical,
+        content_probe: None,
+        magic: &[b"\x1f\x8b", b"ustar"],
+    },
+    BackupCheck {
+        path: "/backup.tar.gz",
+        title: "Backup archive (tar.gz) exposed",
+        severity: Severity::Critical,
+        content_probe: None,
+        magic: &[b"\x1f\x8b"],
+    },
+    BackupCheck {
+        path: "/site.zip",
+        title: "Site snapshot exposed",
+        severity: Severity::Critical,
+        content_probe: None,
+        magic: &[b"PK\x03\x04"],
+    },
+    BackupCheck {
+        path: "/website.zip",
+        title: "Website snapshot exposed",
+        severity: Severity::Critical,
+        content_probe: None,
+        magic: &[b"PK\x03\x04"],
+    },
+    BackupCheck {
+        path: "/www.zip",
+        title: "wwwroot snapshot exposed",
+        severity: Severity::Critical,
+        content_probe: None,
+        magic: &[b"PK\x03\x04"],
+    },
+    BackupCheck {
+        path: "/htdocs.zip",
+        title: "htdocs snapshot exposed",
+        severity: Severity::Critical,
+        content_probe: None,
+        magic: &[b"PK\x03\x04"],
+    },
+    BackupCheck {
+        path: "/public_html.zip",
+        title: "public_html snapshot exposed",
+        severity: Severity::Critical,
+        content_probe: None,
+        magic: &[b"PK\x03\x04"],
+    },
+    BackupCheck {
+        path: "/admin.zip",
+        title: "/admin snapshot exposed",
+        severity: Severity::Critical,
+        content_probe: None,
+        magic: &[b"PK\x03\x04"],
+    },
     // ── SQL dumps ─────────────────────────────────────────────────
-    BackupCheck { path: "/db.sql",              title: "SQL dump exposed",                    severity: Severity::Critical, content_probe: Some("CREATE TABLE"), magic: &[] },
-    BackupCheck { path: "/dump.sql",            title: "SQL dump exposed",                    severity: Severity::Critical, content_probe: Some("INSERT INTO"),  magic: &[] },
-    BackupCheck { path: "/dump.sql.gz",         title: "Gzipped SQL dump exposed",            severity: Severity::Critical, content_probe: None,                magic: &[b"\x1f\x8b"] },
-    BackupCheck { path: "/data.sql",            title: "SQL dump exposed",                    severity: Severity::Critical, content_probe: Some("INSERT INTO"),  magic: &[] },
-    BackupCheck { path: "/database.sql",        title: "SQL dump exposed",                    severity: Severity::Critical, content_probe: Some("CREATE TABLE"), magic: &[] },
-    BackupCheck { path: "/backup.sql",          title: "SQL dump exposed",                    severity: Severity::Critical, content_probe: Some("CREATE TABLE"), magic: &[] },
-    BackupCheck { path: "/mysql.sql",           title: "MySQL dump exposed",                  severity: Severity::Critical, content_probe: Some("INSERT INTO"),  magic: &[] },
-    BackupCheck { path: "/postgres.sql",        title: "Postgres dump exposed",               severity: Severity::Critical, content_probe: Some("CREATE TABLE"), magic: &[] },
-
+    BackupCheck {
+        path: "/db.sql",
+        title: "SQL dump exposed",
+        severity: Severity::Critical,
+        content_probe: Some("CREATE TABLE"),
+        magic: &[],
+    },
+    BackupCheck {
+        path: "/dump.sql",
+        title: "SQL dump exposed",
+        severity: Severity::Critical,
+        content_probe: Some("INSERT INTO"),
+        magic: &[],
+    },
+    BackupCheck {
+        path: "/dump.sql.gz",
+        title: "Gzipped SQL dump exposed",
+        severity: Severity::Critical,
+        content_probe: None,
+        magic: &[b"\x1f\x8b"],
+    },
+    BackupCheck {
+        path: "/data.sql",
+        title: "SQL dump exposed",
+        severity: Severity::Critical,
+        content_probe: Some("INSERT INTO"),
+        magic: &[],
+    },
+    BackupCheck {
+        path: "/database.sql",
+        title: "SQL dump exposed",
+        severity: Severity::Critical,
+        content_probe: Some("CREATE TABLE"),
+        magic: &[],
+    },
+    BackupCheck {
+        path: "/backup.sql",
+        title: "SQL dump exposed",
+        severity: Severity::Critical,
+        content_probe: Some("CREATE TABLE"),
+        magic: &[],
+    },
+    BackupCheck {
+        path: "/mysql.sql",
+        title: "MySQL dump exposed",
+        severity: Severity::Critical,
+        content_probe: Some("INSERT INTO"),
+        magic: &[],
+    },
+    BackupCheck {
+        path: "/postgres.sql",
+        title: "Postgres dump exposed",
+        severity: Severity::Critical,
+        content_probe: Some("CREATE TABLE"),
+        magic: &[],
+    },
     // ── Editor / IDE artefacts ────────────────────────────────────
-    BackupCheck { path: "/.swp",                title: "Vim swap file exposed",               severity: Severity::High,     content_probe: None,                magic: &[b"b0VIM"] },
-    BackupCheck { path: "/index.php.swp",       title: "Vim swap (index.php) exposed",        severity: Severity::High,     content_probe: None,                magic: &[b"b0VIM"] },
-    BackupCheck { path: "/index.html.swp",      title: "Vim swap (index.html) exposed",       severity: Severity::High,     content_probe: None,                magic: &[b"b0VIM"] },
-    BackupCheck { path: "/wp-config.php.swp",   title: "Vim swap (wp-config.php) exposed",    severity: Severity::Critical, content_probe: None,                magic: &[b"b0VIM"] },
-    BackupCheck { path: "/.DS_Store",           title: ".DS_Store exposed",                   severity: Severity::Low,      content_probe: None,                magic: &[b"BUD1", b"bplist"] },
-
+    BackupCheck {
+        path: "/.swp",
+        title: "Vim swap file exposed",
+        severity: Severity::High,
+        content_probe: None,
+        magic: &[b"b0VIM"],
+    },
+    BackupCheck {
+        path: "/index.php.swp",
+        title: "Vim swap (index.php) exposed",
+        severity: Severity::High,
+        content_probe: None,
+        magic: &[b"b0VIM"],
+    },
+    BackupCheck {
+        path: "/index.html.swp",
+        title: "Vim swap (index.html) exposed",
+        severity: Severity::High,
+        content_probe: None,
+        magic: &[b"b0VIM"],
+    },
+    BackupCheck {
+        path: "/wp-config.php.swp",
+        title: "Vim swap (wp-config.php) exposed",
+        severity: Severity::Critical,
+        content_probe: None,
+        magic: &[b"b0VIM"],
+    },
+    BackupCheck {
+        path: "/.DS_Store",
+        title: ".DS_Store exposed",
+        severity: Severity::Low,
+        content_probe: None,
+        magic: &[b"BUD1", b"bplist"],
+    },
     // ── Common version-suffix backups ─────────────────────────────
-    BackupCheck { path: "/index.php.bak",       title: "index.php backup exposed",            severity: Severity::High,     content_probe: Some("<?"),          magic: &[] },
-    BackupCheck { path: "/index.html.bak",      title: "index.html backup exposed",           severity: Severity::Medium,   content_probe: None,                magic: &[] },
-    BackupCheck { path: "/index.php~",          title: "index.php~ backup exposed",           severity: Severity::High,     content_probe: Some("<?"),          magic: &[] },
-    BackupCheck { path: "/index.php.old",       title: "index.php.old backup exposed",        severity: Severity::High,     content_probe: Some("<?"),          magic: &[] },
-    BackupCheck { path: "/index.php.orig",      title: "index.php.orig backup exposed",       severity: Severity::High,     content_probe: Some("<?"),          magic: &[] },
-    BackupCheck { path: "/web.config.bak",      title: "web.config backup exposed",           severity: Severity::High,     content_probe: Some("<configuration"), magic: &[] },
-    BackupCheck { path: "/config.php.bak",      title: "config.php backup exposed",           severity: Severity::Critical, content_probe: Some("<?"),          magic: &[] },
-    BackupCheck { path: "/settings.py.bak",     title: "settings.py backup exposed",          severity: Severity::Critical, content_probe: Some("SECRET_KEY"),  magic: &[] },
-    BackupCheck { path: "/application.yml.bak", title: "application.yml backup exposed",      severity: Severity::High,     content_probe: Some(":"),           magic: &[] },
-    BackupCheck { path: "/database.yml.bak",    title: "database.yml backup exposed",         severity: Severity::Critical, content_probe: Some("password"),    magic: &[] },
-
+    BackupCheck {
+        path: "/index.php.bak",
+        title: "index.php backup exposed",
+        severity: Severity::High,
+        content_probe: Some("<?"),
+        magic: &[],
+    },
+    BackupCheck {
+        path: "/index.html.bak",
+        title: "index.html backup exposed",
+        severity: Severity::Medium,
+        content_probe: None,
+        magic: &[],
+    },
+    BackupCheck {
+        path: "/index.php~",
+        title: "index.php~ backup exposed",
+        severity: Severity::High,
+        content_probe: Some("<?"),
+        magic: &[],
+    },
+    BackupCheck {
+        path: "/index.php.old",
+        title: "index.php.old backup exposed",
+        severity: Severity::High,
+        content_probe: Some("<?"),
+        magic: &[],
+    },
+    BackupCheck {
+        path: "/index.php.orig",
+        title: "index.php.orig backup exposed",
+        severity: Severity::High,
+        content_probe: Some("<?"),
+        magic: &[],
+    },
+    BackupCheck {
+        path: "/web.config.bak",
+        title: "web.config backup exposed",
+        severity: Severity::High,
+        content_probe: Some("<configuration"),
+        magic: &[],
+    },
+    BackupCheck {
+        path: "/config.php.bak",
+        title: "config.php backup exposed",
+        severity: Severity::Critical,
+        content_probe: Some("<?"),
+        magic: &[],
+    },
+    BackupCheck {
+        path: "/settings.py.bak",
+        title: "settings.py backup exposed",
+        severity: Severity::Critical,
+        content_probe: Some("SECRET_KEY"),
+        magic: &[],
+    },
+    BackupCheck {
+        path: "/application.yml.bak",
+        title: "application.yml backup exposed",
+        severity: Severity::High,
+        content_probe: Some(":"),
+        magic: &[],
+    },
+    BackupCheck {
+        path: "/database.yml.bak",
+        title: "database.yml backup exposed",
+        severity: Severity::Critical,
+        content_probe: Some("password"),
+        magic: &[],
+    },
     // ── IDE project metadata ──────────────────────────────────────
-    BackupCheck { path: "/.idea/workspace.xml", title: "JetBrains IDE workspace exposed",     severity: Severity::Medium,   content_probe: Some("<project"),    magic: &[] },
-    BackupCheck { path: "/.vscode/settings.json", title: "VSCode settings exposed",           severity: Severity::Low,      content_probe: Some("{"),           magic: &[] },
-    BackupCheck { path: "/.project",            title: "Eclipse .project exposed",            severity: Severity::Low,      content_probe: Some("<projectDescription"), magic: &[] },
-
+    BackupCheck {
+        path: "/.idea/workspace.xml",
+        title: "JetBrains IDE workspace exposed",
+        severity: Severity::Medium,
+        content_probe: Some("<project"),
+        magic: &[],
+    },
+    BackupCheck {
+        path: "/.vscode/settings.json",
+        title: "VSCode settings exposed",
+        severity: Severity::Low,
+        content_probe: Some("{"),
+        magic: &[],
+    },
+    BackupCheck {
+        path: "/.project",
+        title: "Eclipse .project exposed",
+        severity: Severity::Low,
+        content_probe: Some("<projectDescription"),
+        magic: &[],
+    },
     // ── Compressed config / log dumps ─────────────────────────────
-    BackupCheck { path: "/logs.zip",            title: "Logs archive exposed",                severity: Severity::High,     content_probe: None,                magic: &[b"PK\x03\x04"] },
-    BackupCheck { path: "/access.log.gz",       title: "Access-log archive exposed",          severity: Severity::Medium,   content_probe: None,                magic: &[b"\x1f\x8b"] },
-    BackupCheck { path: "/error.log.gz",        title: "Error-log archive exposed",           severity: Severity::Medium,   content_probe: None,                magic: &[b"\x1f\x8b"] },
+    BackupCheck {
+        path: "/logs.zip",
+        title: "Logs archive exposed",
+        severity: Severity::High,
+        content_probe: None,
+        magic: &[b"PK\x03\x04"],
+    },
+    BackupCheck {
+        path: "/access.log.gz",
+        title: "Access-log archive exposed",
+        severity: Severity::Medium,
+        content_probe: None,
+        magic: &[b"\x1f\x8b"],
+    },
+    BackupCheck {
+        path: "/error.log.gz",
+        title: "Error-log archive exposed",
+        severity: Severity::Medium,
+        content_probe: None,
+        magic: &[b"\x1f\x8b"],
+    },
 ];
 
 /// Probe the target for backup-file exposures. No-op for non-Web targets.
@@ -177,7 +400,11 @@ mod tests {
         use std::collections::HashSet;
         let mut seen = HashSet::new();
         for c in BACKUP_CHECKS {
-            assert!(seen.insert(c.path), "duplicate backup check path: {}", c.path);
+            assert!(
+                seen.insert(c.path),
+                "duplicate backup check path: {}",
+                c.path
+            );
         }
     }
 

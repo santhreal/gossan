@@ -82,7 +82,9 @@ impl IntelSource for CensysSource {
             });
         }
 
-        enrichment.raw.insert("censys_code".to_string(), serde_json::to_value(body.code)?);
+        enrichment
+            .raw
+            .insert("censys_code".to_string(), serde_json::to_value(body.code)?);
 
         Ok(enrichment)
     }

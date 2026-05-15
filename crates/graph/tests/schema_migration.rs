@@ -8,9 +8,9 @@
 //! upgrade path executes and lands a fresh row at the current
 //! SCHEMA_VERSION on reopen.
 
+use gossan_graph::schema::SCHEMA_VERSION;
 use gossan_graph::store::sqlite::SqliteBackend;
 use gossan_graph::store::GraphBackend;
-use gossan_graph::schema::SCHEMA_VERSION;
 use rusqlite::Connection;
 use tempfile::TempDir;
 
@@ -29,12 +29,10 @@ fn old_schema_version_triggers_migration_to_current() {
     // written by an older binary).
     {
         let conn = Connection::open(&path).expect("downgrade open");
-        conn.execute("DELETE FROM schema_version", []).expect("clear");
-        conn.execute(
-            "INSERT INTO schema_version (version) VALUES (0)",
-            [],
-        )
-        .expect("insert v0");
+        conn.execute("DELETE FROM schema_version", [])
+            .expect("clear");
+        conn.execute("INSERT INTO schema_version (version) VALUES (0)", [])
+            .expect("insert v0");
     }
 
     // Reopen — `init_schema` should detect v0 and migrate to current.

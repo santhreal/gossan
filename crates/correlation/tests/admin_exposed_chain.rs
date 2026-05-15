@@ -28,7 +28,9 @@ fn admin_exposed_chain_fires_when_admin_and_no_auth_share_host() {
     let host = "https://admin.example.com/";
     let findings = vec![admin_finding(host), missing_auth_finding(host)];
     let chains = engine.run(&findings, &[]);
-    let admin_chain = chains.iter().find(|f| f.title().to_lowercase().contains("admin"));
+    let admin_chain = chains
+        .iter()
+        .find(|f| f.title().to_lowercase().contains("admin"));
     assert!(
         admin_chain.is_some(),
         "expected an admin-no-auth chain finding; got: {:?}",
@@ -43,8 +45,10 @@ fn admin_exposed_chain_does_not_fire_when_only_admin_finding() {
     // Admin finding alone — no auth-missing pair.
     let chains = engine.run(&[admin_finding(host)], &[]);
     assert!(
-        !chains.iter().any(|f| f.title().to_lowercase().contains("admin-no-auth")
-            || f.title().to_lowercase().contains("admin panel")),
+        !chains
+            .iter()
+            .any(|f| f.title().to_lowercase().contains("admin-no-auth")
+                || f.title().to_lowercase().contains("admin panel")),
         "admin-only must not fire chain; got: {:?}",
         chains.iter().map(|f| f.title()).collect::<Vec<_>>()
     );
@@ -61,7 +65,9 @@ fn admin_exposed_chain_does_not_fire_for_different_hosts() {
         &[],
     );
     assert!(
-        !chains.iter().any(|f| f.title().to_lowercase().contains("admin")),
+        !chains
+            .iter()
+            .any(|f| f.title().to_lowercase().contains("admin")),
         "chain must not fire across different hosts; got: {:?}",
         chains.iter().map(|f| f.title()).collect::<Vec<_>>()
     );

@@ -32,7 +32,10 @@ pub fn fuse_confidence(count: usize) -> f64 {
 /// - 1 source  -> no change
 /// - 2 sources -> +1 tier (e.g., Medium -> High)
 /// - 3+ sources -> +2 tiers (capped at Critical)
-pub fn confidence_to_severity_boost(base: secfinding::Severity, count: usize) -> secfinding::Severity {
+pub fn confidence_to_severity_boost(
+    base: secfinding::Severity,
+    count: usize,
+) -> secfinding::Severity {
     use secfinding::Severity;
     let tiers = match count {
         1 => 0,
@@ -93,10 +96,22 @@ mod tests {
 
     #[test]
     fn severity_boost_capped() {
-        assert_eq!(confidence_to_severity_boost(Severity::Info, 1), Severity::Info);
-        assert_eq!(confidence_to_severity_boost(Severity::Medium, 2), Severity::High);
-        assert_eq!(confidence_to_severity_boost(Severity::High, 3), Severity::Critical);
-        assert_eq!(confidence_to_severity_boost(Severity::Critical, 5), Severity::Critical);
+        assert_eq!(
+            confidence_to_severity_boost(Severity::Info, 1),
+            Severity::Info
+        );
+        assert_eq!(
+            confidence_to_severity_boost(Severity::Medium, 2),
+            Severity::High
+        );
+        assert_eq!(
+            confidence_to_severity_boost(Severity::High, 3),
+            Severity::Critical
+        );
+        assert_eq!(
+            confidence_to_severity_boost(Severity::Critical, 5),
+            Severity::Critical
+        );
     }
 
     #[test]

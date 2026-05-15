@@ -35,8 +35,8 @@ fn fixture() -> Vec<Finding> {
 
 #[test]
 fn json_output_shape_matches_v1_schema() {
-    let rendered = santh_output::render(&fixture(), santh_output::Format::Json, "gossan")
-        .expect("render");
+    let rendered =
+        santh_output::render(&fixture(), santh_output::Format::Json, "gossan").expect("render");
     let mut buf = Vec::new();
     santh_output::emit(&rendered, &mut buf).expect("emit");
     let value: Value = serde_json::from_slice(&buf).expect("parse json");
@@ -67,8 +67,8 @@ fn json_output_shape_matches_v1_schema() {
 
 #[test]
 fn jsonl_output_emits_one_finding_per_line() {
-    let rendered = santh_output::render(&fixture(), santh_output::Format::Jsonl, "gossan")
-        .expect("render");
+    let rendered =
+        santh_output::render(&fixture(), santh_output::Format::Jsonl, "gossan").expect("render");
     let mut buf = Vec::new();
     santh_output::emit(&rendered, &mut buf).expect("emit");
     let body = String::from_utf8(buf).expect("utf8");
@@ -86,8 +86,8 @@ fn jsonl_output_emits_one_finding_per_line() {
 
 #[test]
 fn sarif_output_carries_v210_marker_and_results() {
-    let rendered = santh_output::render(&fixture(), santh_output::Format::Sarif, "gossan")
-        .expect("render");
+    let rendered =
+        santh_output::render(&fixture(), santh_output::Format::Sarif, "gossan").expect("render");
     let mut buf = Vec::new();
     santh_output::emit(&rendered, &mut buf).expect("emit");
     let value: Value = serde_json::from_slice(&buf).expect("sarif parses as json");

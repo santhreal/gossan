@@ -39,10 +39,16 @@ impl CloudProvider for ApiGatewayProvider {
         // An active API Gateway typically returns 403 Missing Authentication Token if accessed directly
         // at the root without a valid stage/route, or potentially a 200/404 if a root route is defined.
         if status == 403 || status == 404 || status == 200 || status == 401 {
-            let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
-            
+            let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
+                .await
+                .unwrap_or_default();
+
             // "Missing Authentication Token" is the classic AWS API Gateway error for a missing route
-            if body.contains("Missing Authentication Token") || status == 200 || status == 401 || status == 404 {
+            if body.contains("Missing Authentication Token")
+                || status == 200
+                || status == 401
+                || status == 404
+            {
                 gossan_core::try_push_finding(crate::finding_builder(target, Severity::Low,
                         format!("API Gateway found: {}", name),
                         format!(

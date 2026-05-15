@@ -41,9 +41,12 @@ async fn wordpress(client: &Client, base: &str, target: &Target) -> Vec<Finding>
     let url = format!("{}/wp-json/wp/v2/users", base);
     if let Ok(resp) = client.get(&url).send().await {
         if resp.status().as_u16() == 200 {
-            let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
+            let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
+                .await
+                .unwrap_or_default();
             if body.contains("\"id\"") && body.contains("\"slug\"") {
-                gossan_core::try_push_finding(crate::info_finding(
+                gossan_core::try_push_finding(
+                    crate::info_finding(
                         target,
                         Severity::High,
                         "WordPress user enumeration via REST API",
@@ -64,7 +67,9 @@ async fn wordpress(client: &Client, base: &str, target: &Target) -> Vec<Finding>
                     .exploit_hint(format!(
                         "curl -s '{}/wp-json/wp/v2/users' | jq '.[].{{id,name,slug}}'",
                         base
-                    )), &mut f);
+                    )),
+                    &mut f,
+                );
             }
         }
     }
@@ -74,9 +79,12 @@ async fn wordpress(client: &Client, base: &str, target: &Target) -> Vec<Finding>
     if let Ok(resp) = client.get(&xmlrpc_url).send().await {
         let status = resp.status().as_u16();
         if status == 200 || status == 405 {
-            let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
+            let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
+                .await
+                .unwrap_or_default();
             if body.contains("XML-RPC") || body.contains("xmlrpc") || status == 405 {
-                gossan_core::try_push_finding(crate::info_finding(
+                gossan_core::try_push_finding(
+                    crate::info_finding(
                         target,
                         Severity::Medium,
                         "WordPress XML-RPC enabled",
@@ -99,7 +107,9 @@ async fn wordpress(client: &Client, base: &str, target: &Target) -> Vec<Finding>
                         "# WPScan multicall brute force (no lockout):\n\
                          wpscan --url {} --passwords wordlist.txt --xmlrpc-brute-force",
                         base
-                    )), &mut f);
+                    )),
+                    &mut f,
+                );
             }
         }
     }
@@ -108,11 +118,14 @@ async fn wordpress(client: &Client, base: &str, target: &Target) -> Vec<Finding>
     let debug_url = format!("{}/wp-content/debug.log", base);
     if let Ok(resp) = client.get(&debug_url).send().await {
         if resp.status().as_u16() == 200 {
-            let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
+            let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
+                .await
+                .unwrap_or_default();
             if (body.contains("PHP") || body.contains("WordPress") || body.contains("Fatal"))
                 && body.len() > 50
             {
-                gossan_core::try_push_finding(crate::info_finding(
+                gossan_core::try_push_finding(
+                    crate::info_finding(
                         target,
                         Severity::High,
                         "WordPress debug.log publicly readable",
@@ -129,7 +142,9 @@ async fn wordpress(client: &Client, base: &str, target: &Target) -> Vec<Finding>
                     })
                     .tag("wordpress")
                     .tag("log-exposure")
-                    .tag("exposure"), &mut f);
+                    .tag("exposure"),
+                    &mut f,
+                );
             }
         }
     }
@@ -146,7 +161,9 @@ async fn drupal(client: &Client, base: &str, target: &Target) -> Vec<Finding> {
     let url = format!("{}/CHANGELOG.txt", base);
     if let Ok(resp) = client.get(&url).send().await {
         if resp.status().as_u16() == 200 {
-            let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
+            let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
+                .await
+                .unwrap_or_default();
             if body.contains("Drupal") {
                 let version = body
                     .lines()
@@ -174,9 +191,12 @@ async fn drupal(client: &Client, base: &str, target: &Target) -> Vec<Finding> {
     let update_url = format!("{}/update.php", base);
     if let Ok(resp) = client.get(&update_url).send().await {
         if resp.status().as_u16() == 200 {
-            let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
+            let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
+                .await
+                .unwrap_or_default();
             if body.contains("Drupal") || body.contains("database update") {
-                gossan_core::try_push_finding(crate::info_finding(
+                gossan_core::try_push_finding(
+                    crate::info_finding(
                         target,
                         Severity::High,
                         "Drupal update.php exposed",
@@ -193,7 +213,9 @@ async fn drupal(client: &Client, base: &str, target: &Target) -> Vec<Finding> {
                         body_excerpt: None,
                     })
                     .tag("drupal")
-                    .tag("exposure"), &mut f);
+                    .tag("exposure"),
+                    &mut f,
+                );
             }
         }
     }
@@ -210,7 +232,9 @@ async fn laravel(client: &Client, base: &str, target: &Target) -> Vec<Finding> {
     let url = format!("{}/_ignition/health-check", base);
     if let Ok(resp) = client.get(&url).send().await {
         if resp.status().as_u16() == 200 {
-            let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
+            let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
+                .await
+                .unwrap_or_default();
             if body.contains("can_execute_commands") || body.contains("ignition") {
                 let can_exec = body.contains("\"can_execute_commands\":true");
                 let sev = if can_exec {
@@ -253,7 +277,9 @@ async fn joomla(client: &Client, base: &str, target: &Target) -> Vec<Finding> {
     let admin_url = format!("{}/administrator/", base);
     if let Ok(resp) = client.get(&admin_url).send().await {
         if resp.status().as_u16() == 200 {
-            let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
+            let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
+                .await
+                .unwrap_or_default();
             if body.contains("Joomla") || body.contains("mod-login") {
                 gossan_core::try_push_finding(crate::info_finding(target, Severity::Medium,
                         "Joomla administrator panel exposed",
@@ -284,9 +310,12 @@ async fn strapi(client: &Client, base: &str, target: &Target) -> Vec<Finding> {
     let admin_url = format!("{}/admin", base);
     if let Ok(resp) = client.get(&admin_url).send().await {
         if resp.status().as_u16() == 200 {
-            let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
+            let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
+                .await
+                .unwrap_or_default();
             if body.contains("strapi") || body.contains("Strapi") {
-                gossan_core::try_push_finding(crate::info_finding(
+                gossan_core::try_push_finding(
+                    crate::info_finding(
                         target,
                         Severity::Medium,
                         "Strapi admin panel accessible",
@@ -303,7 +332,9 @@ async fn strapi(client: &Client, base: &str, target: &Target) -> Vec<Finding> {
                     })
                     .tag("strapi")
                     .tag("admin-panel")
-                    .tag("exposure"), &mut f);
+                    .tag("exposure"),
+                    &mut f,
+                );
             }
         }
     }

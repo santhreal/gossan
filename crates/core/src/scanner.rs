@@ -4,8 +4,8 @@
 //! pipeline uses to compose scanner stages.
 
 use async_trait::async_trait;
-use std::sync::Arc;
 use hickory_resolver::TokioAsyncResolver;
+use std::sync::Arc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::{Config, Finding, Target};
@@ -46,7 +46,7 @@ pub trait Scanner: Send + Sync {
     fn tags(&self) -> &[&'static str];
     /// Return true when this scanner can process the supplied target.
     fn accepts(&self, target: &Target) -> bool;
-    
+
     /// Execute the scan as a pure streaming node in the DAG.
     /// Findings and Targets MUST be emitted via `input.emit()` and `input.emit_target()`.
     async fn run(&self, input: ScanInput, config: &Config) -> anyhow::Result<()>;

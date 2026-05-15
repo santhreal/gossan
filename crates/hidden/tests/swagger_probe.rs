@@ -52,8 +52,10 @@ async fn swagger_exposed_fires_finding() {
     let target = web_target(&format!("{}/", server.uri()));
     let findings = swagger::probe(&client, &target, None).await.unwrap();
     assert!(
-        findings.iter().any(|f| f.title().to_lowercase().contains("openapi")
-            || f.title().to_lowercase().contains("swagger")),
+        findings
+            .iter()
+            .any(|f| f.title().to_lowercase().contains("openapi")
+                || f.title().to_lowercase().contains("swagger")),
         "exposed swagger.json must fire a finding; got: {:?}",
         findings.iter().map(|f| f.title()).collect::<Vec<_>>()
     );

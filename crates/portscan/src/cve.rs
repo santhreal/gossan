@@ -421,7 +421,9 @@ mod tests {
     #[test]
     fn correlate_matches_apache_critical_rule() {
         let findings = correlate("Server: Apache/2.4.49", &service(80));
-        assert!(findings.iter().any(|f| f.title().contains("CVE-2021-41773")));
+        assert!(findings
+            .iter()
+            .any(|f| f.title().contains("CVE-2021-41773")));
     }
 
     #[test]
@@ -442,7 +444,9 @@ mod tests {
     #[test]
     fn correlate_is_case_insensitive() {
         let findings = correlate("SSH-2.0-OPENSSH_8.0", &service(22));
-        assert!(findings.iter().any(|f| f.title().contains("CVE-2023-38408")));
+        assert!(findings
+            .iter()
+            .any(|f| f.title().contains("CVE-2023-38408")));
     }
 
     #[test]

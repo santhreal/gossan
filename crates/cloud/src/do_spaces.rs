@@ -103,9 +103,12 @@ impl CloudProvider for DoSpacesProvider {
 
             match status {
                 200 => {
-                    let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
+                    let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
+                        .await
+                        .unwrap_or_default();
                     let listed = is_xml_listing(&body);
-                    gossan_core::try_push_finding(crate::finding_builder(
+                    gossan_core::try_push_finding(
+                        crate::finding_builder(
                             target,
                             if listed {
                                 Severity::Critical
@@ -133,15 +136,21 @@ impl CloudProvider for DoSpacesProvider {
                         })
                         .tag("cloud")
                         .tag("storage")
-                        .tag("do-spaces"), &mut findings);
+                        .tag("do-spaces"),
+                        &mut findings,
+                    );
                     try_write(client, name, &region.id, &url, target, &mut findings).await;
                     break;
                 }
                 403 => {
-                    gossan_core::try_push_finding(crate::finding_builder(
+                    gossan_core::try_push_finding(
+                        crate::finding_builder(
                             target,
                             Severity::Low,
-                            format!("DO Spaces bucket exists (private): {} ({})", name, region.id),
+                            format!(
+                                "DO Spaces bucket exists (private): {} ({})",
+                                name, region.id
+                            ),
                             format!(
                                 "DO Spaces bucket '{}' ({}) exists but is private (HTTP 403). \
                                  Verify ownership.",
@@ -150,7 +159,9 @@ impl CloudProvider for DoSpacesProvider {
                         )
                         .tag("cloud")
                         .tag("storage")
-                        .tag("do-spaces"), &mut findings);
+                        .tag("do-spaces"),
+                        &mut findings,
+                    );
                     try_write(client, name, &region.id, &url, target, &mut findings).await;
                     break;
                 }
@@ -190,7 +201,8 @@ async fn try_write(
     let status = resp.status().as_u16();
     if matches!(status, 200 | 204) {
         let _ = client.delete(&put_url).send().await;
-        gossan_core::try_push_finding(crate::finding_builder(
+        gossan_core::try_push_finding(
+            crate::finding_builder(
                 target,
                 Severity::Critical,
                 format!(
@@ -213,7 +225,9 @@ async fn try_write(
             .tag("cloud")
             .tag("storage")
             .tag("do-spaces")
-            .tag("file-upload"), findings);
+            .tag("file-upload"),
+            findings,
+        );
     }
 }
 
@@ -225,7 +239,7 @@ mod tests {
     fn do_regions_load_from_toml() {
         let regions = region_ids();
         assert!(!regions.is_empty(), "should have DO regions from TOML");
-        
+
         // Check for expected regions
         assert!(
             regions.iter().any(|r| r.id == "nyc3"),
@@ -250,7 +264,11 @@ mod tests {
     fn do_regions_cover_major_geographies() {
         let ids: Vec<_> = region_ids().iter().map(|r| r.id.clone()).collect();
         for expected in ["nyc3", "ams3", "sgp1", "fra1"] {
-            assert!(ids.contains(&expected.to_string()), "missing region: {}", expected);
+            assert!(
+                ids.contains(&expected.to_string()),
+                "missing region: {}",
+                expected
+            );
         }
     }
 }

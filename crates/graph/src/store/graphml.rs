@@ -4,7 +4,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::store::GraphBackend;
-use crate::{Edge, Node, schema::EdgeType};
+use crate::{schema::EdgeType, Edge, Node};
 
 /// GraphML file backend.
 pub struct GraphMlBackend {
@@ -52,11 +52,7 @@ pub enum GraphMlError {
     MissingAttr(String),
 }
 
-fn write_graphml(
-    w: &mut impl Write,
-    nodes: &[Node],
-    edges: &[Edge],
-) -> Result<(), std::io::Error> {
+fn write_graphml(w: &mut impl Write, nodes: &[Node], edges: &[Edge]) -> Result<(), std::io::Error> {
     writeln!(w, r#"<?xml version="1.0" encoding="UTF-8"?>"#)?;
     writeln!(
         w,
@@ -91,7 +87,11 @@ fn write_graphml(
 
     for n in nodes {
         write!(w, r#"<node id="{}" >"#, xml_escape(&n.id))?;
-        writeln!(w, r#"<data key="kind">{}</data>"#, xml_escape(&n.kind.to_string()))?;
+        writeln!(
+            w,
+            r#"<data key="kind">{}</data>"#,
+            xml_escape(&n.kind.to_string())
+        )?;
         writeln!(w, r#"<data key="label">{}</data>"#, xml_escape(&n.label))?;
         if let Some(ref p) = n.payload {
             writeln!(
@@ -149,15 +149,12 @@ fn parse_graphml(content: &str) -> Result<(Vec<Node>, Vec<Edge>), GraphMlError> 
     // inside <node> / <edge> / <data> blocks can span the multi-line
     // pretty-printed output written by `write_graphml`. Without it
     // every roundtrip silently dropped its payload.
-    let node_re = regex::Regex::new(
-        r#"(?s)<node\s+id="([^"]+)"[^>]*>(.*?)</node>"#,
-    )
-    .map_err(|e| GraphMlError::Xml(e.to_string()))?;
+    let node_re = regex::Regex::new(r#"(?s)<node\s+id="([^"]+)"[^>]*>(.*?)</node>"#)
+        .map_err(|e| GraphMlError::Xml(e.to_string()))?;
 
-    let edge_re = regex::Regex::new(
-        r#"(?s)<edge\s+source="([^"]+)"\s+target="([^"]+)"[^>]*>(.*?)</edge>"#,
-    )
-    .map_err(|e| GraphMlError::Xml(e.to_string()))?;
+    let edge_re =
+        regex::Regex::new(r#"(?s)<edge\s+source="([^"]+)"\s+target="([^"]+)"[^>]*>(.*?)</edge>"#)
+            .map_err(|e| GraphMlError::Xml(e.to_string()))?;
 
     let data_re = regex::Regex::new(r#"(?s)<data\s+key="([^"]+)">(.*?)</data>"#)
         .map_err(|e| GraphMlError::Xml(e.to_string()))?;
@@ -286,10 +283,7 @@ impl GraphBackend for GraphMlBackend {
         Ok(self.edges.clone())
     }
 
-    fn find_nodes_by_type(
-        &self,
-        kind: crate::schema::NodeType,
-    ) -> Result<Vec<Node>, Self::Error> {
+    fn find_nodes_by_type(&self, kind: crate::schema::NodeType) -> Result<Vec<Node>, Self::Error> {
         Ok(self
             .nodes
             .iter()
@@ -307,8 +301,7 @@ impl GraphBackend for GraphMlBackend {
             .edges
             .iter()
             .filter(|e| {
-                e.source_id == node_id
-                    && edge_type.as_ref().map_or(true, |et| e.kind == *et)
+                e.source_id == node_id && edge_type.as_ref().map_or(true, |et| e.kind == *et)
             })
             .cloned()
             .collect())

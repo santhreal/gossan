@@ -75,7 +75,9 @@ impl IntelDb {
         )
         .context("initialising intel schema")?;
 
-        Ok(Self { conn: Mutex::new(conn) })
+        Ok(Self {
+            conn: Mutex::new(conn),
+        })
     }
 
     /// Insert a batch of records transactionally.
@@ -136,8 +138,7 @@ impl IntelDb {
             })
         })?;
 
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(Into::into)
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
     /// Query records by hostname.
@@ -168,7 +169,6 @@ impl IntelDb {
             })
         })?;
 
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(Into::into)
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 }

@@ -66,8 +66,12 @@ impl IntelSource for GreyNoiseSource {
             }
         }
 
-        enrichment.raw.insert("noise".to_string(), serde_json::to_value(body.noise)?);
-        enrichment.raw.insert("riot".to_string(), serde_json::to_value(body.riot)?);
+        enrichment
+            .raw
+            .insert("noise".to_string(), serde_json::to_value(body.noise)?);
+        enrichment
+            .raw
+            .insert("riot".to_string(), serde_json::to_value(body.riot)?);
 
         Ok(enrichment)
     }
@@ -118,10 +122,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let source = GreyNoiseSource::new(
-            reqwest::Client::new(),
-            Some("test-key".to_string()),
-        );
+        let source = GreyNoiseSource::new(reqwest::Client::new(), Some("test-key".to_string()));
 
         // Override the URL for testing via a helper method would be cleaner,
         // but here we test the parser directly. Clone above so this

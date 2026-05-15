@@ -30,7 +30,10 @@ const MAX_HOSTNAMES: usize = 500;
 ///
 /// crt.sh is free, requires no API key, and indexes the full CT log
 /// ecosystem (Google Argon, Cloudflare Nimbus, Let's Encrypt Oak, etc.).
-pub async fn scan(domain: String, client: &gossan_core::ScanClient) -> anyhow::Result<Vec<OriginCandidate>> {
+pub async fn scan(
+    domain: String,
+    client: &gossan_core::ScanClient,
+) -> anyhow::Result<Vec<OriginCandidate>> {
     let mut candidates = Vec::new();
 
     let url = format!(

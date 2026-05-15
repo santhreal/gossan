@@ -19,19 +19,15 @@
 
 use gossan_core::Target;
 use hickory_resolver::{proto::rr::RecordType, TokioAsyncResolver};
-use secfinding::{Evidence, Finding, Severity, FindingKind};
+use secfinding::{Evidence, Finding, FindingKind, Severity};
 
 /// CNAME takeover fingerprints loaded at compile time.
 static FINGERPRINTS: &str = include_str!("takeovers.txt");
 
 /// Run all takeover checks: CNAME, NS, and MX.
-pub async fn check(
-    resolver: &TokioAsyncResolver,
-    domain: &str,
-    target: &Target,
-) -> Vec<Finding> {
+pub async fn check(resolver: &TokioAsyncResolver, domain: &str, target: &Target) -> Vec<Finding> {
     let mut findings = Vec::new();
-    
+
     findings.extend(check_cname(resolver, domain, target).await);
     findings.extend(check_ns(resolver, domain, target).await);
     findings.extend(check_mx(resolver, domain, target).await);
@@ -53,11 +49,7 @@ fn fingerprints() -> Vec<(&'static str, &'static str)> {
 // ── CNAME takeover ──────────────────────────────────────────────────────────
 
 /// Detect dangling CNAMEs pointing at 60+ service fingerprints.
-async fn check_cname(
-    resolver: &TokioAsyncResolver,
-    domain: &str,
-    target: &Target,
-) -> Vec<Finding> {
+async fn check_cname(resolver: &TokioAsyncResolver, domain: &str, target: &Target) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     let cname = match resolver.lookup(domain, RecordType::CNAME).await {
@@ -81,9 +73,7 @@ async fn check_cname(
     };
 
     let fps = fingerprints();
-    let matched_service = fps
-        .iter()
-        .find(|(suffix, _)| cname.ends_with(suffix));
+    let matched_service = fps.iter().find(|(suffix, _)| cname.ends_with(suffix));
 
     let (suffix, service) = match matched_service {
         Some(s) => *s,
@@ -120,11 +110,7 @@ async fn check_cname(
 /// If a domain's NS record points to a nameserver that doesn't resolve,
 /// an attacker who registers that nameserver domain controls all DNS for
 /// the victim domain — the most severe form of takeover.
-async fn check_ns(
-    resolver: &TokioAsyncResolver,
-    domain: &str,
-    target: &Target,
-) -> Vec<Finding> {
+async fn check_ns(resolver: &TokioAsyncResolver, domain: &str, target: &Target) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     let ns_records = match resolver.lookup(domain, RecordType::NS).await {
@@ -144,12 +130,9 @@ async fn check_ns(
         .collect();
 
     for ns in &nameservers {
-        if resolver
-            .lookup(ns.as_str(), RecordType::A)
-            .await
-            .is_err()
-        {
-            gossan_core::try_push_finding(Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Critical)
+        if resolver.lookup(ns.as_str(), RecordType::A).await.is_err() {
+            gossan_core::try_push_finding(
+                Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Critical)
                     .title(format!("NS takeover: dangling nameserver {ns}"))
                     .detail(format!(
                         "{domain} delegates DNS to {ns} which does not resolve. \
@@ -163,21 +146,30 @@ async fn check_ns(
                     })
                     .tag("takeover")
                     .tag("ns")
-                    .tag("critical"), &mut findings);
+                    .tag("critical"),
+                &mut findings,
+            );
         }
     }
 
     // NS count resilience
     if nameservers.len() < 2 {
-        gossan_core::try_push_finding(Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Low)
-                .title(format!("Only {} nameserver(s) — no redundancy", nameservers.len()))
+        gossan_core::try_push_finding(
+            Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Low)
+                .title(format!(
+                    "Only {} nameserver(s) — no redundancy",
+                    nameservers.len()
+                ))
                 .detail(format!(
                     "{domain} has {count} NS record(s). RFC 2182 recommends ≥2. \
                      Single nameserver failure = total domain outage.",
                     count = nameservers.len()
                 ))
                 .kind(FindingKind::Vulnerability)
-                .tag("dns").tag("resilience"), &mut findings);
+                .tag("dns")
+                .tag("resilience"),
+            &mut findings,
+        );
     }
 
     findings
@@ -189,11 +181,7 @@ async fn check_ns(
 ///
 /// An attacker who controls the MX target can receive all email sent to
 /// the domain — password resets, MFA codes, confidential communications.
-async fn check_mx(
-    resolver: &TokioAsyncResolver,
-    domain: &str,
-    target: &Target,
-) -> Vec<Finding> {
+async fn check_mx(resolver: &TokioAsyncResolver, domain: &str, target: &Target) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     let mx_records = match resolver.mx_lookup(domain).await {
@@ -211,7 +199,8 @@ async fn check_mx(
             continue; // null MX (RFC 7505) — intentional
         }
         if resolver.lookup(mx.as_str(), RecordType::A).await.is_err() {
-            gossan_core::try_push_finding(Finding::builder("dns", target.domain().unwrap_or("?"), Severity::High)
+            gossan_core::try_push_finding(
+                Finding::builder("dns", target.domain().unwrap_or("?"), Severity::High)
                     .title(format!("MX takeover risk: dangling mail server {mx}"))
                     .detail(format!(
                         "{domain} MX record points to {mx} which does not resolve. \
@@ -224,7 +213,9 @@ async fn check_mx(
                         value: mx.clone().into(),
                     })
                     .tag("takeover")
-                    .tag("mx"), &mut findings);
+                    .tag("mx"),
+                &mut findings,
+            );
         }
     }
 
@@ -250,10 +241,7 @@ mod tests {
         for (suffix, name) in fingerprints() {
             assert!(!suffix.is_empty(), "empty suffix found");
             assert!(!name.is_empty(), "empty name for suffix: {suffix}");
-            assert!(
-                suffix.contains('.'),
-                "suffix should be a domain: {suffix}"
-            );
+            assert!(suffix.contains('.'), "suffix should be a domain: {suffix}");
         }
     }
 
@@ -281,10 +269,7 @@ mod tests {
         let fps = fingerprints();
         let mut seen = std::collections::HashSet::new();
         for (suffix, name) in &fps {
-            assert!(
-                seen.insert(*suffix),
-                "duplicate suffix: {suffix} ({name})"
-            );
+            assert!(seen.insert(*suffix), "duplicate suffix: {suffix} ({name})");
         }
     }
 }

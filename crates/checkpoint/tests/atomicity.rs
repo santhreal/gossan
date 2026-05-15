@@ -30,10 +30,15 @@ fn save_stage_is_atomic_under_drop_mid_write() {
     // Save stage 1.
     let f1 = fresh_finding("example.com", "first");
     store
-        .save_stage(id, "subdomain", &[Target::Domain(gossan_core::target::DomainTarget {
-            domain: "x.example.com".into(),
-            source: gossan_core::DiscoverySource::CertificateTransparency,
-        })], &[f1.clone()])
+        .save_stage(
+            id,
+            "subdomain",
+            &[Target::Domain(gossan_core::target::DomainTarget {
+                domain: "x.example.com".into(),
+                source: gossan_core::DiscoverySource::CertificateTransparency,
+            })],
+            &[f1.clone()],
+        )
         .expect("save 1");
 
     // Drop the store handle (simulates kill -9 between syscalls — the
@@ -61,20 +66,20 @@ fn second_save_stage_overwrites_first_atomically() {
     let id = store.new_scan("example.com", "{}").expect("create");
 
     let f1 = fresh_finding("example.com", "first");
-    store.save_stage(id, "portscan", &[], &[f1]).expect("save 1");
+    store
+        .save_stage(id, "portscan", &[], &[f1])
+        .expect("save 1");
 
     // Re-save the same stage with a different finding — must fully
     // replace, not append, per `INSERT OR REPLACE` semantics on the
     // (scan_id, stage) primary key.
     let f2 = fresh_finding("example.com", "second");
-    store.save_stage(id, "portscan", &[], &[f2]).expect("save 2");
+    store
+        .save_stage(id, "portscan", &[], &[f2])
+        .expect("save 2");
 
     let rec = store.load(id).expect("load");
-    let stage = rec
-        .stages
-        .iter()
-        .find(|s| s.stage == "portscan")
-        .unwrap();
+    let stage = rec.stages.iter().find(|s| s.stage == "portscan").unwrap();
     assert_eq!(stage.findings.len(), 1);
     assert_eq!(stage.findings[0].title(), "second");
 }

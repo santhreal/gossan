@@ -6,12 +6,12 @@
 //! Scanners should use [`connect_tcp`] for raw TCP (e.g. AXFR) and
 //! [`build_proxy_route`] when they need to pass a route to reqwest.
 
-use tokio::net::TcpStream;
+use crate::Config;
 use hickory_resolver::{
     config::{NameServerConfigGroup, ResolverConfig, ResolverOpts},
     TokioAsyncResolver,
 };
-use crate::Config;
+use tokio::net::TcpStream;
 
 /// Build a high-performance, async DNS resolver.
 ///
@@ -37,8 +37,7 @@ pub fn build_resolver(config: &Config) -> anyhow::Result<TokioAsyncResolver> {
     // hitting an internal asset. We pin to 1 hour — long enough for any
     // single scan to finish, short enough that a real IP change is
     // picked up on the next process invocation.
-    opts.positive_min_ttl =
-        Some(std::time::Duration::from_secs(3600));
+    opts.positive_min_ttl = Some(std::time::Duration::from_secs(3600));
     // Cap negative caching so a transient NXDOMAIN doesn't permanently
     // poison the resolver for the rest of the process.
     opts.negative_min_ttl = Some(std::time::Duration::from_secs(60));
@@ -107,14 +106,18 @@ fn parse_proxy_route(url: &str) -> Result<proxywire::ProxyRoute, proxywire::Erro
 
 /// Extract host and port from `host:port` string.
 fn parse_host_port(s: &str) -> Result<(&str, u16), proxywire::Error> {
-    let (host, port_str) = s.rsplit_once(':').ok_or_else(|| proxywire::Error::InvalidConfig {
-        message: format!("proxy URL missing port: {s}"),
-        fix: "use format scheme://host:port (e.g. socks5://127.0.0.1:9050)".to_string(),
-    })?;
-    let port = port_str.parse::<u16>().map_err(|_| proxywire::Error::InvalidConfig {
-        message: format!("invalid port number: {port_str}"),
-        fix: "port must be a number between 1 and 65535".to_string(),
-    })?;
+    let (host, port_str) = s
+        .rsplit_once(':')
+        .ok_or_else(|| proxywire::Error::InvalidConfig {
+            message: format!("proxy URL missing port: {s}"),
+            fix: "use format scheme://host:port (e.g. socks5://127.0.0.1:9050)".to_string(),
+        })?;
+    let port = port_str
+        .parse::<u16>()
+        .map_err(|_| proxywire::Error::InvalidConfig {
+            message: format!("invalid port number: {port_str}"),
+            fix: "port must be a number between 1 and 65535".to_string(),
+        })?;
     Ok((host, port))
 }
 

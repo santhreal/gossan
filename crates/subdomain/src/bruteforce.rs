@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 use gossan_core::{Config, DiscoverySource, DomainTarget, Target};
-use tokio::sync::{Mutex, mpsc::UnboundedSender};
+use tokio::sync::{mpsc::UnboundedSender, Mutex};
 
 const WORDLIST: &str = include_str!("wordlist.txt");
 
@@ -110,8 +110,8 @@ fn recursive_scan(
                 if let Target::Domain(d) = t {
                     let sub_str = d.domain.clone();
                     let labels = [
-                        "dev", "api", "staging", "prod", "test", "v1", "v2", "app",
-                        "internal", "corp",
+                        "dev", "api", "staging", "prod", "test", "v1", "v2", "app", "internal",
+                        "corp",
                     ];
                     if labels.iter().any(|&l| sub_str.starts_with(l)) {
                         let resolver_inner = Arc::clone(&resolver);

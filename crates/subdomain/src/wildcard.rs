@@ -1,7 +1,7 @@
 //! Wildcard DNS detection.
 
-use hickory_resolver::TokioAsyncResolver;
 use hickory_resolver::proto::rr::RecordType;
+use hickory_resolver::TokioAsyncResolver;
 use std::collections::HashSet;
 use std::net::IpAddr;
 

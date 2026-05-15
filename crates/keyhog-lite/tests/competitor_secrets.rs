@@ -55,7 +55,7 @@ fn binary_present(name: &str) -> bool {
 }
 
 fn run_keyhog_lite(corpus: &CorpusFile) -> (usize, u128) {
-    use gossan_keyhog_lite::{Chunk, ChunkMetadata, CompiledScanner, load_detectors};
+    use gossan_keyhog_lite::{load_detectors, Chunk, ChunkMetadata, CompiledScanner};
     use std::path::Path;
 
     let detector_dir = Path::new("/media/mukund-thiru/SanthData/Santh/software/keyhog/detectors");

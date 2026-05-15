@@ -39,7 +39,11 @@ pub struct IntelEnrichment {
 
 impl IntelEnrichment {
     /// Create a blank enrichment for a given target.
-    pub fn new(source: impl Into<String>, target_type: impl Into<String>, target_value: impl Into<String>) -> Self {
+    pub fn new(
+        source: impl Into<String>,
+        target_type: impl Into<String>,
+        target_value: impl Into<String>,
+    ) -> Self {
         Self {
             version: ENRICHMENT_VERSION,
             source: source.into(),

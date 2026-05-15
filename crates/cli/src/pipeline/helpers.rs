@@ -4,7 +4,7 @@
 //! modes: hashing, deduplication, severity filtering, live broadcast, and
 //! progress bar construction.
 
-use gossan_core::{Target};
+use gossan_core::Target;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use secfinding::{Finding, Severity};
 use std::collections::{HashMap, HashSet};
@@ -124,7 +124,10 @@ pub fn dedup(findings: Vec<Finding>) -> Vec<Finding> {
 pub fn apply_min_severity(findings: Vec<Finding>, min: Option<Severity>) -> Vec<Finding> {
     match min {
         None => findings,
-        Some(min) => findings.into_iter().filter(|f| f.severity() >= min).collect(),
+        Some(min) => findings
+            .into_iter()
+            .filter(|f| f.severity() >= min)
+            .collect(),
     }
 }
 

@@ -16,10 +16,7 @@ impl CorrelationRule for ApiAuthRule {
         // 1. Group findings by target domain
         let mut by_target = std::collections::HashMap::new();
         for f in findings {
-            by_target
-                .entry(f.target())
-                .or_insert_with(Vec::new)
-                .push(f);
+            by_target.entry(f.target()).or_insert_with(Vec::new).push(f);
         }
 
         // 2. For each target, look for version disclosure + missing auth
@@ -28,10 +25,10 @@ impl CorrelationRule for ApiAuthRule {
                 .iter()
                 .filter(|f| f.tags().iter().any(|t| t.as_ref() == "api-version"))
                 .collect();
-            
+
             let no_auth = fs.iter().any(|f| {
-                f.title().to_lowercase().contains("no authentication") ||
-                f.title().to_lowercase().contains("unauthenticated")
+                f.title().to_lowercase().contains("no authentication")
+                    || f.title().to_lowercase().contains("unauthenticated")
             });
 
             if !versions.is_empty() && no_auth {

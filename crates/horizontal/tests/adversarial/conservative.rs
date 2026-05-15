@@ -1,7 +1,7 @@
 use gossan_core::{Config, DiscoverySource, DomainTarget, Finding, ScanInput, Scanner, Target};
 use gossan_horizontal::conservative::ConservativeScanner;
-use std::sync::{Arc, Once};
 use hickory_resolver::TokioAsyncResolver;
+use std::sync::{Arc, Once};
 
 /// `rustls` requires a process-wide default `CryptoProvider` before any
 /// `ClientConfig` is built. The conservative scanner builds one inside
@@ -22,7 +22,10 @@ fn install_rustls_provider() {
 /// target_tx: None }` form was retired; tests need to seed the
 /// inbound `target_rx` via a one-shot channel and supply real
 /// (drained-on-drop) live + target senders.
-fn streaming_input(seed: &str, targets: Vec<Target>) -> (
+fn streaming_input(
+    seed: &str,
+    targets: Vec<Target>,
+) -> (
     ScanInput,
     tokio::sync::mpsc::UnboundedReceiver<Finding>,
     tokio::sync::mpsc::UnboundedReceiver<Target>,
@@ -85,12 +88,10 @@ async fn test_concurrent_access() {
                 streaming_input("127.0.0.1", one_domain("localhost"));
 
             // Should execute without panicking and return a Result
-            let result = tokio::time::timeout(
-                TEST_TIMEOUT,
-                scanner_clone.run(input, &config_clone),
-            )
-            .await
-            .expect("concurrent scanner.run must complete within 20s");
+            let result =
+                tokio::time::timeout(TEST_TIMEOUT, scanner_clone.run(input, &config_clone))
+                    .await
+                    .expect("concurrent scanner.run must complete within 20s");
             assert!(result.is_ok());
         }));
     }
@@ -145,7 +146,10 @@ async fn test_adversarial_null_bytes() {
     let result = tokio::time::timeout(TEST_TIMEOUT, scanner.run(input, &config))
         .await
         .expect("scanner.run with null-byte seed must complete within 20s");
-    assert!(result.is_ok(), "scanner should handle null bytes gracefully: {result:?}");
+    assert!(
+        result.is_ok(),
+        "scanner should handle null bytes gracefully: {result:?}"
+    );
 
     // Drain any emitted findings
     let mut emitted: Vec<Finding> = Vec::new();
@@ -172,13 +176,15 @@ async fn test_adversarial_empty_inputs() {
     let test_timeout = TEST_TIMEOUT;
 
     // Test with empty seed
-    let (input1, mut live_rx1, _target_rx1) =
-        streaming_input("", vec![]);
+    let (input1, mut live_rx1, _target_rx1) = streaming_input("", vec![]);
 
     let result1 = tokio::time::timeout(test_timeout, scanner.run(input1, &config))
         .await
         .expect("scanner.run with empty seed must return within 90s");
-    assert!(result1.is_ok(), "scanner should handle empty seed gracefully: {result1:?}");
+    assert!(
+        result1.is_ok(),
+        "scanner should handle empty seed gracefully: {result1:?}"
+    );
 
     // Drain any emitted findings
     let mut emitted1: Vec<Finding> = Vec::new();
@@ -187,13 +193,15 @@ async fn test_adversarial_empty_inputs() {
     }
 
     // Test with empty targets
-    let (input2, mut live_rx2, _target_rx2) =
-        streaming_input("example.com", vec![]);
+    let (input2, mut live_rx2, _target_rx2) = streaming_input("example.com", vec![]);
 
     let result2 = tokio::time::timeout(test_timeout, scanner.run(input2, &config))
         .await
         .expect("scanner.run with empty targets must return within 90s");
-    assert!(result2.is_ok(), "scanner should handle empty targets gracefully: {result2:?}");
+    assert!(
+        result2.is_ok(),
+        "scanner should handle empty targets gracefully: {result2:?}"
+    );
 
     // Drain any emitted findings
     let mut emitted2: Vec<Finding> = Vec::new();
@@ -219,7 +227,10 @@ async fn test_adversarial_huge_inputs() {
     let result1 = tokio::time::timeout(test_timeout, scanner.run(input1, &config))
         .await
         .expect("scanner.run with huge seed must return within 90s");
-    assert!(result1.is_ok(), "scanner should handle huge seed gracefully: {result1:?}");
+    assert!(
+        result1.is_ok(),
+        "scanner should handle huge seed gracefully: {result1:?}"
+    );
 
     // Drain any emitted findings
     let mut emitted1: Vec<Finding> = Vec::new();
@@ -229,19 +240,23 @@ async fn test_adversarial_huge_inputs() {
 
     // Test with many targets
     let huge_targets: Vec<Target> = (0..1000)
-        .map(|i| Target::Domain(DomainTarget {
-            domain: format!("target{}.example.com", i),
-            source: DiscoverySource::Crawl,
-        }))
+        .map(|i| {
+            Target::Domain(DomainTarget {
+                domain: format!("target{}.example.com", i),
+                source: DiscoverySource::Crawl,
+            })
+        })
         .collect();
 
-    let (input2, mut live_rx2, _target_rx2) =
-        streaming_input("seed.example.com", huge_targets);
+    let (input2, mut live_rx2, _target_rx2) = streaming_input("seed.example.com", huge_targets);
 
     let result2 = tokio::time::timeout(test_timeout, scanner.run(input2, &config))
         .await
         .expect("scanner.run with many targets must return within 90s");
-    assert!(result2.is_ok(), "scanner should handle many targets gracefully: {result2:?}");
+    assert!(
+        result2.is_ok(),
+        "scanner should handle many targets gracefully: {result2:?}"
+    );
 
     // Drain any emitted findings
     let mut emitted2: Vec<Finding> = Vec::new();

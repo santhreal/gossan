@@ -155,10 +155,7 @@ pub async fn discover_org_assets(
         }
 
         for p in &projects {
-            let raw = p
-                .http_url_to_repo
-                .clone()
-                .or_else(|| p.web_url.clone());
+            let raw = p.http_url_to_repo.clone().or_else(|| p.web_url.clone());
             let Some(raw) = raw else {
                 continue;
             };

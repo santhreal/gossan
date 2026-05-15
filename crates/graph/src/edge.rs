@@ -27,11 +27,7 @@ pub struct Edge {
 impl Edge {
     /// Create a new edge with the current time as `first_seen`.
     #[must_use]
-    pub fn new(
-        source_id: impl Into<String>,
-        target_id: impl Into<String>,
-        kind: EdgeType,
-    ) -> Self {
+    pub fn new(source_id: impl Into<String>, target_id: impl Into<String>, kind: EdgeType) -> Self {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()

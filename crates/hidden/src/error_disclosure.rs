@@ -226,7 +226,9 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
             }
         }
 
-        let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
+        let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
+            .await
+            .unwrap_or_default();
 
         // SSTI: only flag 159401 if the trigger was actually a template probe
         let is_ssti_probe = suffix.contains("473*337");

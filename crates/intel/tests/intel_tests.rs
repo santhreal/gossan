@@ -17,14 +17,14 @@ fn get_test_config() -> Config {
 fn make_input(targets: Vec<Target>) -> (ScanInput, mpsc::UnboundedReceiver<secfinding::Finding>) {
     let (live_tx, live_rx) = mpsc::unbounded_channel();
     let (target_tx, target_rx) = mpsc::unbounded_channel();
-    
+
     // Send targets to the channel before creating the input
     for t in targets {
         let _ = target_tx.send(t);
     }
     // Drop the sender so the receiver will eventually return None
     drop(target_tx);
-    
+
     let input = ScanInput {
         seed: "test".to_string(),
         target_rx: tokio::sync::Mutex::new(target_rx),
@@ -226,8 +226,8 @@ async fn test_scanner_accepts() {
     // (the `client` field is `ScanClient`, not `reqwest::Client`,
     // and the build path is `IntelScanner::from_config(&Config)`).
     let cfg = gossan_core::Config::default();
-    let scanner = IntelScanner::from_config(&cfg)
-        .expect("intel scanner must build from default config");
+    let scanner =
+        IntelScanner::from_config(&cfg).expect("intel scanner must build from default config");
 
     assert!(scanner.accepts(&Target::Host(gossan_core::HostTarget {
         ip: "1.1.1.1".parse().unwrap(),

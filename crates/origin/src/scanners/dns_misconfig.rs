@@ -105,8 +105,7 @@ pub async fn scan(domain: String) -> anyhow::Result<Vec<OriginCandidate>> {
 
     // 4. Scan common bypass subdomains that bypass the CDN.
     let bypass_subs = [
-        "direct", "origin", "mail", "ftp", "cpanel",
-        "staging", "dev", "test", "api", "admin",
+        "direct", "origin", "mail", "ftp", "cpanel", "staging", "dev", "test", "api", "admin",
         "portal", "app", "beta", "prod", "www",
     ];
     for sub in bypass_subs {

@@ -18,10 +18,7 @@ async function load() {
 #[test]
 fn extracts_fetch_axios_endpoints() {
     let endpoints = extract("https://example.com/app.js", SAMPLE_JS);
-    let urls: Vec<String> = endpoints
-        .iter()
-        .map(|e| format!("{:?}", e))
-        .collect();
+    let urls: Vec<String> = endpoints.iter().map(|e| format!("{:?}", e)).collect();
     // We don't pin the exact internal Endpoint shape — just assert
     // the extractor finds the expected URLs.
     let body_joined = urls.join(" ");

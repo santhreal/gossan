@@ -41,7 +41,9 @@ fn parse_spf_empty_string_safe() {
 fn identify_email_services_recognizes_google_workspace() {
     let includes = vec!["_spf.google.com".to_string()];
     let svcs = identify_email_services(&includes);
-    assert!(svcs.iter().any(|(n, _)| n.to_ascii_lowercase().contains("google")));
+    assert!(svcs
+        .iter()
+        .any(|(n, _)| n.to_ascii_lowercase().contains("google")));
 }
 
 #[test]
@@ -50,7 +52,8 @@ fn identify_email_services_recognizes_microsoft_365() {
     let svcs = identify_email_services(&includes);
     assert!(
         svcs.iter()
-            .any(|(n, _)| n.to_ascii_lowercase().contains("microsoft") || n.to_ascii_lowercase().contains("outlook")),
+            .any(|(n, _)| n.to_ascii_lowercase().contains("microsoft")
+                || n.to_ascii_lowercase().contains("outlook")),
         "expected Microsoft/Outlook in {svcs:?}"
     );
 }

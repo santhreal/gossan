@@ -79,7 +79,10 @@ fn parse_severity(s: &str) -> Severity {
         "low" => Severity::Low,
         "info" => Severity::Info,
         _ => {
-            tracing::warn!(severity = s, "unknown severity in check definition, defaulting to Medium");
+            tracing::warn!(
+                severity = s,
+                "unknown severity in check definition, defaulting to Medium"
+            );
             Severity::Medium
         }
     }

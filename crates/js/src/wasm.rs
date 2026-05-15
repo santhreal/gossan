@@ -214,7 +214,8 @@ pub async fn probe(
 
         // Even without secrets, flag that WASM exists — data sections are readable without decompilation
         if !had_secret {
-            gossan_core::try_push_finding(crate::finding_builder(
+            gossan_core::try_push_finding(
+                crate::finding_builder(
                     target,
                     Severity::Info,
                     format!(
@@ -230,10 +231,11 @@ pub async fn probe(
                     ),
                 )
                 .tag("wasm")
-                .tag("exposure"), &mut findings);
+                .tag("exposure"),
+                &mut findings,
+            );
         }
     }
 
     findings
 }
-

@@ -5,7 +5,7 @@ pub mod json;
 pub mod memory;
 pub mod sqlite;
 
-use crate::{Edge, Node, schema::EdgeType};
+use crate::{schema::EdgeType, Edge, Node};
 
 /// Abstract storage backend for graph operations.
 pub trait GraphBackend {

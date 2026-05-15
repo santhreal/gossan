@@ -13,9 +13,9 @@
 
 #![allow(clippy::module_name_repetitions)]
 
-pub mod rules;
-pub mod matcher;
 pub mod classifier;
+pub mod matcher;
+pub mod rules;
 
 pub use classifier::BannerClassifier;
 pub use rules::{ServiceMatch, ServiceRule};

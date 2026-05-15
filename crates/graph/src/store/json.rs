@@ -7,7 +7,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
 use crate::store::GraphBackend;
-use crate::{Edge, Node, schema::EdgeType};
+use crate::{schema::EdgeType, Edge, Node};
 
 /// In-memory + JSON file backend.
 pub struct JsonBackend {
@@ -204,10 +204,7 @@ impl GraphBackend for JsonBackend {
         Ok(self.edges.clone())
     }
 
-    fn find_nodes_by_type(
-        &self,
-        kind: crate::schema::NodeType,
-    ) -> Result<Vec<Node>, Self::Error> {
+    fn find_nodes_by_type(&self, kind: crate::schema::NodeType) -> Result<Vec<Node>, Self::Error> {
         Ok(self
             .nodes
             .iter()
@@ -225,8 +222,7 @@ impl GraphBackend for JsonBackend {
             .edges
             .iter()
             .filter(|e| {
-                e.source_id == node_id
-                    && edge_type.as_ref().map_or(true, |et| e.kind == *et)
+                e.source_id == node_id && edge_type.as_ref().map_or(true, |et| e.kind == *et)
             })
             .cloned()
             .collect())
@@ -296,6 +292,9 @@ mod tests {
 
         let mut backend2 = JsonBackend::open(file.path());
         backend2.init().unwrap();
-        assert_eq!(backend2.read_nodes().unwrap().len(), STREAMING_THRESHOLD + 1);
+        assert_eq!(
+            backend2.read_nodes().unwrap().len(),
+            STREAMING_THRESHOLD + 1
+        );
     }
 }

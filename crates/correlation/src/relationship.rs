@@ -60,11 +60,8 @@ impl RelationshipBuilder {
     pub fn link_target(mut self, target_id: impl Into<String>, kind: NodeType) -> Self {
         let tid = target_id.into();
         self.nodes.push(Node::new(tid.clone(), kind, tid.clone()));
-        self.edges.push(Edge::new(
-            self.chain_id.clone(),
-            tid,
-            EdgeType::HasFinding,
-        ));
+        self.edges
+            .push(Edge::new(self.chain_id.clone(), tid, EdgeType::HasFinding));
         self
     }
 

@@ -95,11 +95,7 @@ mod tests {
 
     #[test]
     fn dedup_preserves_insertion_order_for_unique_keys() {
-        let v = vec![
-            raw("a", "h1"),
-            raw("b", "h2"),
-            raw("c", "h3"),
-        ];
+        let v = vec![raw("a", "h1"), raw("b", "h2"), raw("c", "h3")];
         let d = dedup_matches(v, &DedupScope::Credential);
         assert_eq!(d.len(), 3);
         assert_eq!(d[0].detector_id, "a");

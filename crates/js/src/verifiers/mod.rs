@@ -6,8 +6,8 @@
 //! lite crate, the call shape here doesn't change.
 
 use gossan_keyhog_lite::{
-    dedup_matches, DedupScope, MatchLocation, RawMatch, Severity as KhSeverity,
-    VerificationEngine, VerificationResult, VerifyConfig,
+    dedup_matches, DedupScope, MatchLocation, RawMatch, Severity as KhSeverity, VerificationEngine,
+    VerificationResult, VerifyConfig,
 };
 use secfinding::{Finding, Severity};
 use std::collections::HashMap;
@@ -83,9 +83,10 @@ impl VerifierEngine {
             let Some(secret) = crate::secrets::take_raw_secret(&hash) else {
                 continue;
             };
-            if raw_matches.iter().any(|m| {
-                m.detector_id == detector_id && m.credential == secret
-            }) {
+            if raw_matches
+                .iter()
+                .any(|m| m.detector_id == detector_id && m.credential == secret)
+            {
                 continue;
             }
             raw_matches.push(RawMatch {
@@ -150,21 +151,18 @@ impl VerifierEngine {
                             "{}\n\n[Verification]: This credential appears to be inactive or revoked.",
                             slot.detail()
                         );
-                        if let Some(new_f) = rebuild_with(slot, None, |b| {
-                            b.tag("verified-dead").detail(new_detail)
-                        }) {
+                        if let Some(new_f) =
+                            rebuild_with(slot, None, |b| b.tag("verified-dead").detail(new_detail))
+                        {
                             *slot = new_f;
                         }
                     }
                     VerificationResult::Error(e) => {
-                        let new_detail = format!(
-                            "{}\n\n[Verification Error]: {}",
-                            slot.detail(),
-                            e
-                        );
-                        if let Some(new_f) = rebuild_with(slot, None, |b| {
-                            b.tag("verified-error").detail(new_detail)
-                        }) {
+                        let new_detail =
+                            format!("{}\n\n[Verification Error]: {}", slot.detail(), e);
+                        if let Some(new_f) =
+                            rebuild_with(slot, None, |b| b.tag("verified-error").detail(new_detail))
+                        {
                             *slot = new_f;
                         }
                     }
@@ -175,7 +173,11 @@ impl VerifierEngine {
     }
 }
 
-fn rebuild_with<F>(orig: &Finding, severity_override: Option<Severity>, decorate: F) -> Option<Finding>
+fn rebuild_with<F>(
+    orig: &Finding,
+    severity_override: Option<Severity>,
+    decorate: F,
+) -> Option<Finding>
 where
     F: FnOnce(secfinding::FindingBuilder) -> secfinding::FindingBuilder,
 {

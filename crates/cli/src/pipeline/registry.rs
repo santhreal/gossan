@@ -5,7 +5,9 @@ use tokio::sync::mpsc;
 use gossan_core::{Config, Finding, ScanInput, Scanner, Target};
 use secfinding::Severity;
 
-use crate::pipeline::helpers::{apply_kind_filter, apply_min_severity, dedup, seed_target, target_streaming_key};
+use crate::pipeline::helpers::{
+    apply_kind_filter, apply_min_severity, dedup, seed_target, target_streaming_key,
+};
 
 /// A fully declarative, dynamically built DAG router.
 /// Eliminates hardcoded procedural steps and buffers. Ensures O(1) streaming.
@@ -39,7 +41,11 @@ impl Registry {
     }
 
     /// Executes the pipeline gracefully, mapping streams dynamically based on .accepts()
-    pub async fn execute_pipeline(self, seed: &str, config: Config) -> anyhow::Result<Vec<Finding>> {
+    pub async fn execute_pipeline(
+        self,
+        seed: &str,
+        config: Config,
+    ) -> anyhow::Result<Vec<Finding>> {
         let resolver = Arc::new(gossan_core::net::build_resolver(&config)?);
         let mut findings = Vec::new();
         let (live_tx, mut live_rx) = mpsc::unbounded_channel::<Finding>();
@@ -75,7 +81,9 @@ impl Registry {
                 // the set-style `contains` the original code expected.
                 // A scanner runs when its name is keyed-in OR the wild
                 // "all" key is present.
-                if !config.modules.contains_key(scanner.name()) && !config.modules.contains_key("all") {
+                if !config.modules.contains_key(scanner.name())
+                    && !config.modules.contains_key("all")
+                {
                     continue;
                 }
 

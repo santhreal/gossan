@@ -10,13 +10,19 @@
 use std::process::Command;
 
 fn binary_present(name: &str) -> bool {
-    Command::new("which").arg(name).output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new("which")
+        .arg(name)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 #[test]
 fn versus_dnsx() {
     if !binary_present("dnsx") {
-        eprintln!("SKIP: dnsx not installed; go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest");
+        eprintln!(
+            "SKIP: dnsx not installed; go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest"
+        );
         return;
     }
     eprintln!("dnsx IS installed; head-to-head against gossan-dns pending corpus");

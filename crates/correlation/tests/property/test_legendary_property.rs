@@ -1,9 +1,9 @@
 use gossan_correlation::CorrelationEngine;
-use secfinding::{Finding, Severity};
-use proptest::prelude::*;
 use proptest::collection::vec;
+use proptest::prelude::*;
+use secfinding::{Finding, Severity};
 
-// Create a valid Finding via the builder pattern, avoiding direct instantiation 
+// Create a valid Finding via the builder pattern, avoiding direct instantiation
 // of the private fields if any exist or handling Uuid/Date generation cleanly
 fn create_finding(scanner: String, target: String, title: String) -> Finding {
     // Determine a random severity based on string length just to vary it
@@ -13,7 +13,7 @@ fn create_finding(scanner: String, target: String, title: String) -> Finding {
         2 => Severity::High,
         _ => Severity::Critical,
     };
-    
+
     Finding::builder(scanner, target, severity)
         .title(title)
         .build()
@@ -44,24 +44,24 @@ proptest! {
         let chains = engine.run(&findings, &[]);
         prop_assert!(chains.len() <= findings.len());
     }
-    
+
     #[test]
     fn engine_does_not_mutate_or_consume_input_findings(
         findings in vec(arbitrary_finding(), 0..10)
     ) {
         let engine = CorrelationEngine::new();
         let findings_clone = findings.clone();
-        
+
         // This is a pure function from the perspective of inputs
         let chains = engine.run(&findings, &[]);
         prop_assert!(chains.len() <= findings.len());
-        
-        // Ensure the input hasn't been altered (Rust's borrow checker enforces this for `&`, 
-        // but we verify the values remain exactly the same just to be absolutely sure 
+
+        // Ensure the input hasn't been altered (Rust's borrow checker enforces this for `&`,
+        // but we verify the values remain exactly the same just to be absolutely sure
         // no weird internal mutability is happening)
         assert_eq!(findings, findings_clone);
     }
-    
+
     #[test]
     fn engine_returns_empty_when_no_correlation_criteria_met(
         // Generate findings that explicitly DO NOT contain correlation keywords
@@ -84,7 +84,7 @@ proptest! {
     ) {
         let engine = CorrelationEngine::new();
         let chains = engine.run(&findings, &[]);
-        
+
         // If no findings contain the trigger keywords, NO chains should EVER be produced
         prop_assert!(chains.is_empty(), "Engine produced a chain without trigger conditions!");
     }

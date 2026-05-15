@@ -1,5 +1,8 @@
+use gossan_core::{
+    target::{DiscoverySource, DomainTarget, RepositoryTarget, ScmService},
+    Scanner, Target,
+};
 use gossan_scm::ScmScanner;
-use gossan_core::{Scanner, Target, target::{DomainTarget, RepositoryTarget, ScmService, DiscoverySource}};
 use url::Url;
 
 #[tokio::test]
@@ -12,7 +15,7 @@ async fn test_scm_scanner_metadata() {
 #[tokio::test]
 async fn test_scm_scanner_accepts() {
     let scanner = ScmScanner;
-    
+
     let domain = Target::Domain(DomainTarget {
         domain: "example.com".to_string(),
         source: DiscoverySource::Seed,

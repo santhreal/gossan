@@ -187,9 +187,15 @@ pub fn render_graphml(findings: &[Finding]) -> String {
     let mut out = String::new();
     out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     out.push_str("<graphml xmlns=\"http://graphml.graphdrawing.org/xmlns\">\n");
-    out.push_str("  <key id=\"target\"   for=\"node\" attr.name=\"target\"   attr.type=\"string\"/>\n");
-    out.push_str("  <key id=\"severity\" for=\"node\" attr.name=\"severity\" attr.type=\"string\"/>\n");
-    out.push_str("  <key id=\"title\"    for=\"node\" attr.name=\"title\"    attr.type=\"string\"/>\n");
+    out.push_str(
+        "  <key id=\"target\"   for=\"node\" attr.name=\"target\"   attr.type=\"string\"/>\n",
+    );
+    out.push_str(
+        "  <key id=\"severity\" for=\"node\" attr.name=\"severity\" attr.type=\"string\"/>\n",
+    );
+    out.push_str(
+        "  <key id=\"title\"    for=\"node\" attr.name=\"title\"    attr.type=\"string\"/>\n",
+    );
     out.push_str("  <graph id=\"gossan\" edgedefault=\"undirected\">\n");
     let mut by_target: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     for (i, f) in findings.iter().enumerate() {
@@ -278,9 +284,7 @@ mod tests {
         if let Some(s) = service {
             b = b.tag(format!("service:{s}"));
         }
-        b = b.evidence(Evidence::Banner {
-            raw: "test".into(),
-        });
+        b = b.evidence(Evidence::Banner { raw: "test".into() });
         b.build().expect("test finding builds")
     }
 
@@ -415,7 +419,6 @@ mod tests {
     }
 }
 
-
 /// Print a delta summary comparing current findings against a baseline.
 #[cfg(feature = "checkpoint")]
 pub fn print_delta_summary(delta: &gossan_checkpoint::ScanDelta) {
@@ -423,21 +426,45 @@ pub fn print_delta_summary(delta: &gossan_checkpoint::ScanDelta) {
     let mut stderr = std::io::stderr();
     let _ = writeln!(stderr);
     let _ = writeln!(stderr, "  \x1b[1mΔ Delta Report\x1b[0m");
-    let _ = writeln!(stderr, "  \x1b[32m+ {} new finding(s)\x1b[0m", delta.new_findings.len());
-    let _ = writeln!(stderr, "  \x1b[31m- {} resolved finding(s)\x1b[0m", delta.resolved_findings.len());
-    let _ = writeln!(stderr, "  \x1b[90m= {} unchanged\x1b[0m", delta.unchanged_count);
+    let _ = writeln!(
+        stderr,
+        "  \x1b[32m+ {} new finding(s)\x1b[0m",
+        delta.new_findings.len()
+    );
+    let _ = writeln!(
+        stderr,
+        "  \x1b[31m- {} resolved finding(s)\x1b[0m",
+        delta.resolved_findings.len()
+    );
+    let _ = writeln!(
+        stderr,
+        "  \x1b[90m= {} unchanged\x1b[0m",
+        delta.unchanged_count
+    );
     let _ = writeln!(stderr);
 
     if !delta.new_findings.is_empty() {
         let _ = writeln!(stderr, "  \x1b[32;1mNew:\x1b[0m");
         for f in &delta.new_findings {
-            let _ = writeln!(stderr, "    + [{}] {} — {}", f.severity(), f.target(), f.title());
+            let _ = writeln!(
+                stderr,
+                "    + [{}] {} — {}",
+                f.severity(),
+                f.target(),
+                f.title()
+            );
         }
     }
     if !delta.resolved_findings.is_empty() {
         let _ = writeln!(stderr, "  \x1b[31;1mResolved:\x1b[0m");
         for f in &delta.resolved_findings {
-            let _ = writeln!(stderr, "    - [{}] {} — {}", f.severity(), f.target(), f.title());
+            let _ = writeln!(
+                stderr,
+                "    - [{}] {} — {}",
+                f.severity(),
+                f.target(),
+                f.title()
+            );
         }
     }
 }

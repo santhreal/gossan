@@ -1,10 +1,10 @@
 use gossan_core::{Target, WebAssetTarget};
-use reqwest::{Client, Url};
-use wiremock::matchers::{header, method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
-use secfinding::Severity;
 use gossan_hidden::cors;
 use gossan_hidden::dependency_confusion;
+use reqwest::{Client, Url};
+use secfinding::Severity;
+use wiremock::matchers::{header, method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn create_mock_target(url: &str) -> Target {
     Target::Web(Box::new(WebAssetTarget {
@@ -32,7 +32,7 @@ fn create_mock_target(url: &str) -> Target {
 #[tokio::test]
 async fn test_cors_reflection_with_credentials() {
     let server = MockServer::start().await;
-    
+
     Mock::given(method("GET"))
         .and(path("/"))
         .and(header("Origin", "https://evil.com"))
@@ -48,16 +48,22 @@ async fn test_cors_reflection_with_credentials() {
     let target = create_mock_target(&server.uri());
 
     let findings = cors::probe(&client, &target).await.unwrap();
-    
-    assert!(!findings.is_empty(), "Expected findings for CORS reflection");
-    let finding = findings.iter().find(|f| f.title() == "CORS: arbitrary origin reflected with credentials").unwrap();
+
+    assert!(
+        !findings.is_empty(),
+        "Expected findings for CORS reflection"
+    );
+    let finding = findings
+        .iter()
+        .find(|f| f.title() == "CORS: arbitrary origin reflected with credentials")
+        .unwrap();
     assert_eq!(finding.severity(), Severity::Critical);
 }
 
 #[tokio::test]
 async fn test_cors_null_origin() {
     let server = MockServer::start().await;
-    
+
     Mock::given(method("GET"))
         .and(path("/"))
         .and(header("Origin", "null"))
@@ -73,19 +79,27 @@ async fn test_cors_null_origin() {
     let target = create_mock_target(&server.uri());
 
     let findings = cors::probe(&client, &target).await.unwrap();
-    
-    assert!(!findings.is_empty(), "Expected findings for CORS null origin");
-    let finding = findings.iter().find(|f| f.title() == "CORS: null origin trusted").unwrap();
+
+    assert!(
+        !findings.is_empty(),
+        "Expected findings for CORS null origin"
+    );
+    let finding = findings
+        .iter()
+        .find(|f| f.title() == "CORS: null origin trusted")
+        .unwrap();
     assert_eq!(finding.severity(), Severity::Critical);
 }
 
 #[tokio::test]
 async fn test_dependency_confusion_package_json() {
     let server = MockServer::start().await;
-    
+
     Mock::given(method("GET"))
         .and(path("/package.json"))
-        .respond_with(ResponseTemplate::new(200).set_body_string(r#"{ "name": "my-app", "dependencies": { "@internal/auth": "1.0.0" } }"#))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"{ "name": "my-app", "dependencies": { "@internal/auth": "1.0.0" } }"#,
+        ))
         .mount(&server)
         .await;
 
@@ -93,7 +107,10 @@ async fn test_dependency_confusion_package_json() {
     let target = create_mock_target(&server.uri());
 
     let findings = dependency_confusion::probe(&client, &target).await.unwrap();
-    
-    assert!(!findings.is_empty(), "Expected findings for package.json exposure");
+
+    assert!(
+        !findings.is_empty(),
+        "Expected findings for package.json exposure"
+    );
     assert!(findings[0].title().contains("package.json"));
 }

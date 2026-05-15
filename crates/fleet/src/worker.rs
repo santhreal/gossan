@@ -2,18 +2,20 @@
 
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
-use tracing::{info, error};
+use tokio_stream::StreamExt;
+use tracing::{error, info};
 use uuid::Uuid;
 
-use gossan_core::{Scanner, ScanInput, Config, Target, DomainTarget, DiscoverySource};
 use crate::proto::fleet_control_client::FleetControlClient;
-use crate::proto::{WorkerUpdate, Heartbeat, Finding, TaskCompletion, worker_update, master_instruction};
+use crate::proto::{
+    master_instruction, worker_update, Finding, Heartbeat, TaskCompletion, WorkerUpdate,
+};
+use gossan_core::{Config, DiscoverySource, DomainTarget, ScanInput, Scanner, Target};
 
 pub async fn run_worker(master_url: &str, _config: &Config) -> anyhow::Result<()> {
     let worker = Worker::new(master_url.to_string());
-    
+
     // In a real scenario, we'd pass a factory that can create any scanner.
     // For now, we'll provide an empty factory.
     worker.run(|_name| None).await
@@ -32,20 +34,26 @@ impl Worker {
         }
     }
 
-    pub async fn run<F>(&self, scanner_factory: F) -> anyhow::Result<()> 
-    where 
-        F: Fn(&str) -> Option<Box<dyn Scanner>> + Send + Sync + 'static 
+    pub async fn run<F>(&self, scanner_factory: F) -> anyhow::Result<()>
+    where
+        F: Fn(&str) -> Option<Box<dyn Scanner>> + Send + Sync + 'static,
     {
         let mut client = FleetControlClient::connect(self.master_url.clone()).await?;
         let (tx, rx) = mpsc::channel(32);
-        
+
         // Initial registration message
         tx.send(WorkerUpdate {
             worker_id: self.id.clone(),
-            event: Some(worker_update::Event::Heartbeat(Heartbeat { concurrent_tasks: 0 })),
-        }).await?;
+            event: Some(worker_update::Event::Heartbeat(Heartbeat {
+                concurrent_tasks: 0,
+            })),
+        })
+        .await?;
 
-        let mut stream = client.stream_messages(ReceiverStream::new(rx)).await?.into_inner();
+        let mut stream = client
+            .stream_messages(ReceiverStream::new(rx))
+            .await?
+            .into_inner();
         let factory = Arc::new(scanner_factory);
         let worker_id = self.id.clone();
         let tx_clone = tx.clone();
@@ -61,7 +69,7 @@ impl Worker {
                                 let factory = factory.clone();
                                 let tx = tx_clone.clone();
                                 let worker_id = worker_id.clone();
-                                
+
                                 tokio::spawn(async move {
                                     let res: anyhow::Result<()> = async {
                                         info!(task_id = %task.task_id, module = %task.module_name, "Executing task");
@@ -106,7 +114,7 @@ impl Worker {
                                             })
                                         };
                                         let resolver = Arc::new(gossan_core::net::build_resolver(&config)?);
-                                        
+
                                         let (target_in_tx, target_in_rx) = mpsc::unbounded_channel();
                                         for t in targets {
                                             let _ = target_in_tx.send(t);
@@ -122,31 +130,39 @@ impl Worker {
                                             target_tx: _target_out_tx,
                                             resolver,
                                         };
-                                        
+
                                         scanner.run(input, &config).await?;
                                         Ok(())
                                     }.await;
 
                                     match res {
                                         Ok(()) => {
-                                            let _ = tx.send(WorkerUpdate {
-                                                worker_id,
-                                                event: Some(worker_update::Event::Completion(TaskCompletion {
-                                                    task_id: task.task_id,
-                                                    success: true,
-                                                    error: String::new(),
-                                                })),
-                                            }).await;
+                                            let _ = tx
+                                                .send(WorkerUpdate {
+                                                    worker_id,
+                                                    event: Some(worker_update::Event::Completion(
+                                                        TaskCompletion {
+                                                            task_id: task.task_id,
+                                                            success: true,
+                                                            error: String::new(),
+                                                        },
+                                                    )),
+                                                })
+                                                .await;
                                         }
                                         Err(e) => {
-                                            let _ = tx.send(WorkerUpdate {
-                                                worker_id,
-                                                event: Some(worker_update::Event::Completion(TaskCompletion {
-                                                    task_id: task.task_id,
-                                                    success: false,
-                                                    error: e.to_string(),
-                                                })),
-                                            }).await;
+                                            let _ = tx
+                                                .send(WorkerUpdate {
+                                                    worker_id,
+                                                    event: Some(worker_update::Event::Completion(
+                                                        TaskCompletion {
+                                                            task_id: task.task_id,
+                                                            success: false,
+                                                            error: e.to_string(),
+                                                        },
+                                                    )),
+                                                })
+                                                .await;
                                         }
                                     }
                                 });

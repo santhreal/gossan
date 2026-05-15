@@ -13,8 +13,8 @@ use hickory_resolver::{
 pub fn build_resolver(config: &Config) -> anyhow::Result<TokioAsyncResolver> {
     let servers = if config.resolvers.is_empty() {
         let mut group = NameServerConfigGroup::cloudflare(); // 1.1.1.1, 1.0.0.1
-        group.merge(NameServerConfigGroup::google());     // 8.8.8.8, 8.8.4.4
-        group.merge(NameServerConfigGroup::quad9());      // 9.9.9.9
+        group.merge(NameServerConfigGroup::google()); // 8.8.8.8, 8.8.4.4
+        group.merge(NameServerConfigGroup::quad9()); // 9.9.9.9
         group
     } else {
         NameServerConfigGroup::from_ips_clear(&config.resolvers, 53, true)
@@ -25,15 +25,12 @@ pub fn build_resolver(config: &Config) -> anyhow::Result<TokioAsyncResolver> {
     opts.attempts = 2;
     // Enable DNSSEC validation in the resolver
     opts.validate = true;
-    
+
     Ok(TokioAsyncResolver::tokio(rc, opts))
 }
 
 /// Look up TXT records for a domain, returning the concatenated text content.
-pub async fn lookup_txt(
-    resolver: &TokioAsyncResolver,
-    name: &str,
-) -> anyhow::Result<Vec<String>> {
+pub async fn lookup_txt(resolver: &TokioAsyncResolver, name: &str) -> anyhow::Result<Vec<String>> {
     let lookup = resolver.txt_lookup(name).await?;
     let records: Vec<String> = lookup
         .iter()

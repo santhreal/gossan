@@ -16,9 +16,9 @@ fn empty_config() -> Config {
 }
 
 fn test_client(cfg: &Config) -> gossan_core::ScanClient {
-    use std::sync::Arc;
     use hickory_resolver::config::{ResolverConfig, ResolverOpts};
     use hickory_resolver::TokioAsyncResolver;
+    use std::sync::Arc;
     let resolver = Arc::new(TokioAsyncResolver::tokio(
         ResolverConfig::default(),
         ResolverOpts::default(),

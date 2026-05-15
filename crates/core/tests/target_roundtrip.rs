@@ -160,10 +160,7 @@ fn roundtrip_repository() {
     let Target::Repository(repo) = r else {
         panic!("variant changed");
     };
-    assert_eq!(
-        repo.url.as_str(),
-        "https://github.com/santhsecurity/gossan"
-    );
+    assert_eq!(repo.url.as_str(), "https://github.com/santhsecurity/gossan");
     assert_eq!(repo.service, ScmService::GitHub);
     assert_eq!(repo.branch.as_deref(), Some("main"));
 }

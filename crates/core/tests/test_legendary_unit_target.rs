@@ -1,6 +1,6 @@
 use gossan_core::target::{
-    Target, DomainTarget, HostTarget, ServiceTarget, WebAssetTarget, NetworkTarget,
-    DiscoverySource, Protocol
+    DiscoverySource, DomainTarget, HostTarget, NetworkTarget, Protocol, ServiceTarget, Target,
+    WebAssetTarget,
 };
 use std::net::IpAddr;
 use url::Url;
@@ -83,9 +83,18 @@ fn test_target_ip_extraction() {
 
 #[test]
 fn test_target_base_url_extraction() {
-    assert_eq!(create_domain_target().base_url().unwrap(), "https://example.com/");
+    assert_eq!(
+        create_domain_target().base_url().unwrap(),
+        "https://example.com/"
+    );
     assert_eq!(create_host_target().base_url().unwrap(), "http://1.1.1.1/");
-    assert_eq!(create_service_target().base_url().unwrap(), "https://example.com/");
-    assert_eq!(create_web_target().base_url().unwrap(), "https://example.com/");
+    assert_eq!(
+        create_service_target().base_url().unwrap(),
+        "https://example.com/"
+    );
+    assert_eq!(
+        create_web_target().base_url().unwrap(),
+        "https://example.com/"
+    );
     assert_eq!(create_network_target().base_url(), None);
 }

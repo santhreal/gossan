@@ -47,7 +47,9 @@ async fn csp_with_unsafe_inline_fires() {
         .await
         .expect("probe ok");
     assert!(
-        findings.iter().any(|f| f.title().to_ascii_lowercase().contains("unsafe-inline")),
+        findings
+            .iter()
+            .any(|f| f.title().to_ascii_lowercase().contains("unsafe-inline")),
         "expected an unsafe-inline finding; got: {:?}",
         findings.iter().map(|f| f.title()).collect::<Vec<_>>()
     );
@@ -115,8 +117,10 @@ async fn csp_missing_header_fires() {
     assert!(
         findings.iter().any(|f| {
             let t = f.title().to_ascii_lowercase();
-            t.contains("no content-security-policy") || t.contains("no csp")
-                || t.contains("missing") || t.contains("not set")
+            t.contains("no content-security-policy")
+                || t.contains("no csp")
+                || t.contains("missing")
+                || t.contains("not set")
         }),
         "missing CSP must produce a missing-header finding; got: {:?}",
         findings.iter().map(|f| f.title()).collect::<Vec<_>>()

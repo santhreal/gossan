@@ -20,11 +20,10 @@ const TIER_B_PATHS: &[&str] = &[
 
 /// Default extensions to test for each path root.
 const DEFAULT_EXTENSIONS: &[&str] = &[
-    "", ".php", ".js", ".json", ".bak", ".txt", ".zip", ".tar.gz", ".sql", ".xml",
-    ".old", ".save", ".swp", ".~", ".orig", ".copy", ".rar", ".7z", ".gz", ".tgz",
-    ".bz2", ".tar", ".log", ".config", ".yml", ".yaml", ".cfg", ".ini", ".db",
-    ".sqlite", ".sqlite3", ".mdb", ".dbf", ".csv", ".xls", ".xlsx", ".pdf",
-    ".doc", ".docx",
+    "", ".php", ".js", ".json", ".bak", ".txt", ".zip", ".tar.gz", ".sql", ".xml", ".old", ".save",
+    ".swp", ".~", ".orig", ".copy", ".rar", ".7z", ".gz", ".tgz", ".bz2", ".tar", ".log",
+    ".config", ".yml", ".yaml", ".cfg", ".ini", ".db", ".sqlite", ".sqlite3", ".mdb", ".dbf",
+    ".csv", ".xls", ".xlsx", ".pdf", ".doc", ".docx",
 ];
 
 /// Default interesting HTTP status codes.
@@ -39,7 +38,11 @@ pub fn load_wordlist(custom_path: Option<&str>) -> Vec<String> {
         if let Ok(content) = std::fs::read_to_string(path) {
             words.extend(parse_wordlist(&content));
             if !words.is_empty() {
-                tracing::info!(count = words.len(), path = path, "loaded custom directory wordlist");
+                tracing::info!(
+                    count = words.len(),
+                    path = path,
+                    "loaded custom directory wordlist"
+                );
                 return words;
             }
         }
@@ -50,7 +53,11 @@ pub fn load_wordlist(custom_path: Option<&str>) -> Vec<String> {
         if let Ok(content) = std::fs::read_to_string(path) {
             words.extend(parse_wordlist(&content));
             if !words.is_empty() {
-                tracing::info!(count = words.len(), path = path, "loaded Tier B directory wordlist");
+                tracing::info!(
+                    count = words.len(),
+                    path = path,
+                    "loaded Tier B directory wordlist"
+                );
                 return words;
             }
         }
@@ -58,7 +65,10 @@ pub fn load_wordlist(custom_path: Option<&str>) -> Vec<String> {
 
     // Fallback to built-in list
     words.extend(parse_wordlist(DEFAULT_WORDLIST));
-    tracing::info!(count = words.len(), "using built-in directory wordlist fallback");
+    tracing::info!(
+        count = words.len(),
+        "using built-in directory wordlist fallback"
+    );
     words
 }
 
@@ -103,15 +113,23 @@ pub async fn probe(
     status_codes: &[u16],
     baseline: Option<&crate::soft404::BaselineFingerprint>,
 ) -> Vec<Finding> {
-    let Target::Web(asset) = target else { return vec![] };
+    let Target::Web(asset) = target else {
+        return vec![];
+    };
     let base = asset.url.as_str().trim_end_matches('/');
     let mut findings = Vec::new();
 
     for path in wordlist {
-        let path = if path.starts_with('/') { path.clone() } else { format!("/{}", path) };
+        let path = if path.starts_with('/') {
+            path.clone()
+        } else {
+            format!("/{}", path)
+        };
         for ext in extensions {
             let url = format!("{}{}{}", base, path, ext);
-            let Ok(resp) = client.get(&url).send().await else { continue };
+            let Ok(resp) = client.get(&url).send().await else {
+                continue;
+            };
             let status = resp.status().as_u16();
 
             if !status_codes.contains(&status) {

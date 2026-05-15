@@ -38,8 +38,6 @@ pub fn try_push_finding(builder: FindingBuilder, findings: &mut Vec<Finding>) {
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -66,8 +64,6 @@ mod tests {
         assert_eq!(finding.title(), "Test Title");
         assert_eq!(finding.detail(), "Test Detail");
     }
-
-
 
     #[test]
     fn severity_ordering_matches_expected_risk_progression() {

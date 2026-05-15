@@ -1,5 +1,5 @@
+use gossan_core::{DiscoverySource, DomainTarget, Target};
 use gossan_js::secrets;
-use gossan_core::{Target, DomainTarget, DiscoverySource};
 use std::fs;
 
 use std::path::Path;
@@ -7,9 +7,11 @@ use std::path::Path;
 #[tokio::test]
 async fn test_noise_reduction_clean_corpus() {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-    let corpus_path = Path::new(&manifest_dir).join("../../../../software/keyhog/tests/data/corpus/clean");
-    let entries = fs::read_dir(&corpus_path).expect(&format!("Failed to read corpus at {:?}", corpus_path));
-    
+    let corpus_path =
+        Path::new(&manifest_dir).join("../../../../software/keyhog/tests/data/corpus/clean");
+    let entries =
+        fs::read_dir(&corpus_path).expect(&format!("Failed to read corpus at {:?}", corpus_path));
+
     let target = Target::Domain(DomainTarget {
         domain: "clean-test.local".into(),
         source: DiscoverySource::Seed,
@@ -31,8 +33,7 @@ async fn test_noise_reduction_clean_corpus() {
 
             let findings = secrets::scan(&js_url, &content, &target);
             if !findings.is_empty() {
-                let titles: Vec<String> =
-                    findings.iter().map(|f| f.title().to_string()).collect();
+                let titles: Vec<String> = findings.iter().map(|f| f.title().to_string()).collect();
                 per_file_offenders.push((
                     path.file_name().unwrap().to_string_lossy().to_string(),
                     findings.len(),

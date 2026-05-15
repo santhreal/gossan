@@ -85,7 +85,7 @@ impl super::super::CorrelationRule for SsrfInternalRule {
             service_names.join(", ")
         ))
         .kind(FindingKind::Vulnerability)
-                        .tag("chain")
+        .tag("chain")
         .tag("ssrf")
         .tag("internal")
         .build_or_log();
@@ -102,7 +102,8 @@ mod tests {
     fn finding(scanner: &str, target: &str, title: &str) -> Finding {
         Finding::builder(scanner, target, Severity::High)
             .title(title)
-            .build().expect("test finding")
+            .build()
+            .expect("test finding")
     }
 
     #[test]
@@ -110,7 +111,11 @@ mod tests {
         let rule = SsrfInternalRule;
         let findings = vec![
             finding("hidden", "example.com", "Open redirect detected"),
-            finding("portscan", "example.com", "Redis exposed without authentication"),
+            finding(
+                "portscan",
+                "example.com",
+                "Redis exposed without authentication",
+            ),
         ];
         let chains = rule.check(&findings, &[]);
         assert_eq!(chains.len(), 1);

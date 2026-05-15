@@ -63,13 +63,16 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                 .await
             {
                 let status = resp.status().as_u16();
-                let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
+                let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
+                    .await
+                    .unwrap_or_default();
                 // TRACE echoes the request back — look for our marker or TRACE keyword
                 if (200..=299).contains(&status)
                     && (body.contains("X-Gossan-Probe") || body.to_uppercase().contains("TRACE"))
                 {
                     reported_trace = true;
-                    gossan_core::try_push_finding(crate::misconfig_finding(
+                    gossan_core::try_push_finding(
+                        crate::misconfig_finding(
                             target,
                             Severity::Low,
                             "HTTP TRACE method enabled — cross-site tracing (XST)",
@@ -92,7 +95,9 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                         .exploit_hint(format!(
                             "curl -s -X TRACE '{}' -H 'Cookie: session=victim_token'",
                             url
-                        )), &mut findings);
+                        )),
+                        &mut findings,
+                    );
                 }
             }
         }

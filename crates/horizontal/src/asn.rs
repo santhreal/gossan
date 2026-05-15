@@ -11,7 +11,10 @@ pub async fn get_prefixes_for_ip(client: &Client, ip: &str) -> anyhow::Result<Ve
 /// Parse a HackerTarget ASN lookup response of the form "IP, ASN, Org"
 /// Returns the ASN if present.
 pub(crate) fn parse_asn_response(resp: &str) -> Option<String> {
-    resp.split(',').nth(1).map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+    resp.split(',')
+        .nth(1)
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 /// Look up the ASN for a given IP address via HackerTarget.
@@ -21,7 +24,7 @@ async fn lookup_asn(client: &Client, ip: &str) -> anyhow::Result<String> {
         let r = client.get(&url).send().await?;
         gossan_core::net::bounded_text(r, 1 * 1024 * 1024).await?
     };
-    
+
     if let Some(asn) = parse_asn_response(&resp) {
         return Ok(asn);
     }
@@ -43,9 +46,9 @@ async fn get_prefixes_for_asn(client: &Client, asn: &str) -> anyhow::Result<Vec<
         let r = client.get(&url).send().await?;
         gossan_core::net::bounded_text(r, 1 * 1024 * 1024).await?
     };
-    
+
     let prefixes = parse_prefixes_response(&resp);
-        
+
     Ok(prefixes)
 }
 
@@ -69,7 +72,9 @@ mod tests {
     fn parse_prefixes_handles_lines_and_whitespace() {
         let resp = "192.0.2.0/24\n\n198.51.100.0/24\n ";
         let v = parse_prefixes_response(resp);
-        assert_eq!(v, vec!["192.0.2.0/24".to_string(), "198.51.100.0/24".to_string()]);
+        assert_eq!(
+            v,
+            vec!["192.0.2.0/24".to_string(), "198.51.100.0/24".to_string()]
+        );
     }
 }
-

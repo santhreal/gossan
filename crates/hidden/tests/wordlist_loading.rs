@@ -48,5 +48,8 @@ fn missing_custom_path_falls_back_to_builtin() {
 #[test]
 fn no_custom_path_returns_builtin() {
     let words = load_wordlist(None);
-    assert!(!words.is_empty(), "no custom path must return builtin (non-empty)");
+    assert!(
+        !words.is_empty(),
+        "no custom path must return builtin (non-empty)"
+    );
 }

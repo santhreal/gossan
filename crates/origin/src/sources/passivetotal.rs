@@ -5,31 +5,41 @@
 
 use crate::util::{bounded_json, is_routable_ip};
 use crate::OriginCandidate;
+use base64::Engine as _;
 use gossan_core::{Config, ScanClient};
 use std::collections::HashSet;
 use std::net::IpAddr;
 use std::str::FromStr;
-use base64::Engine as _;
 
 /// Scan PassiveTotal for origin candidates.
-pub async fn scan(domain: &str, config: &Config, client: &ScanClient) -> anyhow::Result<Vec<OriginCandidate>> {
+pub async fn scan(
+    domain: &str,
+    config: &Config,
+    client: &ScanClient,
+) -> anyhow::Result<Vec<OriginCandidate>> {
     let username = match config.api_keys.get("passivetotal_user") {
         Some(k) => k,
         None => {
-            tracing::debug!(source = "passivetotal", "skipping: no passivetotal_user API key");
+            tracing::debug!(
+                source = "passivetotal",
+                "skipping: no passivetotal_user API key"
+            );
             return Ok(vec![]);
         }
     };
     let api_key = match config.api_keys.get("passivetotal_key") {
         Some(k) => k,
         None => {
-            tracing::debug!(source = "passivetotal", "skipping: no passivetotal_key API key");
+            tracing::debug!(
+                source = "passivetotal",
+                "skipping: no passivetotal_key API key"
+            );
             return Ok(vec![]);
         }
     };
 
-    let auth = base64::engine::general_purpose::STANDARD
-        .encode(format!("{}:{}", username, api_key));
+    let auth =
+        base64::engine::general_purpose::STANDARD.encode(format!("{}:{}", username, api_key));
 
     let mut candidates = Vec::new();
     let mut seen = HashSet::new();

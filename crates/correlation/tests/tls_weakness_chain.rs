@@ -21,7 +21,9 @@ fn one_tls_issue_does_not_fire_chain() {
     let host = "https://api.example.com/";
     let chains = engine.run(&[tls_finding(host, "self-signed certificate")], &[]);
     assert!(
-        !chains.iter().any(|f| f.title().to_lowercase().contains("tls-weakness")),
+        !chains
+            .iter()
+            .any(|f| f.title().to_lowercase().contains("tls-weakness")),
         "single issue must not fire tls chain; got: {:?}",
         chains.iter().map(|f| f.title()).collect::<Vec<_>>()
     );
@@ -56,10 +58,13 @@ fn one_hundred_identical_issues_collapse_to_one_chain_or_none() {
         .map(|_| tls_finding(host, "self-signed certificate"))
         .collect();
     let chains = engine.run(&findings, &[]);
-    let tls_chains = chains.iter().filter(|f| {
-        let t = f.title().to_lowercase();
-        t.contains("tls") || t.contains("certificate") || t.contains("weakness")
-    }).count();
+    let tls_chains = chains
+        .iter()
+        .filter(|f| {
+            let t = f.title().to_lowercase();
+            t.contains("tls") || t.contains("certificate") || t.contains("weakness")
+        })
+        .count();
     // 100 identical issues dedupe to 1 distinct issue → below the
     // N≥2-required-distinct threshold → 0 chain findings (deduped).
     assert!(

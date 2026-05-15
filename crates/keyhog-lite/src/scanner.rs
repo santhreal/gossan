@@ -264,9 +264,7 @@ impl CompiledScanner {
             for pat in &det.patterns {
                 for m in pat.regex.find_iter(data) {
                     if newlines.is_none() {
-                        newlines = Some(
-                            data.match_indices('\n').map(|(i, _)| i).collect(),
-                        );
+                        newlines = Some(data.match_indices('\n').map(|(i, _)| i).collect());
                     }
                     let nl = newlines.as_ref().expect("computed above");
                     let line = match nl.binary_search(&m.start()) {
@@ -274,12 +272,7 @@ impl CompiledScanner {
                     };
 
                     if !required_companions.is_empty()
-                        && !any_companion_within(
-                            data,
-                            nl,
-                            line,
-                            &required_companions,
-                        )
+                        && !any_companion_within(data, nl, line, &required_companions)
                     {
                         continue;
                     }
@@ -291,9 +284,7 @@ impl CompiledScanner {
                     // never carry the placeholder marker on the
                     // credential side, but the line does.
                     let line_text = line_at(data, nl, line);
-                    if looks_like_placeholder(m.as_str())
-                        || looks_like_placeholder(line_text)
-                    {
+                    if looks_like_placeholder(m.as_str()) || looks_like_placeholder(line_text) {
                         continue;
                     }
 
@@ -470,7 +461,10 @@ regex = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]
         assert_eq!(m[0].credential, "AKIA1234567890ABCDEF");
         assert_eq!(m[0].severity, Severity::Critical);
         assert_eq!(m[0].location.line, Some(1));
-        assert_eq!(m[0].location.file_path.as_deref(), Some("https://example.com/app.js"));
+        assert_eq!(
+            m[0].location.file_path.as_deref(),
+            Some("https://example.com/app.js")
+        );
     }
 
     #[test]
@@ -601,7 +595,11 @@ required = true
             metadata: ChunkMetadata::default(),
         };
         let hits = s.scan(&chunk);
-        assert_eq!(hits.len(), 1, "primary should fire when companion is nearby");
+        assert_eq!(
+            hits.len(),
+            1,
+            "primary should fire when companion is nearby"
+        );
     }
 
     #[test]

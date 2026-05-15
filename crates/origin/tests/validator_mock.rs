@@ -1,7 +1,10 @@
 use gossan_origin::{util, OriginCandidate, ValidationState};
 use std::net::IpAddr;
 use std::sync::Arc;
-use wiremock::{matchers::{method, path_regex}, Mock, MockServer, ResponseTemplate};
+use wiremock::{
+    matchers::{method, path_regex},
+    Mock, MockServer, ResponseTemplate,
+};
 
 #[tokio::test]
 async fn validator_confirms_known_good_origin() {
@@ -39,11 +42,11 @@ async fn validator_confirms_known_good_origin() {
     // probing was unified onto the shared HTTP client). Use the
     // default client for tests; resolver does not matter because
     // mock servers respond directly.
-    let resolver = Arc::new(
-        hickory_resolver::TokioAsyncResolver::tokio_from_system_conf().unwrap(),
-    );
+    let resolver =
+        Arc::new(hickory_resolver::TokioAsyncResolver::tokio_from_system_conf().unwrap());
     let client = gossan_core::ScanClient::from_config(&config, resolver).unwrap();
-    let validated = gossan_origin::validator::validate(vec![candidate], &domain, &config, &client).await;
+    let validated =
+        gossan_origin::validator::validate(vec![candidate], &domain, &config, &client).await;
 
     assert_eq!(validated.len(), 1);
     assert_eq!(validated[0].validated, ValidationState::Confirmed);
@@ -83,11 +86,11 @@ async fn validator_rejects_generic_nginx_page() {
     // probing was unified onto the shared HTTP client). Use the
     // default client for tests; resolver does not matter because
     // mock servers respond directly.
-    let resolver = Arc::new(
-        hickory_resolver::TokioAsyncResolver::tokio_from_system_conf().unwrap(),
-    );
+    let resolver =
+        Arc::new(hickory_resolver::TokioAsyncResolver::tokio_from_system_conf().unwrap());
     let client = gossan_core::ScanClient::from_config(&config, resolver).unwrap();
-    let validated = gossan_origin::validator::validate(vec![candidate], &domain, &config, &client).await;
+    let validated =
+        gossan_origin::validator::validate(vec![candidate], &domain, &config, &client).await;
 
     assert_eq!(validated.len(), 1);
     assert_eq!(validated[0].validated, ValidationState::Rejected);
@@ -118,18 +121,18 @@ async fn validator_confirms_by_404_divergence() {
     // CDN 404 page
     Mock::given(method("GET"))
         .and(path_regex("/nonexistent-.*"))
-        .respond_with(ResponseTemplate::new(404).set_body_string(
-            "<html><body>Cloudflare 404</body></html>",
-        ))
+        .respond_with(
+            ResponseTemplate::new(404).set_body_string("<html><body>Cloudflare 404</body></html>"),
+        )
         .mount(&cdn)
         .await;
 
     // Origin 404 page
     Mock::given(method("GET"))
         .and(path_regex("/nonexistent-.*"))
-        .respond_with(ResponseTemplate::new(404).set_body_string(
-            "<html><body>nginx 404</body></html>",
-        ))
+        .respond_with(
+            ResponseTemplate::new(404).set_body_string("<html><body>nginx 404</body></html>"),
+        )
         .mount(&origin)
         .await;
 
@@ -144,11 +147,11 @@ async fn validator_confirms_by_404_divergence() {
     // probing was unified onto the shared HTTP client). Use the
     // default client for tests; resolver does not matter because
     // mock servers respond directly.
-    let resolver = Arc::new(
-        hickory_resolver::TokioAsyncResolver::tokio_from_system_conf().unwrap(),
-    );
+    let resolver =
+        Arc::new(hickory_resolver::TokioAsyncResolver::tokio_from_system_conf().unwrap());
     let client = gossan_core::ScanClient::from_config(&config, resolver).unwrap();
-    let validated = gossan_origin::validator::validate(vec![candidate], &domain, &config, &client).await;
+    let validated =
+        gossan_origin::validator::validate(vec![candidate], &domain, &config, &client).await;
 
     assert_eq!(validated.len(), 1);
     assert_eq!(validated[0].validated, ValidationState::Confirmed);

@@ -11,18 +11,18 @@
 //! channel will silently report 0 findings even when every port is
 //! detected. This bench counts `Target::Service` events directly.
 
-use gossan_portscan::PortScanner;
 use gossan_core::{
-    Config, ScanInput, Scanner, Target,
     target::{HostTarget, ServiceTarget},
+    Config, ScanInput, Scanner, Target,
 };
+use gossan_portscan::PortScanner;
+use hickory_resolver::config::{ResolverConfig, ResolverOpts};
+use hickory_resolver::TokioAsyncResolver;
 use std::net::{IpAddr, Ipv4Addr, TcpListener};
 use std::process::Command;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::mpsc;
-use hickory_resolver::config::{ResolverConfig, ResolverOpts};
-use hickory_resolver::TokioAsyncResolver;
 
 const NUM_PORTS: usize = 10;
 
@@ -60,11 +60,19 @@ fn spawn_listeners() -> (Vec<u16>, Arc<std::sync::atomic::AtomicBool>) {
 }
 
 fn nmap_present() -> bool {
-    Command::new("which").arg("nmap").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new("which")
+        .arg("nmap")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 fn run_nmap(ports: &[u16]) -> (usize, u128) {
-    let port_arg = ports.iter().map(u16::to_string).collect::<Vec<_>>().join(",");
+    let port_arg = ports
+        .iter()
+        .map(u16::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
     let t0 = Instant::now();
     let out = Command::new("nmap")
         .args(["-sT", "-p", &port_arg, "-Pn", "-T4", "--open", "127.0.0.1"])
@@ -122,7 +130,10 @@ async fn portscan_finds_all_ten_listeners() {
     let (n, us) = run_gossan_portscan(ports).await;
     println!("gossan-portscan: services={n} time={}ms", us / 1000);
     stop.store(true, std::sync::atomic::Ordering::Relaxed);
-    assert!(n >= NUM_PORTS, "expected >= {NUM_PORTS} open ports, got {n}");
+    assert!(
+        n >= NUM_PORTS,
+        "expected >= {NUM_PORTS} open ports, got {n}"
+    );
 }
 
 #[tokio::test]

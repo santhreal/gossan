@@ -23,7 +23,7 @@ use async_trait::async_trait;
 use gossan_core::{
     Config, HostTarget, PortMode, Protocol, ScanInput, Scanner, ServiceTarget, Target,
 };
-use netforge::engine::{RxPacket, tcp_flags};
+use netforge::engine::{tcp_flags, RxPacket};
 use netforge::packet;
 use netforge::seq::SeqEncoder;
 
@@ -166,27 +166,30 @@ fn get_local_ip(config: &Config) -> anyhow::Result<Ipv4Addr> {
 fn resolve_ports(mode: &PortMode) -> Vec<u16> {
     match mode {
         PortMode::Default => vec![
-            80, 443, 22, 21, 23, 25, 53, 110, 143, 3306, 5432, 8080, 8443,
-            6379, 27017, 9200, 3000, 5000, 8000, 9000,
+            80, 443, 22, 21, 23, 25, 53, 110, 143, 3306, 5432, 8080, 8443, 6379, 27017, 9200, 3000,
+            5000, 8000, 9000,
         ],
         PortMode::Top100 => vec![
-            80, 443, 22, 21, 25, 53, 110, 143, 993, 995, 8080, 8443, 3306,
-            5432, 3389, 5900, 1723, 8000, 8888, 9090, 1433, 389, 636, 161,
-            162, 123, 69, 514, 5060, 5061, 2049, 111, 135, 139, 445, 1521,
-            1080, 3128, 8081, 9000, 9200, 9300, 6379, 27017, 11211, 5672,
-            15672, 4369, 25672, 6443, 2379, 2380, 10250, 10255, 4194, 8001,
-            8002, 8003, 8004, 8005, 8006, 8007, 8008, 8009, 8010, 8181,
-            8282, 8383, 8484, 8585, 8686, 8787, 8888, 9999, 7070, 7071,
-            7072, 7443, 4443, 4040, 5000, 5001, 5002, 5003, 5004, 5005,
-            5006, 5007, 5008, 5009, 5010, 6000, 6001, 6002, 6003, 6004,
-            6005, 6006, 6007, 6008, 6009, 6010,
+            80, 443, 22, 21, 25, 53, 110, 143, 993, 995, 8080, 8443, 3306, 5432, 3389, 5900, 1723,
+            8000, 8888, 9090, 1433, 389, 636, 161, 162, 123, 69, 514, 5060, 5061, 2049, 111, 135,
+            139, 445, 1521, 1080, 3128, 8081, 9000, 9200, 9300, 6379, 27017, 11211, 5672, 15672,
+            4369, 25672, 6443, 2379, 2380, 10250, 10255, 4194, 8001, 8002, 8003, 8004, 8005, 8006,
+            8007, 8008, 8009, 8010, 8181, 8282, 8383, 8484, 8585, 8686, 8787, 8888, 9999, 7070,
+            7071, 7072, 7443, 4443, 4040, 5000, 5001, 5002, 5003, 5004, 5005, 5006, 5007, 5008,
+            5009, 5010, 6000, 6001, 6002, 6003, 6004, 6005, 6006, 6007, 6008, 6009, 6010,
         ],
         PortMode::Top1000 => {
             // Nmap top 1000 — using a representative subset
-            (1..=1024).chain([1433, 1521, 2049, 2379, 3000, 3128, 3306,
-                3389, 4443, 5000, 5432, 5672, 5900, 6379, 6443, 7070,
-                8000, 8080, 8443, 8888, 9000, 9090, 9200, 9300, 10250,
-                11211, 15672, 27017].iter().copied())
+            (1..=1024)
+                .chain(
+                    [
+                        1433, 1521, 2049, 2379, 3000, 3128, 3306, 3389, 4443, 5000, 5432, 5672,
+                        5900, 6379, 6443, 7070, 8000, 8080, 8443, 8888, 9000, 9090, 9200, 9300,
+                        10250, 11211, 15672, 27017,
+                    ]
+                    .iter()
+                    .copied(),
+                )
                 .collect()
         }
         PortMode::Full => (1..=65535).collect(),
@@ -292,18 +295,21 @@ impl Scanner for EngineScanner {
         let rx_backoff = backoff.clone();
 
         let rx_handle = std::thread::spawn(move || {
-            let mut rx_buf = vec![RxPacket {
-                packet: netforge::RawPacket::empty(),
-                src_ip: Ipv4Addr::UNSPECIFIED,
-                src_port: 0,
-                dst_port: 0,
-                tcp_flags: 0,
-                ack_num: 0,
-                seq_num: 0,
-                ttl: 0,
-                window: 0,
-                payload: Vec::new(),
-            }; 256];
+            let mut rx_buf = vec![
+                RxPacket {
+                    packet: netforge::RawPacket::empty(),
+                    src_ip: Ipv4Addr::UNSPECIFIED,
+                    src_port: 0,
+                    dst_port: 0,
+                    tcp_flags: 0,
+                    ack_num: 0,
+                    seq_num: 0,
+                    ttl: 0,
+                    window: 0,
+                    payload: Vec::new(),
+                };
+                256
+            ];
 
             // Adaptive RST-burst detection: count RST packets per /24
             // subnet over a 1-second sliding window. When a single /24
@@ -325,16 +331,14 @@ impl Scanner for EngineScanner {
                         && pkt.dst_port < rx_source_port_base + 8
                     {
                         let octets = pkt.src_ip.octets();
-                        let slash24 =
-                            u32::from_be_bytes([octets[0], octets[1], octets[2], 0]);
+                        let slash24 = u32::from_be_bytes([octets[0], octets[1], octets[2], 0]);
                         *rst_count_per_24.entry(slash24).or_insert(0) += 1;
                     }
 
                     // Filter: only SYN-ACKs whose dst_port falls inside
                     // the TX-thread port range [base, base+8). 8 is the
                     // max TX thread count we cap to.
-                    if pkt.dst_port < rx_source_port_base
-                        || pkt.dst_port >= rx_source_port_base + 8
+                    if pkt.dst_port < rx_source_port_base || pkt.dst_port >= rx_source_port_base + 8
                     {
                         continue;
                     }
@@ -345,12 +349,8 @@ impl Scanner for EngineScanner {
                     // Verify stateless cookie. The cookie includes the
                     // dst_port so verify with the actual port the SYN
                     // was sent from (= pkt.dst_port from RX perspective).
-                    if rx_encoder.verify_synack(
-                        pkt.ack_num,
-                        pkt.src_ip,
-                        pkt.src_port,
-                        pkt.dst_port,
-                    ) {
+                    if rx_encoder.verify_synack(pkt.ack_num, pkt.src_ip, pkt.src_port, pkt.dst_port)
+                    {
                         let _ = res_tx.try_send(SynAckResponse {
                             ip: pkt.src_ip,
                             port: pkt.src_port,
@@ -424,9 +424,11 @@ impl Scanner for EngineScanner {
         let num_tx_threads: usize = std::env::var("GOSSAN_TX_THREADS")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or_else(|| std::thread::available_parallelism()
-                .map(|n| n.get().min(8).max(1))
-                .unwrap_or(2));
+            .unwrap_or_else(|| {
+                std::thread::available_parallelism()
+                    .map(|n| n.get().min(8).max(1))
+                    .unwrap_or(2)
+            });
 
         let scan_start = std::time::Instant::now();
         tracing::info!(
@@ -448,8 +450,7 @@ impl Scanner for EngineScanner {
 
         // Pack target_ips into a Vec<Ipv4Addr> for cheap shared-by-Arc
         // access in worker threads (Target is large; we only need the IP).
-        let ip_slice: Arc<Vec<Ipv4Addr>> =
-            Arc::new(target_ips.iter().map(|(ip, _)| *ip).collect());
+        let ip_slice: Arc<Vec<Ipv4Addr>> = Arc::new(target_ips.iter().map(|(ip, _)| *ip).collect());
         let ports_slice: Arc<Vec<u16>> = Arc::new(ports.clone());
 
         let adaptive_rate_enabled = config.adaptive_rate;
@@ -486,11 +487,8 @@ impl Scanner for EngineScanner {
                     let target_cpu = thread_id % cpu_count;
                     let mut cpuset: libc::cpu_set_t = std::mem::zeroed();
                     libc::CPU_SET(target_cpu, &mut cpuset);
-                    let _ = libc::sched_setaffinity(
-                        0,
-                        std::mem::size_of::<libc::cpu_set_t>(),
-                        &cpuset,
-                    );
+                    let _ =
+                        libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &cpuset);
                 }
 
                 // Per-thread engine + rate limiter + encoder + batch.
@@ -635,11 +633,7 @@ impl Scanner for EngineScanner {
                 let cur_sent = log_atomic.load(std::sync::atomic::Ordering::Relaxed);
                 let dt = now.duration_since(last_log).as_secs_f64();
                 let pps = ((cur_sent - last_sent) as f64 / dt) as u64;
-                tracing::info!(
-                    pps = pps,
-                    sent = cur_sent,
-                    "engine TX"
-                );
+                tracing::info!(pps = pps, sent = cur_sent, "engine TX");
                 last_log = now;
                 last_sent = cur_sent;
             }
@@ -686,10 +680,7 @@ impl Scanner for EngineScanner {
             found.insert((resp.ip, resp.port), resp);
         }
 
-        tracing::info!(
-            open_ports = found.len(),
-            "scan complete"
-        );
+        tracing::info!(open_ports = found.len(), "scan complete");
 
         // ── Banner grab + service classification ─────────────────────────
         // For each open port discovered by the SYN scan, do a quick
@@ -735,7 +726,9 @@ impl Scanner for EngineScanner {
                         let classification = banner
                             .as_deref()
                             .and_then(|b| classifier.classify_top(b))
-                            .map(|m| format!("{}/{}", m.service, m.version.unwrap_or_else(|| "?".into())));
+                            .map(|m| {
+                                format!("{}/{}", m.service, m.version.unwrap_or_else(|| "?".into()))
+                            });
                         (ip, port, domain, os, banner, classification)
                     }
                 })
@@ -928,7 +921,10 @@ mod tests {
         let s = slash24_of("203.0.113.7".parse().unwrap());
         assert!(!bo.is_blocked(s), "untouched subnet must not be blocked");
         bo.block(s, Duration::from_millis(50));
-        assert!(bo.is_blocked(s), "subnet must be blocked immediately after insert");
+        assert!(
+            bo.is_blocked(s),
+            "subnet must be blocked immediately after insert"
+        );
         std::thread::sleep(Duration::from_millis(80));
         assert!(
             !bo.is_blocked(s),
@@ -944,7 +940,10 @@ mod tests {
         bo.block(s, Duration::from_millis(10));
         // The shorter window must NOT replace the longer one.
         std::thread::sleep(Duration::from_millis(40));
-        assert!(bo.is_blocked(s), "longer window must survive a shorter overwrite");
+        assert!(
+            bo.is_blocked(s),
+            "longer window must survive a shorter overwrite"
+        );
     }
 
     #[test]
@@ -977,7 +976,10 @@ mod tests {
         let bo2 = bo.clone();
         let s = slash24_of("10.0.0.1".parse().unwrap());
         bo.block(s, Duration::from_secs(60));
-        assert!(bo2.is_blocked(s), "clone must observe writes through original");
+        assert!(
+            bo2.is_blocked(s),
+            "clone must observe writes through original"
+        );
         bo2.skipped.fetch_add(7, Ordering::Relaxed);
         assert_eq!(bo.skipped.load(Ordering::Relaxed), 7);
     }

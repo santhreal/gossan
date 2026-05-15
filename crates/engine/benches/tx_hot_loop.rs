@@ -140,20 +140,14 @@ fn run_tx_hot_loop_parallel(
                 let target_cpu = thread_id % cpu_count;
                 let mut cpuset: libc::cpu_set_t = std::mem::zeroed();
                 libc::CPU_SET(target_cpu, &mut cpuset);
-                let _ = libc::sched_setaffinity(
-                    0,
-                    std::mem::size_of::<libc::cpu_set_t>(),
-                    &cpuset,
-                );
+                let _ = libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &cpuset);
             }
             let encoder = SeqEncoder::new();
             let backend = CountingEngine::new();
-            let permutation =
-                BlackrockPermutation::new(total_probes.max(1), permutation_seed);
+            let permutation = BlackrockPermutation::new(total_probes.max(1), permutation_seed);
             let stride = num_threads as u64;
             let my_source_port = source_port_base + thread_id as u16;
-            let mut batch: Vec<RawPacket> =
-                (0..batch_size).map(|_| template.clone()).collect();
+            let mut batch: Vec<RawPacket> = (0..batch_size).map(|_| template.clone()).collect();
             let mut batch_len = 0usize;
             let mut local_sent: u64 = 0;
             let mut global_idx: u64 = thread_id as u64;
@@ -234,7 +228,11 @@ fn bench_parallel_tx(c: &mut Criterion) {
     let cpu_count = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(8);
-    let candidates: Vec<usize> = [1usize, 2, 4, 8].iter().copied().filter(|&n| n <= cpu_count).collect();
+    let candidates: Vec<usize> = [1usize, 2, 4, 8]
+        .iter()
+        .copied()
+        .filter(|&n| n <= cpu_count)
+        .collect();
 
     for &threads in &candidates {
         group.bench_with_input(

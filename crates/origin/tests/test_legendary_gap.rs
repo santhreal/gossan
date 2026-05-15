@@ -1,30 +1,36 @@
 use gossan_core::Config;
-use wiremock::{MockServer, Mock, ResponseTemplate};
 use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
 async fn test_gap_discover_origin_local_network_filtering() {
     let config = Config::default();
-    
+
     // We expect localhost to not return loopback addresses, or at least for the engine
     // to strictly filter private/loopback WAF bypass origins.
     let candidates = gossan_origin::discover_origin("localhost", &config)
         .await
         .expect("Discover origin should not error out on localhost");
-    
+
     // If the engine incorrectly returns 127.0.0.1 from the DNS resolution
     // of `localhost`, this test will fail, serving as a gap finding.
     for candidate in candidates {
         // Assert that the engine successfully filtered out loopbacks
-        assert!(!candidate.ip.is_loopback(), "GAP FINDING: Engine should filter out loopback IPs");
+        assert!(
+            !candidate.ip.is_loopback(),
+            "GAP FINDING: Engine should filter out loopback IPs"
+        );
         // Assert that it filtered out private IPs (gap finding if it didn't)
         // In the codebase we saw `http_header` checked `is_loopback` but missed `is_private`.
-        
+
         let is_private = match candidate.ip {
             std::net::IpAddr::V4(v4) => v4.is_private(),
             std::net::IpAddr::V6(_) => false, // Simplification for test
         };
-        assert!(!is_private, "GAP FINDING: Engine should filter out private network IPs");
+        assert!(
+            !is_private,
+            "GAP FINDING: Engine should filter out private network IPs"
+        );
     }
 }
 
@@ -65,5 +71,8 @@ async fn test_gap_favicon_hash_handles_large_responses() {
     let candidates = result.expect("Should not panic or crash on large payload attempt");
 
     // No API keys are configured, so no candidates should be emitted.
-    assert!(candidates.is_empty(), "Expected empty candidates since no Shodan/Censys key is configured");
+    assert!(
+        candidates.is_empty(),
+        "Expected empty candidates since no Shodan/Censys key is configured"
+    );
 }

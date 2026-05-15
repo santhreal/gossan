@@ -129,14 +129,21 @@ fn dedup_strips_trailing_dot() {
 fn dedup_empty_and_whitespace() {
     assert_eq!(normalize_domain(""), None);
     assert_eq!(normalize_domain("   "), None);
-    assert_eq!(normalize_domain("  api.example.com  "), Some("api.example.com".to_string()));
+    assert_eq!(
+        normalize_domain("  api.example.com  "),
+        Some("api.example.com".to_string())
+    );
 }
 
 #[tokio::test]
 async fn source_timeout_does_not_block_others() {
     // Smoke test: verify all sources can be enumerated quickly.
     let sources = gossan_subdomain::sources::all_sources();
-    assert!(sources.len() >= 80, "expected at least 80 sources, got {}", sources.len());
+    assert!(
+        sources.len() >= 80,
+        "expected at least 80 sources, got {}",
+        sources.len()
+    );
 }
 
 #[test]

@@ -13,7 +13,7 @@
 #![allow(
     clippy::module_name_repetitions,
     clippy::must_use_candidate,
-    clippy::missing_errors_doc,
+    clippy::missing_errors_doc
 )]
 
 //! Cloud asset discovery scanner.
@@ -25,7 +25,6 @@
 //! # Adding a new cloud provider
 //! 1. Create `src/{provider}.rs` and implement [`CloudProvider`].
 //! 2. Add it to [`providers()`] — that's the only change needed in this file.
-
 
 pub mod azure;
 pub mod common;
@@ -48,8 +47,8 @@ pub mod lambda;
 #[cfg(test)]
 mod integration_tests;
 
-use std::sync::Arc;
 use std::net::IpAddr;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -373,13 +372,13 @@ fn is_ssrf_protected_target(target: &str) -> bool {
     if let Ok(ip) = target.parse::<IpAddr>() {
         return is_ssrf_protected_ip(&ip);
     }
-    
+
     // Check if it's a hostname that resolves to a protected IP
     // For simplicity, check known metadata service hostname patterns
     if target == "metadata.google.internal" || target == "169.254.169.254" {
         return true;
     }
-    
+
     false
 }
 

@@ -1,10 +1,13 @@
+use gossan_core::{
+    target::{DiscoverySource, DomainTarget},
+    Scanner, Target,
+};
 use gossan_scm::ScmScanner;
-use gossan_core::{Scanner, Target, target::{DomainTarget, DiscoverySource}};
 
 #[tokio::test]
 async fn test_adversarial_domain_inputs() {
     let scanner = ScmScanner;
-    
+
     // 1. Empty string
     let empty = Target::Domain(DomainTarget {
         domain: "".to_string(),

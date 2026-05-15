@@ -33,12 +33,7 @@ impl IntelSource for VirusTotalSource {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("VirusTotal requires an API key"))?;
         let url = format!("{BASE_URL}/ip_addresses/{ip}");
-        let resp = self
-            .client
-            .get(&url)
-            .header("x-apikey", key)
-            .send()
-            .await?;
+        let resp = self.client.get(&url).header("x-apikey", key).send().await?;
         let body: VtResp = resp.error_for_status()?.json().await?;
 
         let mut enrichment = IntelEnrichment::new("virustotal", "ip", ip);
@@ -86,12 +81,7 @@ impl IntelSource for VirusTotalSource {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("VirusTotal requires an API key"))?;
         let url = format!("{BASE_URL}/domains/{domain}");
-        let resp = self
-            .client
-            .get(&url)
-            .header("x-apikey", key)
-            .send()
-            .await?;
+        let resp = self.client.get(&url).header("x-apikey", key).send().await?;
         let body: VtResp = resp.error_for_status()?.json().await?;
 
         let mut enrichment = IntelEnrichment::new("virustotal", "domain", domain);

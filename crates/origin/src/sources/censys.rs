@@ -11,7 +11,11 @@ use std::net::IpAddr;
 use std::str::FromStr;
 
 /// Scan Censys for origin candidates.
-pub async fn scan(domain: &str, config: &Config, client: &ScanClient) -> anyhow::Result<Vec<OriginCandidate>> {
+pub async fn scan(
+    domain: &str,
+    config: &Config,
+    client: &ScanClient,
+) -> anyhow::Result<Vec<OriginCandidate>> {
     let api_id = match config.api_keys.get("censys_id") {
         Some(k) => k,
         None => {

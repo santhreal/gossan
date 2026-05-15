@@ -1,8 +1,8 @@
 // `GraphStore::target_id(&Target)` is now a free function `target_id`
 // re-exported at crate root (the per-backend graph store split made
 // the associated method redundant since the ID is backend-agnostic).
+use gossan_core::{DiscoverySource, DomainTarget, HostTarget, Target};
 use gossan_graph::target_id;
-use gossan_core::{Target, DomainTarget, DiscoverySource, HostTarget};
 
 #[test]
 fn test_target_id_domain() {

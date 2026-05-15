@@ -96,7 +96,10 @@ async fn master_dispatch_with_empty_targets_still_errors_when_no_workers() {
         .await
         .expect_err("no-workers gate runs before target validation");
     let msg = format!("{err:#}");
-    assert!(msg.contains("No workers"), "expected no-workers error; got: {msg}");
+    assert!(
+        msg.contains("No workers"),
+        "expected no-workers error; got: {msg}"
+    );
 }
 
 #[tokio::test]

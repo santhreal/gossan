@@ -50,7 +50,9 @@ impl IntelSource for UrlScanSource {
             }
         }
 
-        enrichment.raw.insert("total".to_string(), serde_json::to_value(body.total)?);
+        enrichment
+            .raw
+            .insert("total".to_string(), serde_json::to_value(body.total)?);
 
         Ok(enrichment)
     }
@@ -71,7 +73,9 @@ impl IntelSource for UrlScanSource {
             }
         }
 
-        enrichment.raw.insert("total".to_string(), serde_json::to_value(body.total)?);
+        enrichment
+            .raw
+            .insert("total".to_string(), serde_json::to_value(body.total)?);
 
         Ok(enrichment)
     }

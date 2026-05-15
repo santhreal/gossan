@@ -92,7 +92,9 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
             continue;
         }
 
-        let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
+        let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
+            .await
+            .unwrap_or_default();
         let body_excerpt: String = body.chars().take(200).collect::<String>().into();
 
         // Must look like an API response, not a generic error page
@@ -116,7 +118,8 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
             .unwrap_or("/v0");
         let (first_path, first_status, first_body) = &found_versions[0];
 
-        gossan_core::try_push_finding(crate::exposure_finding(
+        gossan_core::try_push_finding(
+            crate::exposure_finding(
                 target,
                 Severity::High,
                 format!(
@@ -145,7 +148,9 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                  curl -s '{base}{oldest}/admin'  # admin endpoints sometimes unprotected\n\
                  # Compare responses with current version:\n\
                  diff <(curl -s '{base}/v1/users') <(curl -s '{base}{oldest}/users')"
-            )), &mut findings);
+            )),
+            &mut findings,
+        );
     }
 
     // Shadow / non-production endpoint detection
@@ -160,13 +165,16 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
             continue;
         }
 
-        let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
+        let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
+            .await
+            .unwrap_or_default();
         let excerpt: String = body.chars().take(200).collect::<String>().into();
 
         let is_interesting = is_interesting_shadow_response(&excerpt, status);
 
         if is_interesting {
-            gossan_core::try_push_finding(crate::exposure_finding(
+            gossan_core::try_push_finding(
+                crate::exposure_finding(
                     target,
                     *severity,
                     format!("{} exposed: {}", description, path),
@@ -189,7 +197,9 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                 .exploit_hint(format!(
                     "# Explore shadow environment:\n\
                      ffuf -u '{base}{path}/FUZZ' -w api_wordlist.txt -mc 200,401,403"
-                )), &mut findings);
+                )),
+                &mut findings,
+            );
         }
     }
 

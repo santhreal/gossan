@@ -129,13 +129,11 @@ fn builtin_port_lists() -> &'static HashMap<String, Vec<u16>> {
 ///
 /// This is called lazily on first access. The result is cached for subsequent calls.
 fn builtin_risky_services() -> &'static Vec<RiskyService> {
-    RISKY_SERVICES.get_or_init(|| {
-        match parse_risky_services(BUILTIN_RISKY_SERVICES) {
-            Ok(services) => services,
-            Err(e) => {
-                tracing::error!(error = %e, "failed to parse built-in risky_services.toml");
-                Vec::new()
-            }
+    RISKY_SERVICES.get_or_init(|| match parse_risky_services(BUILTIN_RISKY_SERVICES) {
+        Ok(services) => services,
+        Err(e) => {
+            tracing::error!(error = %e, "failed to parse built-in risky_services.toml");
+            Vec::new()
         }
     })
 }
@@ -515,7 +513,10 @@ detail = "Test detail."
         let _ = std::fs::create_dir_all(&dir);
         std::fs::write(dir.join("broken.toml"), "this is not valid [[ports]]").unwrap();
         let lists = load_community_port_lists(&dir);
-        assert!(lists.is_empty(), "malformed file should be skipped gracefully");
+        assert!(
+            lists.is_empty(),
+            "malformed file should be skipped gracefully"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

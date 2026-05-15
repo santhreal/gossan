@@ -15,7 +15,6 @@ use crate::Severity;
 /// All fields also read from environment variables or `gossan.toml`.
 pub type ApiKeys = std::collections::HashMap<String, String>;
 
-
 /// Which ports to scan. Determined at scan startup and passed through `Config`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]

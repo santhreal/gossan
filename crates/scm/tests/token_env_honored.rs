@@ -11,11 +11,11 @@
 //! match in `gitlab_discovery.rs` future iterations.
 
 use gossan_core::{Config, ScanInput, Target};
-use std::sync::Arc;
-use tokio::sync::mpsc;
 use hickory_resolver::config::{ResolverConfig, ResolverOpts};
 use hickory_resolver::TokioAsyncResolver;
 use mockito::Server;
+use std::sync::Arc;
+use tokio::sync::mpsc;
 
 fn fresh_input() -> (ScanInput, mpsc::UnboundedReceiver<Target>) {
     let (tx, rx) = mpsc::unbounded_channel();

@@ -153,7 +153,8 @@ mod tests {
     fn memory_clear_resets_state() {
         let mut s = MemoryStore::new();
         s.init().unwrap();
-        s.write_nodes(&[sample_node("d1", NodeType::Domain)]).unwrap();
+        s.write_nodes(&[sample_node("d1", NodeType::Domain)])
+            .unwrap();
         assert_eq!(s.read_nodes().unwrap().len(), 1);
         s.clear().unwrap();
         assert!(s.read_nodes().unwrap().is_empty());

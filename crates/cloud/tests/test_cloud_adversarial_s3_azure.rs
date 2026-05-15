@@ -1,14 +1,12 @@
-use gossan_cloud::{
-    azure::AzureProvider, provider::CloudProvider, s3::S3Provider,
-};
+use gossan_cloud::{azure::AzureProvider, provider::CloudProvider, s3::S3Provider};
 use gossan_core::{DiscoverySource, DomainTarget, Target};
-use wiremock::matchers::{method, path, header_exists};
+use wiremock::matchers::{header_exists, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
 async fn test_s3_adversarial_xml_listing() {
     let server: MockServer = MockServer::start().await;
-    
+
     // Malicious or malformed XML that should still trigger the finding
     let xml_body = r#"<?xml version="1.0" encoding="UTF-8"?>
 <ListBucketResult>
@@ -20,7 +18,11 @@ async fn test_s3_adversarial_xml_listing() {
 
     Mock::given(method("GET"))
         .and(path("/"))
-        .respond_with(ResponseTemplate::new(200).set_body_string(xml_body).insert_header("x-amz-bucket-region", "us-west-2"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(xml_body)
+                .insert_header("x-amz-bucket-region", "us-west-2"),
+        )
         .mount(&server)
         .await;
 
@@ -33,9 +35,18 @@ async fn test_s3_adversarial_xml_listing() {
     struct TestS3Provider(String);
     #[async_trait::async_trait]
     impl CloudProvider for TestS3Provider {
-        fn name(&self) -> &'static str { "s3" }
-        fn endpoint(&self, _name: &str) -> String { self.0.clone() }
-        async fn probe(&self, c: &reqwest::Client, n: &str, t: &Target) -> anyhow::Result<Vec<secfinding::Finding>> {
+        fn name(&self) -> &'static str {
+            "s3"
+        }
+        fn endpoint(&self, _name: &str) -> String {
+            self.0.clone()
+        }
+        async fn probe(
+            &self,
+            c: &reqwest::Client,
+            n: &str,
+            t: &Target,
+        ) -> anyhow::Result<Vec<secfinding::Finding>> {
             let s3 = S3Provider;
             s3.probe(c, n, t).await
         }
@@ -50,7 +61,7 @@ async fn test_s3_adversarial_xml_listing() {
 #[tokio::test]
 async fn test_s3_adversarial_403_no_region() {
     let server: MockServer = MockServer::start().await;
-    
+
     Mock::given(method("GET"))
         .and(path("/"))
         .respond_with(ResponseTemplate::new(403))
@@ -71,7 +82,7 @@ async fn test_s3_adversarial_403_no_region() {
 #[tokio::test]
 async fn test_s3_adversarial_put_success() {
     let server: MockServer = MockServer::start().await;
-    
+
     Mock::given(method("PUT"))
         .respond_with(ResponseTemplate::new(200))
         .mount(&server)
@@ -86,16 +97,22 @@ async fn test_s3_adversarial_put_success() {
 #[tokio::test]
 async fn test_azure_adversarial_container_name() {
     let azure = AzureProvider;
-    
+
     // Azure account names are 3-24 lowercase alphanumeric chars
-    assert_eq!(azure.endpoint("test"), "https://test.blob.core.windows.net/");
-    assert_eq!(azure.endpoint("123456789012345678901234"), "https://123456789012345678901234.blob.core.windows.net/");
+    assert_eq!(
+        azure.endpoint("test"),
+        "https://test.blob.core.windows.net/"
+    );
+    assert_eq!(
+        azure.endpoint("123456789012345678901234"),
+        "https://123456789012345678901234.blob.core.windows.net/"
+    );
 }
 
 #[tokio::test]
 async fn test_azure_adversarial_200_web() {
     let server: MockServer = MockServer::start().await;
-    
+
     Mock::given(method("GET"))
         .and(path("/$web/"))
         .respond_with(ResponseTemplate::new(200).set_body_string("<html>Static Website</html>"))
@@ -111,7 +128,7 @@ async fn test_azure_adversarial_200_web() {
 #[tokio::test]
 async fn test_azure_adversarial_403() {
     let server: MockServer = MockServer::start().await;
-    
+
     Mock::given(method("GET"))
         .and(path("/public/"))
         .respond_with(ResponseTemplate::new(403))
@@ -127,9 +144,9 @@ async fn test_azure_adversarial_403() {
 #[tokio::test]
 async fn test_s3_adversarial_massive_body() {
     let server: MockServer = MockServer::start().await;
-    
+
     let massive_body = "A".repeat(1_000_000);
-    
+
     Mock::given(method("GET"))
         .and(path("/"))
         .respond_with(ResponseTemplate::new(200).set_body_string(massive_body))
@@ -145,9 +162,9 @@ async fn test_s3_adversarial_massive_body() {
 #[tokio::test]
 async fn test_s3_adversarial_zalgo_body() {
     let server: MockServer = MockServer::start().await;
-    
+
     let zalgo_body = "T̵h̶i̶s̵ ̷i̸s̶ ̶Z̷a̴l̷g̶o̵ ̷t̶e̸x̶t̷";
-    
+
     Mock::given(method("GET"))
         .and(path("/"))
         .respond_with(ResponseTemplate::new(200).set_body_string(zalgo_body))
@@ -168,7 +185,7 @@ fn test_azure_account_name_filtering() {
         .filter(|c| c.is_ascii_alphanumeric())
         .collect::<String>()
         .to_lowercase();
-        
+
     assert_eq!(account, "testbucket");
 }
 
@@ -178,9 +195,9 @@ fn test_azure_account_name_length_bounds() {
     let exact_short = "abc";
     let exact_long = "a".repeat(24);
     let long = "a".repeat(25);
-    
+
     let is_valid = |acc: &str| acc.len() >= 3 && acc.len() <= 24;
-    
+
     assert!(!is_valid(short));
     assert!(is_valid(exact_short));
     assert!(is_valid(&exact_long));
@@ -190,7 +207,13 @@ fn test_azure_account_name_length_bounds() {
 #[test]
 fn test_s3_endpoint_generation() {
     let s3 = S3Provider;
-    assert_eq!(s3.endpoint("test-bucket"), "https://test-bucket.s3.amazonaws.com/");
+    assert_eq!(
+        s3.endpoint("test-bucket"),
+        "https://test-bucket.s3.amazonaws.com/"
+    );
     assert_eq!(s3.endpoint(""), "https://.s3.amazonaws.com/");
-    assert_eq!(s3.endpoint("a".repeat(64).as_str()), format!("https://{}.s3.amazonaws.com/", "a".repeat(64)));
+    assert_eq!(
+        s3.endpoint("a".repeat(64).as_str()),
+        format!("https://{}.s3.amazonaws.com/", "a".repeat(64))
+    );
 }

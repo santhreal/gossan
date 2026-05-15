@@ -13,7 +13,7 @@
 #![allow(
     clippy::module_name_repetitions,
     clippy::must_use_candidate,
-    clippy::missing_errors_doc,
+    clippy::missing_errors_doc
 )]
 
 //! Headless browser scanning — screenshot, DOM analysis, SPA detection.
@@ -30,7 +30,12 @@ use std::time::Duration;
 /// Headless browser scanner — screenshot, DOM analysis, SPA spider, dynamic endpoint discovery.
 pub struct HeadlessScanner;
 
-fn finding_builder(target: &Target, severity: Severity, title: impl Into<String>, detail: impl Into<String>) -> FindingBuilder {
+fn finding_builder(
+    target: &Target,
+    severity: Severity,
+    title: impl Into<String>,
+    detail: impl Into<String>,
+) -> FindingBuilder {
     Finding::builder("headless", target.domain().unwrap_or("?"), severity)
         .title(title)
         .detail(detail)
@@ -119,7 +124,11 @@ impl Scanner for HeadlessScanner {
     }
 }
 
-async fn analyze_target(browser: &Browser, mut target: Target, config: &Config) -> anyhow::Result<(Target, Vec<Finding>)> {
+async fn analyze_target(
+    browser: &Browser,
+    mut target: Target,
+    config: &Config,
+) -> anyhow::Result<(Target, Vec<Finding>)> {
     let Target::Web(ref asset) = target else {
         return Ok((target, vec![]));
     };
@@ -250,15 +259,18 @@ async fn analyze_target(browser: &Browser, mut target: Target, config: &Config) 
                 let url = r.get("url").and_then(|v| v.as_str()).unwrap_or("");
                 let typ = r.get("type").and_then(|v| v.as_str()).unwrap_or("unknown");
                 if !url.is_empty() && !url.starts_with("data:") {
-                    gossan_core::try_push_finding(finding_builder(
-                        &target,
-                        Severity::Info,
-                        format!("Dynamic {} Endpoint Hooked", typ.to_uppercase()),
-                        format!("Injected hook trapped runtime {} request to: {}", typ, url),
-                    )
-                    .tag("recon")
-                    .tag("hooked_request")
-                    .evidence(Evidence::Raw(url.to_string().into())), &mut findings);
+                    gossan_core::try_push_finding(
+                        finding_builder(
+                            &target,
+                            Severity::Info,
+                            format!("Dynamic {} Endpoint Hooked", typ.to_uppercase()),
+                            format!("Injected hook trapped runtime {} request to: {}", typ, url),
+                        )
+                        .tag("recon")
+                        .tag("hooked_request")
+                        .evidence(Evidence::Raw(url.to_string().into())),
+                        &mut findings,
+                    );
                 }
             }
         }
@@ -272,7 +284,8 @@ async fn analyze_target(browser: &Browser, mut target: Target, config: &Config) 
 
         // Filter out obvious noise, trap API paths
         if url.contains("api") || url.ends_with(".json") || url.ends_with(".graphql") {
-            gossan_core::try_push_finding(finding_builder(
+            gossan_core::try_push_finding(
+                finding_builder(
                     &target,
                     Severity::Info,
                     "Dynamic API Endpoint Trapped",
@@ -283,11 +296,16 @@ async fn analyze_target(browser: &Browser, mut target: Target, config: &Config) 
                 .evidence(Evidence::HttpResponse {
                     status: 200,
                     headers: vec![],
-                    body_excerpt: Some(format!(
-                        "Method: {}, Headers: {:?}",
-                        req.request.method, req.request.headers
-                    ).into()),
-                }), &mut findings);
+                    body_excerpt: Some(
+                        format!(
+                            "Method: {}, Headers: {:?}",
+                            req.request.method, req.request.headers
+                        )
+                        .into(),
+                    ),
+                }),
+                &mut findings,
+            );
         }
     }
 
@@ -318,7 +336,7 @@ async fn analyze_target(browser: &Browser, mut target: Target, config: &Config) 
             for item in interesting {
                 let key = item.get("key").and_then(|v| v.as_str()).unwrap_or("?");
                 let value = item.get("value").and_then(|v| v.as_str()).unwrap_or("?");
-                
+
                 gossan_core::try_push_finding(finding_builder(
                     &target,
                     Severity::Low,
@@ -357,25 +375,45 @@ async fn analyze_target(browser: &Browser, mut target: Target, config: &Config) 
     if let Ok(res) = page.evaluate(form_probe).await {
         if let Some(forms) = res.value().and_then(|v| v.as_array()) {
             for f in forms {
-                let action = f.get("action").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let method = f.get("method").and_then(|v| v.as_str()).unwrap_or("GET").to_string();
+                let action = f
+                    .get("action")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let method = f
+                    .get("method")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("GET")
+                    .to_string();
                 let mut inputs = Vec::new();
                 if let Some(ins) = f.get("inputs").and_then(|v| v.as_array()) {
                     for i in ins {
                         if let Some(pair) = i.as_array() {
-                            let name = pair.first().and_then(|v| v.as_str()).unwrap_or("").to_string();
-                            let typ = pair.get(1).and_then(|v| v.as_str()).unwrap_or("text").to_string();
+                            let name = pair
+                                .first()
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let typ = pair
+                                .get(1)
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("text")
+                                .to_string();
                             inputs.push((name, typ));
                         }
                     }
                 }
-                discovered_forms.push(gossan_core::DiscoveredForm { action, method, inputs });
+                discovered_forms.push(gossan_core::DiscoveredForm {
+                    action,
+                    method,
+                    inputs,
+                });
             }
         }
     }
 
     page.close().await.ok();
-    
+
     // Update the asset with discovered forms
     if let Target::Web(ref mut asset) = target {
         asset.forms = discovered_forms;
@@ -392,10 +430,13 @@ mod tests {
 
     fn web_target() -> Target {
         Target::Web(Box::new(WebAssetTarget {
-            url: Url::parse("https://example.com").unwrap_or_else(|_| Url::parse("http://127.0.0.1").unwrap()),
+            url: Url::parse("https://example.com")
+                .unwrap_or_else(|_| Url::parse("http://127.0.0.1").unwrap()),
             service: ServiceTarget {
                 host: HostTarget {
-                    ip: "127.0.0.1".parse().unwrap_or_else(|_| "127.0.0.1".parse().unwrap()),
+                    ip: "127.0.0.1"
+                        .parse()
+                        .unwrap_or_else(|_| "127.0.0.1".parse().unwrap()),
                     domain: Some("example.com".into()),
                 },
                 port: 443,
@@ -424,7 +465,9 @@ mod tests {
         let scanner = HeadlessScanner;
         assert!(scanner.accepts(&web_target()));
         assert!(!scanner.accepts(&Target::Host(HostTarget {
-            ip: "127.0.0.1".parse().unwrap_or_else(|_| "127.0.0.1".parse().unwrap()),
+            ip: "127.0.0.1"
+                .parse()
+                .unwrap_or_else(|_| "127.0.0.1".parse().unwrap()),
             domain: None,
         })));
     }
@@ -436,23 +479,22 @@ mod tests {
             BrowserConfig::builder()
                 .no_sandbox()
                 .build()
-                .expect("Failed to build BrowserConfig")
+                .expect("Failed to build BrowserConfig"),
         )
-        .await {
+        .await
+        {
             Ok(b) => b,
             Err(_) => return, // Skip if browser cannot launch in this environment
         };
 
-        tokio::spawn(async move {
-            while let Some(_) = handler.next().await {}
-        });
+        tokio::spawn(async move { while let Some(_) = handler.next().await {} });
 
         let mut target = web_target();
         if let Target::Web(ref mut asset) = target {
             asset.url = Url::parse("http://0.0.0.0:1").expect("Invalid URL");
         }
         let config = Config::default();
-        
+
         let result = analyze_target(&browser, target, &config).await;
         assert!(result.is_err());
     }
@@ -463,16 +505,15 @@ mod tests {
             BrowserConfig::builder()
                 .no_sandbox()
                 .build()
-                .expect("Failed to build BrowserConfig")
+                .expect("Failed to build BrowserConfig"),
         )
-        .await {
+        .await
+        {
             Ok(b) => b,
             Err(_) => return,
         };
 
-        tokio::spawn(async move {
-            while let Some(_) = handler.next().await {}
-        });
+        tokio::spawn(async move { while let Some(_) = handler.next().await {} });
 
         let target = web_target();
         let mut config = Config::default();

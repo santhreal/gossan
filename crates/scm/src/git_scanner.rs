@@ -1,16 +1,19 @@
 use gossan_core::target::RepositoryTarget;
-use gossan_core::{Config, ScanInput, };
+use gossan_core::{Config, ScanInput};
 use gossan_keyhog_lite::{Chunk, ChunkMetadata};
-use tracing::{info, warn};
 use tempfile::tempdir;
+use tracing::{info, warn};
 
 /// Scan a git repository by cloning it with `gix` (no shell-out) and walking the tree.
 ///
 /// Uses the `gix` crate for a pure-Rust, memory-safe clone instead of shelling
 /// out to the `git` binary, which is a command-injection risk when the URL
 /// comes from untrusted input.
-pub async fn scan_repo(target: &RepositoryTarget, _config: &Config, _input: &ScanInput) -> anyhow::Result<()> {
-
+pub async fn scan_repo(
+    target: &RepositoryTarget,
+    _config: &Config,
+    _input: &ScanInput,
+) -> anyhow::Result<()> {
     info!(url = %target.url, "starting in-memory git scan");
 
     let dir = tempdir()?;
@@ -23,10 +26,7 @@ pub async fn scan_repo(target: &RepositoryTarget, _config: &Config, _input: &Sca
     let clone_result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
         let (_repo, _outcome) = gix::prepare_clone_bare(url.as_str(), &dir_path)
             .map_err(|e| anyhow::anyhow!("failed to prepare clone: {e}"))?
-            .fetch_only(
-                gix::progress::Discard,
-                &gix::interrupt::IS_INTERRUPTED,
-            )
+            .fetch_only(gix::progress::Discard, &gix::interrupt::IS_INTERRUPTED)
             .map_err(|e| anyhow::anyhow!("clone failed: {e}"))?;
         Ok(())
     })
@@ -39,10 +39,14 @@ pub async fn scan_repo(target: &RepositoryTarget, _config: &Config, _input: &Sca
     let tree = head.object()?.into_commit().tree()?;
 
     for entry in tree.decode()?.entries {
-        if entry.mode.is_tree() { continue; }
+        if entry.mode.is_tree() {
+            continue;
+        }
 
         let obj = repo.find_object(entry.oid)?;
-        if obj.kind != gix::object::Kind::Blob { continue; }
+        if obj.kind != gix::object::Kind::Blob {
+            continue;
+        }
 
         let path = entry.filename.to_string();
         let data = String::from_utf8_lossy(&obj.data);

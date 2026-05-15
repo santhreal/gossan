@@ -1,8 +1,8 @@
 //! Extraction logic for turning HTTP responses into findings.
 
-use secfinding::{Evidence, Finding, Severity};
-use gossan_core::Target;
 use crate::git_env::rules::OwnedCheck;
+use gossan_core::Target;
+use secfinding::{Evidence, Finding, Severity};
 
 /// Magic bytes for file format detection.
 mod magic {
@@ -14,7 +14,9 @@ mod magic {
 }
 
 fn has_magic_bytes(data: &[u8], magics: &[&[u8]]) -> bool {
-    magics.iter().any(|magic| data.len() >= magic.len() && data.starts_with(magic))
+    magics
+        .iter()
+        .any(|magic| data.len() >= magic.len() && data.starts_with(magic))
 }
 
 fn is_zip_file(data: &[u8]) -> bool {
@@ -104,14 +106,19 @@ pub async fn process_check(
         let safe_path = crate::path_sanitize::sanitize_url_path(&check.path);
 
         gossan_core::try_push_finding(
-            crate::finding_builder(&target, check.severity, check.title.as_str(), check.detail.as_str())
-                .evidence(Evidence::HttpResponse {
-                    status,
-                    headers: vec![],
-                    body_excerpt: Some(body.chars().take(300).collect::<String>().into()),
-                })
-                .tag("exposure")
-                .tag(check.tag.as_str()),
+            crate::finding_builder(
+                &target,
+                check.severity,
+                check.title.as_str(),
+                check.detail.as_str(),
+            )
+            .evidence(Evidence::HttpResponse {
+                status,
+                headers: vec![],
+                body_excerpt: Some(body.chars().take(300).collect::<String>().into()),
+            })
+            .tag("exposure")
+            .tag(check.tag.as_str()),
             &mut findings,
         );
     } else if status == 403

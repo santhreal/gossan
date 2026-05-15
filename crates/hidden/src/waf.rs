@@ -27,10 +27,12 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
         .collect();
     let headers: Vec<(std::sync::Arc<str>, std::sync::Arc<str>)> = raw_headers
         .iter()
-        .map(|(k, v)| (
-            std::sync::Arc::<str>::from(k.as_str()),
-            std::sync::Arc::<str>::from(v.as_str()),
-        ))
+        .map(|(k, v)| {
+            (
+                std::sync::Arc::<str>::from(k.as_str()),
+                std::sync::Arc::<str>::from(v.as_str()),
+            )
+        })
         .collect();
 
     let body = resp.bytes().await.unwrap_or_default();
@@ -39,10 +41,11 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
     // multiple WAFs simultaneously — e.g. a CloudFront-fronted Cloudflare
     // origin returns both). Pick the highest-confidence hit; bail if empty.
     let detected_all = wafrift_detect::detect(status, &raw_headers, &body);
-    let Some(detected) = detected_all
-        .into_iter()
-        .max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap_or(std::cmp::Ordering::Equal))
-    else {
+    let Some(detected) = detected_all.into_iter().max_by(|a, b| {
+        a.confidence
+            .partial_cmp(&b.confidence)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    }) else {
         return Ok(vec![]);
     };
 
@@ -61,9 +64,12 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
     );
 
     let mut findings = Vec::new();
-    if let Some(finding) = crate::info_finding(target, severity,
+    if let Some(finding) = crate::info_finding(
+        target,
+        severity,
         format!("WAF detected: {}", detected.name),
-        detail)
+        detail,
+    )
     .evidence(Evidence::HttpResponse {
         status,
         headers: headers.clone(),

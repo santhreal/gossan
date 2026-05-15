@@ -17,7 +17,7 @@
 #![allow(
     clippy::module_name_repetitions,
     clippy::must_use_candidate,
-    clippy::missing_errors_doc,
+    clippy::missing_errors_doc
 )]
 
 //! TCP connect scanner with banner grabbing, active service probing,
@@ -188,15 +188,19 @@ impl Scanner for PortScanner {
                 // the SQLite write rate to one row per probed port,
                 // which dominated wall time on previous benchmarks.
                 if gossan_checkpoint::CheckpointStore::open(path).is_ok() {
-                    if let Ok(content) = std::fs::read_to_string(
-                        path.with_extension("portscan-resume.json"),
-                    ) {
-                        if let Ok(ports) =
-                            serde_json::from_str::<Vec<(IpAddr, u16)>>(&content)
-                        {
-                            completed_ports.lock().expect("portscan completed_ports mutex poisoned").extend(ports);
+                    if let Ok(content) =
+                        std::fs::read_to_string(path.with_extension("portscan-resume.json"))
+                    {
+                        if let Ok(ports) = serde_json::from_str::<Vec<(IpAddr, u16)>>(&content) {
+                            completed_ports
+                                .lock()
+                                .expect("portscan completed_ports mutex poisoned")
+                                .extend(ports);
                             tracing::info!(
-                                resumed = completed_ports.lock().expect("portscan completed_ports mutex poisoned").len(),
+                                resumed = completed_ports
+                                    .lock()
+                                    .expect("portscan completed_ports mutex poisoned")
+                                    .len(),
                                 "resuming portscan from checkpoint"
                             );
                         }
@@ -219,11 +223,14 @@ impl Scanner for PortScanner {
                     .filter({
                         let completed_ports = Arc::clone(&completed_ports);
                         move |&&p| {
-                        if let Some(ip) = ip {
-                            !completed_ports.lock().expect("portscan completed_ports mutex poisoned").contains(&(ip, p))
-                        } else {
-                            true
-                        }
+                            if let Some(ip) = ip {
+                                !completed_ports
+                                    .lock()
+                                    .expect("portscan completed_ports mutex poisoned")
+                                    .contains(&(ip, p))
+                            } else {
+                                true
+                            }
                         }
                     })
                     .map(move |&p| {
@@ -272,7 +279,10 @@ impl Scanner for PortScanner {
                         // every resumed run re-scanned every port from
                         // scratch — exactly the bug the warning on the
                         // unused `ip` variable was concealing.
-                        completed_ports.lock().expect("portscan completed_ports mutex poisoned").insert((ip, port));
+                        completed_ports
+                            .lock()
+                            .expect("portscan completed_ports mutex poisoned")
+                            .insert((ip, port));
 
                         if let Some((ref svc, _, _)) = result {
                             tracing::debug!(host = ?svc.host.ip, port = svc.port, "open port");
@@ -321,7 +331,13 @@ impl Scanner for PortScanner {
             let resume_file = path.with_extension("portscan-resume.json");
             let _ = std::fs::write(
                 &resume_file,
-                serde_json::to_string(&completed_ports.lock().expect("portscan completed_ports mutex poisoned").iter().collect::<Vec<_>>())?,
+                serde_json::to_string(
+                    &completed_ports
+                        .lock()
+                        .expect("portscan completed_ports mutex poisoned")
+                        .iter()
+                        .collect::<Vec<_>>(),
+                )?,
             );
         }
 
@@ -363,13 +379,10 @@ async fn probe_port(
     proxy: Option<&str>,
     engine: &probes::ProbeEngine,
 ) -> Option<(ServiceTarget, Vec<Finding>, Vec<Target>)> {
-    let stream = tokio::time::timeout(
-        timeout,
-        gossan_core::net::connect_tcp(addr, port, proxy),
-    )
-    .await
-    .ok()?
-    .ok()?;
+    let stream = tokio::time::timeout(timeout, gossan_core::net::connect_tcp(addr, port, proxy))
+        .await
+        .ok()?
+        .ok()?;
 
     let ip = stream.peer_addr().ok()?.ip();
 
@@ -442,7 +455,9 @@ async fn probe_port(
             f = f.tag(format!("service:{s}"));
         }
         if let Some(ref b) = banner {
-            f = f.evidence(Evidence::Banner { raw: b.clone().into() });
+            f = f.evidence(Evidence::Banner {
+                raw: b.clone().into(),
+            });
         }
         gossan_core::try_push_finding(f, &mut findings);
     }
@@ -539,7 +554,6 @@ async fn probe_port(
 
                 // Note: cipher_weakness and negotiated_version removed from TlsCertInfo
 
-
                 for san in &cert.sans {
                     let san = san.trim_start_matches("*.").to_string();
                     if !san.is_empty() {
@@ -567,7 +581,10 @@ async fn probe_port(
                     finding_builder(
                         &target,
                         Severity::High,
-                        format!("TLS 1.0 supported on port {} — BEAST/POODLE vulnerable", port),
+                        format!(
+                            "TLS 1.0 supported on port {} — BEAST/POODLE vulnerable",
+                            port
+                        ),
                         format!(
                             "Port {} accepts TLS 1.0 connections. TLS 1.0 has known protocol-level \
                              vulnerabilities (BEAST, POODLE) and was deprecated by RFC 8996.",
@@ -605,7 +622,9 @@ async fn probe_port(
             all_findings
         };
 
-        let tls_results = tokio::time::timeout(tls_deadline, tls_future).await.unwrap_or_default();
+        let tls_results = tokio::time::timeout(tls_deadline, tls_future)
+            .await
+            .unwrap_or_default();
         findings.extend(tls_results);
 
         // JARM (optional, default off)
@@ -827,9 +846,7 @@ fn identify_banner_or_probe(
 
     // Elasticsearch
     if (port == 9200 || port == 9300)
-        && (b.contains("lucene")
-            || b.contains("elasticsearch")
-            || b.contains("\"cluster_name\""))
+        && (b.contains("lucene") || b.contains("elasticsearch") || b.contains("\"cluster_name\""))
     {
         return Some(
             finding_builder(
@@ -843,7 +860,9 @@ fn identify_banner_or_probe(
                     port
                 ),
             )
-            .evidence(Evidence::Banner { raw: banner.to_string().into() })
+            .evidence(Evidence::Banner {
+                raw: banner.to_string().into(),
+            })
             .tag("banner")
             .tag("elasticsearch")
             .tag("no-auth")
@@ -855,9 +874,7 @@ fn identify_banner_or_probe(
 
     // PostgreSQL
     if port == 5432
-        && (banner.contains("PostgreSQL")
-            || b.contains("pgsql")
-            || b.contains("pg_hba.conf"))
+        && (banner.contains("PostgreSQL") || b.contains("pgsql") || b.contains("pg_hba.conf"))
     {
         let severity = if b.contains("no pg_hba.conf entry") {
             Severity::Info
@@ -869,12 +886,11 @@ fn identify_banner_or_probe(
                 &Target::Service(svc.clone()),
                 severity,
                 "PostgreSQL service responds",
-                format!(
-                    "PostgreSQL on port {} is accepting connections.",
-                    port
-                ),
+                format!("PostgreSQL on port {} is accepting connections.", port),
             )
-            .evidence(Evidence::Banner { raw: banner.to_string().into() })
+            .evidence(Evidence::Banner {
+                raw: banner.to_string().into(),
+            })
             .tag("banner")
             .tag("postgresql")
             .tag("database")
@@ -886,9 +902,7 @@ fn identify_banner_or_probe(
 
     // MySQL
     if port == 3306
-        && (banner.contains("mysql")
-            || b.contains("mariadb")
-            || b.contains("caching_sha2"))
+        && (banner.contains("mysql") || b.contains("mariadb") || b.contains("caching_sha2"))
     {
         return Some(
             finding_builder(
@@ -901,7 +915,9 @@ fn identify_banner_or_probe(
                     port
                 ),
             )
-            .evidence(Evidence::Banner { raw: banner.to_string().into() })
+            .evidence(Evidence::Banner {
+                raw: banner.to_string().into(),
+            })
             .tag("banner")
             .tag("mysql")
             .tag("database")
@@ -912,7 +928,8 @@ fn identify_banner_or_probe(
     }
 
     // Memcached
-    if port == 11211 && (b.starts_with("stat") || b.starts_with("version") || b.starts_with("error"))
+    if port == 11211
+        && (b.starts_with("stat") || b.starts_with("version") || b.starts_with("error"))
     {
         return Some(
             finding_builder(
@@ -922,7 +939,9 @@ fn identify_banner_or_probe(
                 "Memcached on port 11211 accepted connection. Unauthenticated access allows full \
                  cache dump, data injection, and DDoS amplification (UDP reflection).",
             )
-            .evidence(Evidence::Banner { raw: banner.to_string().into() })
+            .evidence(Evidence::Banner {
+                raw: banner.to_string().into(),
+            })
             .tag("banner")
             .tag("memcached")
             .tag("no-auth")
@@ -958,7 +977,9 @@ fn identify_banner_or_probe(
                     }
                 ),
             )
-            .evidence(Evidence::Banner { raw: banner.to_string().into() })
+            .evidence(Evidence::Banner {
+                raw: banner.to_string().into(),
+            })
             .tag("banner")
             .tag("kubernetes")
             .tag("api")
@@ -1011,7 +1032,13 @@ pub async fn grab_banner(mut stream: tokio::net::TcpStream, timeout: Duration) -
 
     let s: String = buf[..n]
         .iter()
-        .map(|&b| if (0x20..0x7f).contains(&b) { b as char } else { '.' })
+        .map(|&b| {
+            if (0x20..0x7f).contains(&b) {
+                b as char
+            } else {
+                '.'
+            }
+        })
         .collect::<String>()
         .trim()
         .to_string();

@@ -36,7 +36,10 @@ fn root_help_lists_subcommands() {
 
 #[test]
 fn version_flag_prints_a_semver() {
-    let out = Command::new(cli_bin()).arg("--version").output().expect("spawn");
+    let out = Command::new(cli_bin())
+        .arg("--version")
+        .output()
+        .expect("spawn");
     let s = String::from_utf8_lossy(&out.stdout);
     assert!(out.status.success(), "exit must be 0");
     assert!(s.contains("gossan"), "version must mention gossan: {s}");
@@ -54,7 +57,10 @@ fn unknown_subcommand_exits_nonzero() {
         .arg("definitely-not-a-subcommand")
         .output()
         .expect("spawn");
-    assert!(!out.status.success(), "unknown subcommand must exit nonzero");
+    assert!(
+        !out.status.success(),
+        "unknown subcommand must exit nonzero"
+    );
 }
 
 #[cfg(feature = "engine")]

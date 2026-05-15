@@ -30,8 +30,7 @@ fn web_target(url: &str) -> Target {
     }))
 }
 
-const SCHEMA_REPLY: &str =
-    r#"{"data":{"__schema":{"queryType":{"name":"Query"},"types":[{"name":"Query","kind":"OBJECT","fields":[{"name":"hello"}]}]}}}"#;
+const SCHEMA_REPLY: &str = r#"{"data":{"__schema":{"queryType":{"name":"Query"},"types":[{"name":"Query","kind":"OBJECT","fields":[{"name":"hello"}]}]}}}"#;
 const TYPENAME_REPLY: &str = r#"{"data":{"__typename":"Query"}}"#;
 
 #[tokio::test]
@@ -81,9 +80,10 @@ async fn graphql_introspection_disabled_no_finding() {
         .await
         .expect("probe ok");
     assert!(
-        !findings
-            .iter()
-            .any(|f| f.title().to_ascii_lowercase().contains("introspection enabled")),
+        !findings.iter().any(|f| f
+            .title()
+            .to_ascii_lowercase()
+            .contains("introspection enabled")),
         "introspection-off server must NOT fire an introspection-enabled finding; got: {:?}",
         findings.iter().map(|f| f.title()).collect::<Vec<_>>()
     );

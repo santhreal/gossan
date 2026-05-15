@@ -1,18 +1,20 @@
 use super::*;
+use gossan_core::{DiscoverySource, NetworkTarget, ScanInput, Target};
 use wiremock::matchers::method;
 use wiremock::{Mock, MockServer, ResponseTemplate};
-use gossan_core::{DiscoverySource, NetworkTarget, Target, ScanInput};
 
 #[tokio::test]
 async fn test_portscan_network_expansion() {
     let server = MockServer::start().await;
     let addr = server.address();
-    
+
     // Create a network target that includes the mock server's IP
     let cidr = format!("{}/32", addr.ip());
-    
+
     Mock::given(method("GET"))
-        .respond_with(ResponseTemplate::new(200).set_body_string("HTTP/1.1 200 OK\r\nServer: test\r\n\r\n"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string("HTTP/1.1 200 OK\r\nServer: test\r\n\r\n"),
+        )
         .mount(&server)
         .await;
 
@@ -38,7 +40,9 @@ async fn test_portscan_network_expansion() {
         target_rx: tokio::sync::Mutex::new(in_rx),
         live_tx,
         target_tx,
-        resolver: std::sync::Arc::new(gossan_core::net::build_resolver(&config).expect("test resolver")),
+        resolver: std::sync::Arc::new(
+            gossan_core::net::build_resolver(&config).expect("test resolver"),
+        ),
     };
 
     scanner.run(input, &config).await.unwrap();
@@ -50,7 +54,10 @@ async fn test_portscan_network_expansion() {
     while let Ok(t) = target_rx.try_recv() {
         emitted.push(t);
     }
-    assert!(!emitted.is_empty(), "Should have found at least one service");
+    assert!(
+        !emitted.is_empty(),
+        "Should have found at least one service"
+    );
     assert!(emitted.iter().any(|t| {
         if let Target::Service(s) = t {
             s.port == addr.port()

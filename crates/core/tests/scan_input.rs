@@ -6,8 +6,8 @@
 use gossan_core::scanner::ScanInput;
 use gossan_core::target::{DiscoverySource, DomainTarget, Target};
 use gossan_core::{Finding, Severity};
-use hickory_resolver::TokioAsyncResolver;
 use hickory_resolver::config::{ResolverConfig, ResolverOpts};
+use hickory_resolver::TokioAsyncResolver;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -48,7 +48,10 @@ async fn sender_drop_yields_eof_on_target_rx() {
     let (input, target_tx_in, _live_rx, _target_rx) = build_input();
     drop(target_tx_in);
     let mut rx = input.target_rx.lock().await;
-    assert!(rx.recv().await.is_none(), "must signal EOF after sender drop");
+    assert!(
+        rx.recv().await.is_none(),
+        "must signal EOF after sender drop"
+    );
 }
 
 #[tokio::test]
@@ -105,11 +108,8 @@ async fn resolver_arc_clones_safely_across_tasks() {
         .map(|_| {
             let r = Arc::clone(&resolver);
             tokio::spawn(async move {
-                let _ = tokio::time::timeout(
-                    Duration::from_millis(1),
-                    r.lookup_ip("localhost"),
-                )
-                .await;
+                let _ =
+                    tokio::time::timeout(Duration::from_millis(1), r.lookup_ip("localhost")).await;
                 Arc::strong_count(&r)
             })
         })

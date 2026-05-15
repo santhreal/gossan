@@ -231,8 +231,6 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
         }
     }
 
-
-
     // ── Test 5: overly permissive methods ───────────────────────────────
     if let Ok(resp) = client
         .request(reqwest::Method::OPTIONS, base)
@@ -251,7 +249,9 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                 .filter(|m| methods_upper.contains(**m))
                 .copied()
                 .collect();
-            if !dangerous_methods.is_empty() && methods_upper.contains("*") || dangerous_methods.len() >= 2 {
+            if !dangerous_methods.is_empty() && methods_upper.contains("*")
+                || dangerous_methods.len() >= 2
+            {
                 findings.push(
                     crate::misconfig_finding(
                         target,

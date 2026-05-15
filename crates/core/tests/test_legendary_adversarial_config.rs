@@ -38,11 +38,20 @@ format = "text"
     let result = Config::from_toml(&file_path);
     match result {
         Ok(config) => {
-            assert_eq!(config.rate_limit, 4294967295, "Rate limit should parse to exactly u32 max");
-            assert_eq!(config.timeout_secs, 18446744073709551615, "Timeout should parse to exactly u64 max");
-        },
+            assert_eq!(
+                config.rate_limit, 4294967295,
+                "Rate limit should parse to exactly u32 max"
+            );
+            assert_eq!(
+                config.timeout_secs, 18446744073709551615,
+                "Timeout should parse to exactly u64 max"
+            );
+        }
         Err(e) => {
-            assert!(e.contains("parse error"), "Should return a parse error string if it fails to parse");
+            assert!(
+                e.contains("parse error"),
+                "Should return a parse error string if it fails to parse"
+            );
         }
     }
 }

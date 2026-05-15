@@ -1,8 +1,8 @@
 #[cfg(feature = "graph")]
 #[tokio::test]
 async fn test_concurrency_robustness_multi_writer() {
+    use gossan_core::{DiscoverySource, DomainTarget, Target};
     use gossan_graph::SqliteBackend as GraphStore;
-    use gossan_core::{Target, DiscoverySource, DomainTarget};
     use std::path::Path;
     use tokio::task;
 
@@ -29,7 +29,9 @@ async fn test_concurrency_robustness_multi_writer() {
                     domain: format!("thread-{}-domain-{}.com", i, j),
                     source: DiscoverySource::Seed,
                 });
-                store.persist_scan(&[target], &[]).expect("Failed to persist");
+                store
+                    .persist_scan(&[target], &[])
+                    .expect("Failed to persist");
             }
         }));
     }

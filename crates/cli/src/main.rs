@@ -8,8 +8,6 @@ use clap::Parser;
 use gossan_core::{ApiKeys, Config, ModuleConfig, OutputConfig, OutputFormat, PortMode, Severity};
 use tracing_subscriber::EnvFilter;
 
-
-
 mod args;
 use args::*;
 #[tokio::main]
@@ -23,8 +21,7 @@ async fn main() -> anyhow::Result<()> {
     // Structured logging: when GOSSAN_LOG_JSON=1 emit one JSON event
     // per line (operator-facing — pipe into Loki/CloudWatch/Datadog).
     // Default stays compact for human terminal use.
-    let json_logs = std::env::var("GOSSAN_LOG_JSON")
-        .is_ok_and(|v| v == "1" || v == "true");
+    let json_logs = std::env::var("GOSSAN_LOG_JSON").is_ok_and(|v| v == "1" || v == "true");
     if json_logs {
         tracing_subscriber::fmt()
             .with_env_filter(EnvFilter::from_default_env().add_directive("gossan=info".parse()?))
@@ -80,22 +77,70 @@ async fn main() -> anyhow::Result<()> {
             no_engine,
         } => {
             let mut active_modules = std::collections::HashMap::new();
-            #[cfg(feature = "subdomain")] if !no_subdomain { active_modules.insert("subdomain".to_string(), true); }
-            #[cfg(feature = "portscan")] if !no_ports { active_modules.insert("portscan".to_string(), true); }
-            #[cfg(feature = "techstack")] if !no_tech { active_modules.insert("techstack".to_string(), true); }
-            #[cfg(feature = "dns")] if !no_dns { active_modules.insert("dns".to_string(), true); }
-            #[cfg(feature = "js")] if !no_js { active_modules.insert("js".to_string(), true); }
-            #[cfg(feature = "hidden")] if !no_hidden { active_modules.insert("hidden".to_string(), true); }
-            #[cfg(feature = "cloud")] if !no_cloud { active_modules.insert("cloud".to_string(), true); }
-            #[cfg(feature = "headless")] if !no_headless { active_modules.insert("headless".to_string(), true); }
-            #[cfg(feature = "crawl")] if !no_crawl { active_modules.insert("crawl".to_string(), true); }
-            #[cfg(feature = "origin")] if !no_origin { active_modules.insert("origin".to_string(), true); }
-            #[cfg(feature = "horizontal")] if !no_horizontal { active_modules.insert("horizontal".to_string(), true); }
-            #[cfg(feature = "graph")] if !no_graph { active_modules.insert("graph".to_string(), true); }
-            #[cfg(feature = "scm")] if !no_scm { active_modules.insert("scm".to_string(), true); }
-            #[cfg(feature = "intel")] if !no_intel { active_modules.insert("intel".to_string(), true); }
-            #[cfg(feature = "fleet")] if !no_fleet { active_modules.insert("fleet".to_string(), true); }
-            #[cfg(feature = "engine")] if !no_engine { active_modules.insert("engine".to_string(), true); }
+            #[cfg(feature = "subdomain")]
+            if !no_subdomain {
+                active_modules.insert("subdomain".to_string(), true);
+            }
+            #[cfg(feature = "portscan")]
+            if !no_ports {
+                active_modules.insert("portscan".to_string(), true);
+            }
+            #[cfg(feature = "techstack")]
+            if !no_tech {
+                active_modules.insert("techstack".to_string(), true);
+            }
+            #[cfg(feature = "dns")]
+            if !no_dns {
+                active_modules.insert("dns".to_string(), true);
+            }
+            #[cfg(feature = "js")]
+            if !no_js {
+                active_modules.insert("js".to_string(), true);
+            }
+            #[cfg(feature = "hidden")]
+            if !no_hidden {
+                active_modules.insert("hidden".to_string(), true);
+            }
+            #[cfg(feature = "cloud")]
+            if !no_cloud {
+                active_modules.insert("cloud".to_string(), true);
+            }
+            #[cfg(feature = "headless")]
+            if !no_headless {
+                active_modules.insert("headless".to_string(), true);
+            }
+            #[cfg(feature = "crawl")]
+            if !no_crawl {
+                active_modules.insert("crawl".to_string(), true);
+            }
+            #[cfg(feature = "origin")]
+            if !no_origin {
+                active_modules.insert("origin".to_string(), true);
+            }
+            #[cfg(feature = "horizontal")]
+            if !no_horizontal {
+                active_modules.insert("horizontal".to_string(), true);
+            }
+            #[cfg(feature = "graph")]
+            if !no_graph {
+                active_modules.insert("graph".to_string(), true);
+            }
+            #[cfg(feature = "scm")]
+            if !no_scm {
+                active_modules.insert("scm".to_string(), true);
+            }
+            #[cfg(feature = "intel")]
+            if !no_intel {
+                active_modules.insert("intel".to_string(), true);
+            }
+            #[cfg(feature = "fleet")]
+            if !no_fleet {
+                active_modules.insert("fleet".to_string(), true);
+            }
+            #[cfg(feature = "engine")]
+            if !no_engine {
+                active_modules.insert("engine".to_string(), true);
+            }
             config.modules = active_modules;
             let seeds = resolve_targets(target);
             let output_config = config.output.clone();
@@ -170,8 +215,6 @@ async fn main() -> anyhow::Result<()> {
 
     Ok(())
 }
-
-
 
 #[cfg(test)]
 mod tests {

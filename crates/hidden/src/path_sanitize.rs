@@ -53,7 +53,10 @@ mod tests {
         assert_eq!(sanitize_url_path("/api/v1/admin"), "_api_v1_admin");
         // ..\..\windows\system32 — `\` and `..` both collapse to `_`,
         // producing six underscores followed by `windows_system32`.
-        assert_eq!(sanitize_url_path("..\\..\\windows\\system32"), "______windows_system32");
+        assert_eq!(
+            sanitize_url_path("..\\..\\windows\\system32"),
+            "______windows_system32"
+        );
     }
 
     #[test]

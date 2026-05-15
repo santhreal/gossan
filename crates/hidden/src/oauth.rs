@@ -21,7 +21,7 @@ const OIDC_DISCOVERY_PATHS: &[&str] = &[
     "/.well-known/oauth-authorization-server",
     "/oauth/.well-known/openid-configuration",
     "/auth/.well-known/openid-configuration",
-    "/realms/master/.well-known/openid-configuration",  // Keycloak
+    "/realms/master/.well-known/openid-configuration", // Keycloak
     "/.well-known/openid-configuration/",
 ];
 
@@ -157,21 +157,17 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
         if let Some(jwks_url) = jwks_uri {
             if let Ok(resp) = client.get(jwks_url).send().await {
                 if resp.status().as_u16() == 200 {
-                    if let Ok(jwks_body) = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await {
+                    if let Ok(jwks_body) =
+                        gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await
+                    {
                         if let Ok(jwks) = serde_json::from_str::<serde_json::Value>(&jwks_body) {
-                            let key_count = jwks["keys"]
-                                .as_array()
-                                .map(|arr| arr.len())
-                                .unwrap_or(0);
+                            let key_count =
+                                jwks["keys"].as_array().map(|arr| arr.len()).unwrap_or(0);
 
                             // Check for weak algorithms (none, HS256 with exposed key).
                             let algorithms: Vec<&str> = jwks["keys"]
                                 .as_array()
-                                .map(|arr| {
-                                    arr.iter()
-                                        .filter_map(|k| k["alg"].as_str())
-                                        .collect()
-                                })
+                                .map(|arr| arr.iter().filter_map(|k| k["alg"].as_str()).collect())
                                 .unwrap_or_default();
 
                             let has_symmetric = algorithms.iter().any(|a| a.starts_with("HS"));
@@ -195,13 +191,19 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                                     .tag("oauth")
                                     .tag("jwt")
                                     .tag("cryptographic")
-                                    .evidence(Evidence::HttpResponse {
-                                        status: 200,
-                                        headers: vec![],
-                                        body_excerpt: Some(
-                                            jwks_body.chars().take(500).collect::<String>().into(),
-                                        ),
-                                    }),
+                                    .evidence(
+                                        Evidence::HttpResponse {
+                                            status: 200,
+                                            headers: vec![],
+                                            body_excerpt: Some(
+                                                jwks_body
+                                                    .chars()
+                                                    .take(500)
+                                                    .collect::<String>()
+                                                    .into(),
+                                            ),
+                                        },
+                                    ),
                                     &mut findings,
                                 );
                             }
@@ -251,7 +253,9 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                             .evidence(Evidence::HttpResponse {
                                 status,
                                 headers: vec![],
-                                body_excerpt: Some(body.chars().take(300).collect::<String>().into()),
+                                body_excerpt: Some(
+                                    body.chars().take(300).collect::<String>().into(),
+                                ),
                             }),
                             &mut findings,
                         );

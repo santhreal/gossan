@@ -13,7 +13,7 @@
 #![allow(
     clippy::module_name_repetitions,
     clippy::must_use_candidate,
-    clippy::missing_errors_doc,
+    clippy::missing_errors_doc
 )]
 
 //! DNS security scanner — modular, feature-gated auditing engine.
@@ -37,16 +37,16 @@
 //! gossan-dns = { version = "0.2", default-features = false, features = ["email"] }
 //! ```
 
-#[cfg(feature = "email")]
-pub mod email;
 #[cfg(feature = "axfr")]
 pub mod axfr;
-#[cfg(feature = "takeover")]
-pub mod takeover;
-#[cfg(feature = "posture")]
-pub mod posture;
 #[cfg(feature = "dnssec")]
 pub mod dnssec;
+#[cfg(feature = "email")]
+pub mod email;
+#[cfg(feature = "posture")]
+pub mod posture;
+#[cfg(feature = "takeover")]
+pub mod takeover;
 
 mod resolver;
 

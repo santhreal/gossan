@@ -52,16 +52,20 @@ pub async fn probe(client: &reqwest::Client, target: &Target) -> anyhow::Result<
                         )
                         .tag("favicon").tag("fingerprint"), &mut findings);
                 } else {
-                    gossan_core::try_push_finding(crate::info_finding(
+                    gossan_core::try_push_finding(
+                        crate::info_finding(
                             target,
                             Severity::Info,
                             "Favicon hash computed",
                             format!(
                                 "Favicon hash: 0x{:08x} (Shodan query: http.favicon.hash:{})",
-                                hash, i32::try_from(hash).unwrap_or(0)
+                                hash,
+                                i32::try_from(hash).unwrap_or(0)
                             ),
                         )
-                        .tag("favicon"), &mut findings);
+                        .tag("favicon"),
+                        &mut findings,
+                    );
                 }
             }
         }

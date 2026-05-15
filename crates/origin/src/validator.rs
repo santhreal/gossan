@@ -30,8 +30,6 @@ enum Comparison {
     NoMatch,
 }
 
-
-
 /// Extract `<title>` from HTML without regex.
 fn extract_title(body: &str) -> Option<String> {
     let lower = body.to_lowercase();
@@ -179,7 +177,12 @@ async fn fetch_404(
     let path = format!("/nonexistent-{}", uuid::Uuid::new_v4());
     // Try HTTPS first
     let https_url = format!("https://{}{}", target, path);
-    let req = client.inner().get(&https_url).header("Host", domain).build().ok()?;
+    let req = client
+        .inner()
+        .get(&https_url)
+        .header("Host", domain)
+        .build()
+        .ok()?;
     if let Ok(resp) = client.execute(req).await {
         let status = resp.status().as_u16();
         if let Ok(body) = bounded_text(resp, limit).await {
@@ -188,7 +191,12 @@ async fn fetch_404(
     }
     // Fall back to HTTP
     let http_url = format!("http://{}{}", target, path);
-    let req = client.inner().get(&http_url).header("Host", domain).build().ok()?;
+    let req = client
+        .inner()
+        .get(&http_url)
+        .header("Host", domain)
+        .build()
+        .ok()?;
     if let Ok(resp) = client.execute(req).await {
         let status = resp.status().as_u16();
         if let Ok(body) = bounded_text(resp, limit).await {
@@ -256,7 +264,9 @@ pub async fn validate(
             continue;
         };
 
-        let Some(direct_fp) = fetch_direct(client, domain, candidate.ip, candidate.port, limit).await else {
+        let Some(direct_fp) =
+            fetch_direct(client, domain, candidate.ip, candidate.port, limit).await
+        else {
             validated.push(candidate);
             continue;
         };
@@ -300,7 +310,9 @@ pub async fn validate(
             ValidationState::Speculative => 1,
             ValidationState::Rejected => 0,
         };
-        b_ord.cmp(&a_ord).then_with(|| b.confidence.cmp(&a.confidence))
+        b_ord
+            .cmp(&a_ord)
+            .then_with(|| b.confidence.cmp(&a.confidence))
     });
 
     // Deduplicate by IP, keeping the best validation state + highest confidence.
