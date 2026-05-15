@@ -5,7 +5,7 @@
 //! was compiled to WASM are fully readable without decompilation.
 //!
 //! Strategy:
-//!   1. Scan HTML for <script src="*.wasm">, <link href="*.wasm">, and JS fetch("*.wasm")
+//!   1. Scan HTML for `<script src="*.wasm">`, `<link href="*.wasm">`, and JS `fetch("*.wasm")`
 //!   2. Download each .wasm file
 //!   3. Extract the data/code sections as printable ASCII strings (like `strings` binary)
 //!   4. Run the same secret-detection regexes used for JS files

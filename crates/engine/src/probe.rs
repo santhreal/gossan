@@ -16,7 +16,7 @@
 
 use std::fmt;
 
-/// Concrete backend selected by [`auto_select`] at runtime.
+/// Concrete backend selected by [`netforge::engine::auto_select`] at runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Backend {
     /// AF_XDP zero-copy via `xsk-rs` (Linux 5.10+, CAP_BPF).
@@ -55,7 +55,7 @@ pub struct ProbeReport {
     pub cap_net_raw: bool,
     /// Best-effort probe for libbpf availability (file present).
     pub libbpf_present: bool,
-    /// Backend [`auto_select`] would pick *now*.
+    /// Backend [`netforge::engine::auto_select`] would pick *now*.
     pub selected: Backend,
 }
 

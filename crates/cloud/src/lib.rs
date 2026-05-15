@@ -24,7 +24,7 @@
 //!
 //! # Adding a new cloud provider
 //! 1. Create `src/{provider}.rs` and implement [`CloudProvider`].
-//! 2. Add it to [`providers()`] — that's the only change needed in this file.
+//! 2. Add it to the `providers()` constructor in this file — the only change needed.
 
 pub mod azure;
 pub mod common;

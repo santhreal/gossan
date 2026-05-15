@@ -36,7 +36,7 @@ pub mod dependency_confusion;
 pub mod directory_brute;
 mod error_disclosure;
 mod favicon;
-mod git_env;
+pub mod git_env;
 pub mod graphql;
 mod methods;
 mod oauth;

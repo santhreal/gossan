@@ -1,6 +1,6 @@
 //! Gossan error types — typed scanner failures with context.
 //!
-//! [`ScanError`] covers every failure mode in the scanner pipeline:
+//! [`enum@Error`] covers every failure mode in the scanner pipeline:
 //! network I/O, DNS resolution, TLS handshakes, rate limiting,
 //! configuration, and individual scanner failures. All errors carry
 //! enough context to diagnose root cause in under 60 seconds.

@@ -422,7 +422,7 @@ pub enum ParamSource {
 }
 
 /// The single input/output type flowing through the pipeline.
-/// Every scanner consumes a Vec<Target> and emits Vec<Target> + Vec<Finding>.
+/// Every scanner consumes a `Vec<Target>` and emits `Vec<Target>` + `Vec<Finding>`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[non_exhaustive]
