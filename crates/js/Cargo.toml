@@ -34,7 +34,7 @@ secfinding  = { workspace = true }
 # keyhog-core/scanner/verifier triple, which pulls wgpu + vyre +
 # vyre-driver-wgpu via path-deps and broke gossan's workspace
 # resolution.
-gossan-keyhog-lite = { path = "../keyhog-lite" }
+gossan-keyhog-lite = { version = "0.3", path = "../keyhog-lite" }
 sha2        = { workspace = true }
 hex         = { workspace = true }
 

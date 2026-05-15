@@ -25,7 +25,7 @@ url = "2"
 anyhow = "1"
 tokio = { workspace = true }
 chromiumoxide = { version = "0.5", features = ["tokio-runtime"] }
-gossan-js = { path = "../js" }
+gossan-js = { version = "0.3", path = "../js" }
 secfinding = { workspace = true }
 
 [lints]

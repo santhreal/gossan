@@ -16,7 +16,7 @@ categories = ["command-line-utilities", "network-programming"]
 status = "alpha"
 [dependencies]
 gossan-core = { version = "0.3", path = "../core" }
-gossan-checkpoint = { path = "../checkpoint" }
+gossan-checkpoint = { version = "0.3", path = "../checkpoint" }
 async-trait  = { workspace = true }
 anyhow       = { workspace = true }
 tracing      = { workspace = true }
@@ -47,7 +47,7 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 wiremock = "0.6"
 gossan-core = { version = "0.3", path = "../core" }
 hickory-resolver = { workspace = true }
-gossan-classify = { path = "../classify" }
+gossan-classify = { version = "0.3", path = "../classify" }
 
 [lints]
 workspace = true
