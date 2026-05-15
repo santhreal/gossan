@@ -1,3 +1,5 @@
+//! Favicon hash fingerprinting for technology detection.
+
 use gossan_core::Target;
 use secfinding::{Finding, Severity};
 use std::collections::HashMap;
@@ -33,36 +35,33 @@ pub async fn probe(client: &reqwest::Client, target: &Target) -> anyhow::Result<
 
     if let Ok(resp) = client.get(&url).send().await {
         if resp.status().as_u16() == 200 {
-            let bytes = resp.bytes().await?;
+            // Reject responses that exceed the body size cap
+            let bytes = match crate::soft404::read_limited(resp, crate::MAX_BODY_BYTES).await {
+                Some(b) => b,
+                None => return Ok(findings),
+            };
             if !bytes.is_empty() {
                 let b64 = base64_encode(&bytes);
                 let hash = murmurhash3_x86_32(b64.as_bytes(), 0);
                 let known = known_hashes();
                 if let Some(tech) = known.get(&hash) {
-                    findings.push(
-                        crate::finding_builder(
+                    gossan_core::try_push_finding(crate::info_finding(
                             target, Severity::Info,
                             format!("Favicon identifies: {}", tech),
                             format!("Favicon hash 0x{:08x} matches {} — identified without version headers.", hash, tech),
                         )
-                        .tag("favicon").tag("fingerprint")
-                        .build().expect("finding builder: required fields are set"),
-                    );
+                        .tag("favicon").tag("fingerprint"), &mut findings);
                 } else {
-                    findings.push(
-                        crate::finding_builder(
+                    gossan_core::try_push_finding(crate::info_finding(
                             target,
                             Severity::Info,
                             "Favicon hash computed",
                             format!(
                                 "Favicon hash: 0x{:08x} (Shodan query: http.favicon.hash:{})",
-                                hash, hash as i32
+                                hash, i32::try_from(hash).unwrap_or(0)
                             ),
                         )
-                        .tag("favicon")
-                        .build()
-                        .expect("finding builder: required fields are set"),
-                    );
+                        .tag("favicon"), &mut findings);
                 }
             }
         }
@@ -118,7 +117,6 @@ fn murmurhash3_x86_32(data: &[u8], seed: u32) -> u32 {
     let chunks = data.chunks_exact(4);
     let remainder = chunks.remainder();
     for chunk in chunks {
-        // Safety: chunks_exact(4) guarantees each chunk is exactly 4 bytes.
         let bytes: [u8; 4] = [chunk[0], chunk[1], chunk[2], chunk[3]];
         let mut k1 = u32::from_le_bytes(bytes);
         k1 = k1.wrapping_mul(c1).rotate_left(15).wrapping_mul(c2);

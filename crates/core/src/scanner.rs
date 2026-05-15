@@ -1,78 +1,53 @@
+//! The [`Scanner`] trait — every gossan module implements this.
+//!
+//! Defines `run()`, `accepts()`, and metadata (`name`, `tags`) that the
+//! pipeline uses to compose scanner stages.
+
 use async_trait::async_trait;
-use tokio::sync::mpsc::UnboundedSender;
+use std::sync::Arc;
+use hickory_resolver::TokioAsyncResolver;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::{Config, Finding, Target};
 
-/// Input to a scanner stage — seed, targets, and optional live streaming channels.
+/// Input to a scanner stage — seed, targets, and live streaming channels.
+/// ALL operations must be stream-oriented. No memory buffering.
 pub struct ScanInput {
-    /// The original user-supplied seed (domain, org name, CIDR, URL).
+    /// Original seed supplied by the scan request.
     pub seed: String,
-    /// Targets fed from upstream scanners, or the seed parsed into a target for the first stage.
-    pub targets: Vec<Target>,
-    /// If set, scanners emit findings here in real-time (before returning `ScanOutput`).
-    /// Enables live progress output in the CLI without changing the Scanner trait API.
-    pub live_tx: Option<UnboundedSender<Finding>>,
-    /// If set, scanners emit discovered targets here in real-time.
-    /// Enables the streaming pipeline: downstream stages start processing
-    /// as soon as the first targets arrive, without waiting for this stage to finish.
-    pub target_tx: Option<UnboundedSender<Target>>,
+    /// Inbound stream of targets for this scanner stage.
+    pub target_rx: tokio::sync::Mutex<UnboundedReceiver<Target>>,
+    /// Live finding stream shared by the pipeline.
+    pub live_tx: UnboundedSender<Finding>,
+    /// Downstream target stream for newly discovered assets.
+    pub target_tx: UnboundedSender<Target>,
+    /// Shared DNS resolver configured for this scan.
+    pub resolver: Arc<TokioAsyncResolver>,
 }
 
 impl ScanInput {
-    /// Emit a finding to the live channel if connected. Fire-and-forget.
+    /// Emit a finding to the live channel.
     pub fn emit(&self, f: Finding) {
-        if let Some(tx) = &self.live_tx {
-            let _ = tx.send(f);
-        }
+        let _ = self.live_tx.send(f);
     }
 
-    /// Emit a discovered target to the streaming pipeline channel if connected.
-    /// Scanners should call this for every confirmed target as soon as it is resolved.
+    /// Emit a discovered target downstream.
     pub fn emit_target(&self, t: Target) {
-        if let Some(tx) = &self.target_tx {
-            let _ = tx.send(t);
-        }
-    }
-}
-
-/// Output from a scanner stage — discovered findings and downstream targets.
-pub struct ScanOutput {
-    /// Security findings from this scanner.
-    pub findings: Vec<Finding>,
-    /// New targets discovered — passed downstream to subsequent scanners.
-    pub targets: Vec<Target>,
-}
-
-impl ScanOutput {
-    /// Create an empty output with no findings and no targets.
-    #[must_use]
-    pub fn empty() -> Self {
-        Self {
-            findings: Vec::new(),
-            targets: Vec::new(),
-        }
+        let _ = self.target_tx.send(t);
     }
 }
 
 /// Every scanner module implements this trait and nothing else.
-///
-/// Architecture rules:
-/// - `gossan-core` knows nothing about individual scanners.
-/// - Each scanner crate depends only on `gossan-core`.
-/// - `gossan` (CLI crate) depends on all scanner crates and wires the pipeline.
-/// - Object-safe via `async_trait` so scanners live in `Vec<Box<dyn Scanner>>`.
 #[async_trait]
 pub trait Scanner: Send + Sync {
-    /// Short identifier shown in CLI output and stored in Finding.scanner.
+    /// Stable scanner name used in logs, configuration, and output metadata.
     fn name(&self) -> &'static str;
-
-    /// Labels used for `--only` / `--skip` filtering in the CLI.
+    /// Scanner capability tags used for module selection and reporting.
     fn tags(&self) -> &[&'static str];
-
-    /// Return true if this scanner can process the given target type.
-    /// The pipeline uses this to route targets — scanners only see what they accept.
+    /// Return true when this scanner can process the supplied target.
     fn accepts(&self, target: &Target) -> bool;
-
-    /// Execute the scan. Must not panic — use `anyhow::Result` for all errors.
-    async fn run(&self, input: ScanInput, config: &Config) -> anyhow::Result<ScanOutput>;
+    
+    /// Execute the scan as a pure streaming node in the DAG.
+    /// Findings and Targets MUST be emitted via `input.emit()` and `input.emit_target()`.
+    async fn run(&self, input: ScanInput, config: &Config) -> anyhow::Result<()>;
 }

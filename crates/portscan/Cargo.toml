@@ -4,15 +4,19 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-homepage = "https://santh.io"
-repository.workspace = true
-description = "TCP port scanner with TLS inspection and banner grabbing for gossan — part of the Santh security research ecosystem"
+homepage = "https://santh.dev"
+repository = "https://github.com/santhsecurity/gossan"
+description = "TCP port scanner with TLS inspection and banner grabbing for gossan — part of the security research ecosystem"
 readme = "README.md"
-keywords = ["santh", "security", "recon", "portscan", "tls", "scanner"]
+keywords = [ "security", "recon", "portscan", "tls" ]
 categories = ["command-line-utilities", "network-programming"]
 
+
+[package.metadata.santh]
+status = "alpha"
 [dependencies]
-gossan-core = { version = "0.2", path = "../core" }
+gossan-core = { version = "0.3", path = "../core" }
+gossan-checkpoint = { path = "../checkpoint" }
 async-trait  = { workspace = true }
 anyhow       = { workspace = true }
 tracing      = { workspace = true }
@@ -23,6 +27,27 @@ rustls       = { workspace = true }
 x509-cert    = { workspace = true }
 chrono       = { workspace = true }
 serde        = { workspace = true }
+serde_json   = { workspace = true }
 toml         = "0.8"
 sha2         = { workspace = true }
 secfinding   = { workspace = true }
+ipnet        = "2.9"
+governor     = { workspace = true }
+publicsuffix = "2.2"
+regex        = { workspace = true }
+rand         = "0.8"
+md5          = "0.7"
+hex          = { workspace = true }
+hickory-resolver = { workspace = true }
+
+[dev-dependencies]
+proptest = "1.0"
+tempfile = "3.10"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+wiremock = "0.6"
+gossan-core = { version = "0.3", path = "../core" }
+hickory-resolver = { workspace = true }
+gossan-classify = { path = "../classify" }
+
+[lints]
+workspace = true

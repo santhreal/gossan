@@ -19,7 +19,7 @@
 
 use gossan_core::Target;
 use hickory_resolver::{proto::rr::RecordType, TokioAsyncResolver};
-use secfinding::{Evidence, Finding, Severity};
+use secfinding::{Evidence, Finding, Severity, FindingKind};
 
 /// CNAME takeover fingerprints loaded at compile time.
 static FINGERPRINTS: &str = include_str!("takeovers.txt");
@@ -31,6 +31,7 @@ pub async fn check(
     target: &Target,
 ) -> Vec<Finding> {
     let mut findings = Vec::new();
+    
     findings.extend(check_cname(resolver, domain, target).await);
     findings.extend(check_ns(resolver, domain, target).await);
     findings.extend(check_mx(resolver, domain, target).await);
@@ -52,10 +53,6 @@ fn fingerprints() -> Vec<(&'static str, &'static str)> {
 // ── CNAME takeover ──────────────────────────────────────────────────────────
 
 /// Detect dangling CNAMEs pointing at 60+ service fingerprints.
-///
-/// A CNAME is considered dangling when:
-/// 1. The CNAME target matches a known service suffix, AND
-/// 2. The CNAME target itself does not resolve (NXDOMAIN or SERVFAIL)
 async fn check_cname(
     resolver: &TokioAsyncResolver,
     domain: &str,
@@ -93,42 +90,24 @@ async fn check_cname(
         None => return findings,
     };
 
-    // Check if the CNAME target actually resolves
-    let dangling = resolver.lookup(domain, RecordType::A).await.is_err();
+    // 1. Check if the CNAME target actually resolves
+    let dns_dangling = resolver.lookup(domain, RecordType::A).await.is_err();
 
-    if dangling {
-        findings.push(
-            Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Critical)
-                .title(format!("Subdomain takeover: dangling CNAME → {service}"))
+    if dns_dangling {
+        gossan_core::try_push_finding(Finding::builder("dns", target.domain().unwrap_or("?"), Severity::High)
+                .title(format!("Dangling CNAME → {service}"))
                 .detail(format!(
-                    "{domain} has CNAME → {cname} (matches {suffix} → {service}) \
-                     but the target does not resolve. An attacker can register this \
-                     hostname on {service} and serve arbitrary content on {domain}."
+                    "{domain} has CNAME → {cname} (matches {suffix} → {service}) but it does not resolve. \
+                     An attacker might be able to register this hostname on {service}."
                 ))
+                .kind(FindingKind::Exposure)
                 .evidence(Evidence::DnsRecord {
                     record_type: "CNAME".into(),
-                    value: cname.clone(),
+                    value: cname.clone().into(),
                 })
                 .tag("takeover")
                 .tag("cname")
-                .tag("critical")
-                .build()
-                .expect("finding builder: required fields are set"),
-        );
-    } else {
-        // CNAME resolves but points at known service — informational
-        findings.push(
-            Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Info)
-                .title(format!("CNAME → {service} (currently resolves)"))
-                .detail(format!(
-                    "{domain} has CNAME → {cname} pointed at {service}. \
-                     Currently resolving, but will become takeover-vulnerable if \
-                     the {service} account is deleted."
-                ))
-                .tag("takeover").tag("monitoring")
-                .build()
-                .expect("finding builder: required fields are set"),
-        );
+                .tag("dangling"), &mut findings);
     }
 
     findings
@@ -170,41 +149,35 @@ async fn check_ns(
             .await
             .is_err()
         {
-            findings.push(
-                Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Critical)
+            gossan_core::try_push_finding(Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Critical)
                     .title(format!("NS takeover: dangling nameserver {ns}"))
                     .detail(format!(
                         "{domain} delegates DNS to {ns} which does not resolve. \
                          If an attacker registers {ns}, they control ALL DNS records \
                          for {domain} — full domain hijack."
                     ))
+                    .kind(FindingKind::Vulnerability)
                     .evidence(Evidence::DnsRecord {
                         record_type: "NS".into(),
-                        value: ns.clone(),
+                        value: ns.clone().into(),
                     })
                     .tag("takeover")
                     .tag("ns")
-                    .tag("critical")
-                    .build()
-                    .expect("finding builder: required fields are set"),
-            );
+                    .tag("critical"), &mut findings);
         }
     }
 
     // NS count resilience
     if nameservers.len() < 2 {
-        findings.push(
-            Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Low)
+        gossan_core::try_push_finding(Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Low)
                 .title(format!("Only {} nameserver(s) — no redundancy", nameservers.len()))
                 .detail(format!(
                     "{domain} has {count} NS record(s). RFC 2182 recommends ≥2. \
                      Single nameserver failure = total domain outage.",
                     count = nameservers.len()
                 ))
-                .tag("dns").tag("resilience")
-                .build()
-                .expect("finding builder: required fields are set"),
-        );
+                .kind(FindingKind::Vulnerability)
+                .tag("dns").tag("resilience"), &mut findings);
     }
 
     findings
@@ -238,23 +211,20 @@ async fn check_mx(
             continue; // null MX (RFC 7505) — intentional
         }
         if resolver.lookup(mx.as_str(), RecordType::A).await.is_err() {
-            findings.push(
-                Finding::builder("dns", target.domain().unwrap_or("?"), Severity::High)
+            gossan_core::try_push_finding(Finding::builder("dns", target.domain().unwrap_or("?"), Severity::High)
                     .title(format!("MX takeover risk: dangling mail server {mx}"))
                     .detail(format!(
                         "{domain} MX record points to {mx} which does not resolve. \
                          If an attacker claims this hostname, they receive all email \
                          for {domain} — password resets, MFA codes, confidential data."
                     ))
+                    .kind(FindingKind::Vulnerability)
                     .evidence(Evidence::DnsRecord {
                         record_type: "MX".into(),
-                        value: mx.clone(),
+                        value: mx.clone().into(),
                     })
                     .tag("takeover")
-                    .tag("mx")
-                    .build()
-                    .expect("finding builder: required fields are set"),
-            );
+                    .tag("mx"), &mut findings);
         }
     }
 

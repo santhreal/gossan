@@ -14,7 +14,7 @@
 
 use gossan_core::Target;
 use hickory_resolver::TokioAsyncResolver;
-use secfinding::{Evidence, Finding, FindingBuilder, Severity};
+use secfinding::{Evidence, Finding, FindingBuilder, Severity, FindingKind};
 use serde::Deserialize;
 use std::sync::OnceLock;
 
@@ -112,47 +112,36 @@ async fn check_spf(
     let spf_rec = match records.iter().find(|r| r.starts_with("v=spf1")) {
         Some(rec) => rec.clone(),
         None => {
-            findings.push(
-                fb(target, Severity::Medium, "No SPF record",
+            gossan_core::try_push_finding(fb(target, Severity::Medium, "No SPF record",
                    format!("{domain} has no SPF record — email spoofing is possible."))
-                .tag("email-security").tag("spf")
-                .build().expect("finding builder: required fields are set"),
-            );
+                .kind(FindingKind::Misconfiguration)
+                .tag("email-security").tag("spf"), &mut findings);
             return findings;
         }
     };
 
     // Check terminal mechanism
     if spf_rec.contains("+all") {
-        findings.push(
-            fb(target, Severity::High, "SPF allows all senders (+all)",
+        gossan_core::try_push_finding(fb(target, Severity::High, "SPF allows all senders (+all)",
                format!("{domain} SPF has +all — any server can send as this domain."))
             .tag("email-security").tag("spf")
-            .evidence(Evidence::DnsRecord { record_type: "TXT".into(), value: spf_rec.clone() })
-            .build().expect("finding builder: required fields are set"),
-        );
+            .evidence(Evidence::DnsRecord { record_type: "TXT".into(), value: spf_rec.clone().into() }), &mut findings);
     } else if spf_rec.contains("~all") {
-        findings.push(
-            fb(target, Severity::Low, "SPF softfail (~all) — not enforced",
+        gossan_core::try_push_finding(fb(target, Severity::Low, "SPF softfail (~all) — not enforced",
                format!("{domain} uses ~all — emails failing SPF are still delivered."))
-            .tag("email-security").tag("spf")
-            .build().expect("finding builder: required fields are set"),
-        );
+            .tag("email-security").tag("spf"), &mut findings);
     }
 
     // Recursive include resolution — count total lookups
     let lookup_count = count_spf_lookups(resolver, &spf_rec, 0).await;
     if lookup_count > MAX_SPF_INCLUDES {
-        findings.push(
-            fb(target, Severity::Medium,
+        gossan_core::try_push_finding(fb(target, Severity::Medium,
                format!("SPF exceeds 10-lookup limit ({lookup_count} lookups)"),
                format!("{domain} SPF record requires {lookup_count} DNS lookups — \
                         exceeding RFC 7208 §4.6.4 limit of 10. Mail receivers will \
                         return permerror, effectively disabling SPF protection."))
             .tag("email-security").tag("spf").tag("permerror")
-            .evidence(Evidence::DnsRecord { record_type: "TXT".into(), value: spf_rec.clone() })
-            .build().expect("finding builder: required fields are set"),
-        );
+            .evidence(Evidence::DnsRecord { record_type: "TXT".into(), value: spf_rec.clone().into() }), &mut findings);
     }
 
     findings
@@ -209,6 +198,82 @@ async fn count_spf_lookups(
 
 // ── DMARC ───────────────────────────────────────────────────────────────────
 
+/// Parsed DMARC TXT record fields (RFC 7489).
+///
+/// Returned by [`parse_dmarc`]. Tags absent from the source record are
+/// `None` — the caller is responsible for applying RFC defaults
+/// (`sp=p`, `pct=100`, `adkim=r`, `aspf=r`, `fo=0`, `rf=afrf`, `ri=86400`).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DmarcRecord {
+    /// Required `v=DMARC1`.
+    pub version: Option<String>,
+    /// `p=` policy: `none|quarantine|reject`.
+    pub policy: Option<String>,
+    /// `sp=` subdomain policy. Defaults to `p` when absent.
+    pub subdomain_policy: Option<String>,
+    /// `pct=` percentage applied (0..=100). Defaults to 100.
+    pub pct: Option<u8>,
+    /// Aggregate report URIs (`rua=`).
+    pub rua: Vec<String>,
+    /// Forensic report URIs (`ruf=`).
+    pub ruf: Vec<String>,
+    /// `adkim=` DKIM alignment (`r|s`).
+    pub adkim: Option<String>,
+    /// `aspf=` SPF alignment (`r|s`).
+    pub aspf: Option<String>,
+    /// `fo=` failure-options.
+    pub fo: Option<String>,
+    /// `rf=` reporting format.
+    pub rf: Option<String>,
+    /// `ri=` reporting interval seconds.
+    pub ri: Option<u32>,
+}
+
+/// Parse a DMARC TXT record into structured fields.
+///
+/// Returns `None` if the record does not begin with `v=DMARC1` (case
+/// sensitive per RFC 7489 §6.4 — the version tag is the marker).
+/// Unknown tags are tolerated and dropped silently. Whitespace
+/// around `;` separators and `=` is permitted and stripped.
+#[must_use]
+pub fn parse_dmarc(record: &str) -> Option<DmarcRecord> {
+    let trimmed = record.trim();
+    if !trimmed.starts_with("v=DMARC1") {
+        return None;
+    }
+    let mut out = DmarcRecord::default();
+    for part in trimmed.split(';') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let Some((k, v)) = part.split_once('=') else {
+            continue;
+        };
+        let k = k.trim();
+        let v = v.trim();
+        match k {
+            "v" => out.version = Some(v.into()),
+            "p" => out.policy = Some(v.into()),
+            "sp" => out.subdomain_policy = Some(v.into()),
+            "pct" => out.pct = v.parse::<u8>().ok().filter(|n| *n <= 100),
+            "rua" => {
+                out.rua = v.split(',').map(|s| s.trim().to_string()).collect();
+            }
+            "ruf" => {
+                out.ruf = v.split(',').map(|s| s.trim().to_string()).collect();
+            }
+            "adkim" => out.adkim = Some(v.into()),
+            "aspf" => out.aspf = Some(v.into()),
+            "fo" => out.fo = Some(v.into()),
+            "rf" => out.rf = Some(v.into()),
+            "ri" => out.ri = v.parse::<u32>().ok(),
+            _ => {} // unknown tag; tolerate per RFC 7489 §6.6
+        }
+    }
+    Some(out)
+}
+
 /// DMARC policy analysis: presence, enforcement level, subdomain policy, report URIs.
 async fn check_dmarc(
     resolver: &TokioAsyncResolver,
@@ -221,12 +286,9 @@ async fn check_dmarc(
     let records = match lookup_txt(resolver, &dmarc_domain).await {
         Ok(r) => r,
         Err(_) => {
-            findings.push(
-                fb(target, Severity::Medium, "No DMARC record",
+            gossan_core::try_push_finding(fb(target, Severity::Medium, "No DMARC record",
                    format!("{domain} has no DMARC record — phishing via email spoofing is unmitigated."))
-                .tag("email-security").tag("dmarc")
-                .build().expect("finding builder: required fields are set"),
-            );
+                .tag("email-security").tag("dmarc"), &mut findings);
             return findings;
         }
     };
@@ -234,53 +296,38 @@ async fn check_dmarc(
     let rec = match records.iter().find(|r| r.starts_with("v=DMARC1")) {
         Some(r) => r.clone(),
         None => {
-            findings.push(
-                fb(target, Severity::Medium, "No DMARC record",
+            gossan_core::try_push_finding(fb(target, Severity::Medium, "No DMARC record",
                    format!("{domain} has no DMARC record."))
-                .tag("email-security").tag("dmarc")
-                .build().expect("finding builder: required fields are set"),
-            );
+                .tag("email-security").tag("dmarc"), &mut findings);
             return findings;
         }
     };
 
     // Policy strength
     if rec.contains("p=none") {
-        findings.push(
-            fb(target, Severity::Low, "DMARC policy is p=none (monitor only)",
+        gossan_core::try_push_finding(fb(target, Severity::Low, "DMARC policy is p=none (monitor only)",
                format!("{domain} DMARC does not reject or quarantine — unenforced."))
-            .tag("email-security").tag("dmarc")
-            .build().expect("finding builder: required fields are set"),
-        );
+            .tag("email-security").tag("dmarc"), &mut findings);
     } else if rec.contains("p=quarantine") {
-        findings.push(
-            fb(target, Severity::Info, "DMARC policy is p=quarantine",
+        gossan_core::try_push_finding(fb(target, Severity::Info, "DMARC policy is p=quarantine",
                format!("{domain} DMARC quarantines but does not outright reject spoofed emails."))
-            .tag("email-security").tag("dmarc")
-            .build().expect("finding builder: required fields are set"),
-        );
+            .tag("email-security").tag("dmarc"), &mut findings);
     }
 
     // Subdomain policy
     if !rec.contains("sp=reject") && !rec.contains("p=none") {
-        findings.push(
-            fb(target, Severity::Low, "DMARC missing sp=reject (subdomain spoofing risk)",
+        gossan_core::try_push_finding(fb(target, Severity::Low, "DMARC missing sp=reject (subdomain spoofing risk)",
                format!("{domain} DMARC lacks sp=reject — unconfigured subdomains are spoofable."))
-            .tag("email-security").tag("dmarc")
-            .build().expect("finding builder: required fields are set"),
-        );
+            .tag("email-security").tag("dmarc"), &mut findings);
     }
 
     // Report URI disclosure
     if let Some(part) = rec.split(';').find(|p| p.trim().starts_with("rua=")) {
         let addr = part.trim().trim_start_matches("rua=");
-        findings.push(
-            fb(target, Severity::Info, "DMARC aggregate report recipient",
+        gossan_core::try_push_finding(fb(target, Severity::Info, "DMARC aggregate report recipient",
                format!("{domain} aggregate DMARC reports go to: {addr}"))
-            .evidence(Evidence::DnsRecord { record_type: "TXT".into(), value: rec.clone() })
-            .tag("email-security").tag("disclosure")
-            .build().expect("finding builder: required fields are set"),
-        );
+            .evidence(Evidence::DnsRecord { record_type: "TXT".into(), value: rec.clone().into() })
+            .tag("email-security").tag("disclosure"), &mut findings);
     }
 
     findings
@@ -302,28 +349,22 @@ async fn check_dkim(
         if let Ok(records) = lookup_txt(resolver, &dkim_name).await {
             if records.iter().any(|r| r.contains("v=DKIM1") || r.contains("p=")) {
                 dkim_found = true;
-                findings.push(
-                    fb(target, Severity::Info, format!("DKIM selector active: {}", selector.name),
+                gossan_core::try_push_finding(fb(target, Severity::Info, format!("DKIM selector active: {}", selector.name),
                        format!("{domain} DKIM selector '{}' resolves — email signing configured.", selector.name))
                     .evidence(Evidence::DnsRecord {
                         record_type: "TXT".into(),
-                        value: records.first().cloned().unwrap_or_default(),
+                        value: records.first().cloned().unwrap_or_default().into(),
                     })
-                    .tag("email-security").tag("dkim")
-                    .build().expect("finding builder: required fields are set"),
-                );
+                    .tag("email-security").tag("dkim"), &mut findings);
                 break; // one active selector is sufficient confirmation
             }
         }
     }
 
     if !dkim_found {
-        findings.push(
-            fb(target, Severity::Low, "No DKIM record found",
+        gossan_core::try_push_finding(fb(target, Severity::Low, "No DKIM record found",
                format!("{domain} — none of {} common DKIM selectors resolved.", dkim_selector_names().len()))
-            .tag("email-security").tag("dkim")
-            .build().expect("finding builder: required fields are set"),
-        );
+            .tag("email-security").tag("dkim"), &mut findings);
     }
 
     findings
@@ -361,7 +402,129 @@ mod tests {
     }
 
     #[test]
+    fn parse_dmarc_canonical_record() {
+        let r = parse_dmarc(
+            "v=DMARC1; p=reject; sp=quarantine; pct=100; rua=mailto:agg@example.com; ruf=mailto:fns@example.com; adkim=s; aspf=r; fo=1; rf=afrf; ri=86400",
+        )
+        .expect("must parse");
+        assert_eq!(r.version.as_deref(), Some("DMARC1"));
+        assert_eq!(r.policy.as_deref(), Some("reject"));
+        assert_eq!(r.subdomain_policy.as_deref(), Some("quarantine"));
+        assert_eq!(r.pct, Some(100));
+        assert_eq!(r.rua, vec!["mailto:agg@example.com"]);
+        assert_eq!(r.ruf, vec!["mailto:fns@example.com"]);
+        assert_eq!(r.adkim.as_deref(), Some("s"));
+        assert_eq!(r.aspf.as_deref(), Some("r"));
+        assert_eq!(r.fo.as_deref(), Some("1"));
+        assert_eq!(r.rf.as_deref(), Some("afrf"));
+        assert_eq!(r.ri, Some(86400));
+    }
+
+    #[test]
+    fn parse_dmarc_rejects_non_dmarc1() {
+        assert!(parse_dmarc("v=spf1 ip4:1.2.3.4 -all").is_none());
+        assert!(parse_dmarc("p=reject; pct=100").is_none());
+        assert!(parse_dmarc("").is_none());
+    }
+
+    #[test]
+    fn parse_dmarc_handles_multi_uri_lists() {
+        let r = parse_dmarc("v=DMARC1; p=reject; rua=mailto:a@x.com,mailto:b@x.com; ruf=mailto:c@x.com,mailto:d@x.com,mailto:e@x.com")
+            .unwrap();
+        assert_eq!(r.rua.len(), 2);
+        assert_eq!(r.ruf.len(), 3);
+        assert_eq!(r.rua[1], "mailto:b@x.com");
+    }
+
+    #[test]
+    fn parse_dmarc_clamps_invalid_pct() {
+        // Per RFC pct ∈ 0..=100. 200 must be rejected.
+        let r = parse_dmarc("v=DMARC1; p=reject; pct=200").unwrap();
+        assert_eq!(r.pct, None);
+        let r = parse_dmarc("v=DMARC1; p=reject; pct=garbage").unwrap();
+        assert_eq!(r.pct, None);
+    }
+
+    #[test]
+    fn parse_dmarc_tolerates_unknown_tags_and_whitespace() {
+        let r = parse_dmarc("v=DMARC1 ;  p=reject ; xyz=abc ;  pct=50").unwrap();
+        assert_eq!(r.policy.as_deref(), Some("reject"));
+        assert_eq!(r.pct, Some(50));
+    }
+
+    #[test]
+    fn parse_dmarc_min_record_just_v_and_p() {
+        let r = parse_dmarc("v=DMARC1; p=none").unwrap();
+        assert_eq!(r.policy.as_deref(), Some("none"));
+        assert_eq!(r.subdomain_policy, None);
+        assert!(r.rua.is_empty());
+    }
+
+    #[test]
+    fn parse_dmarc_p_quarantine_recognized() {
+        let r = parse_dmarc("v=DMARC1; p=quarantine; sp=reject").unwrap();
+        assert_eq!(r.policy.as_deref(), Some("quarantine"));
+        assert_eq!(r.subdomain_policy.as_deref(), Some("reject"));
+    }
+
+    #[test]
     fn max_spf_includes_matches_rfc() {
         assert_eq!(MAX_SPF_INCLUDES, 10, "RFC 7208 §4.6.4 mandates 10-lookup limit");
     }
+}
+
+
+/// Parse SPF records to discover third-party services and mail infrastructure.
+///
+/// SPF `include:` directives reveal which services are authorized to send
+/// email for the domain. This exposes:
+/// - Email providers (Google Workspace, O365, SendGrid, Mailgun)
+/// - Marketing platforms (Mailchimp, HubSpot)
+/// - Internal mail servers (custom SPF entries)
+pub fn parse_spf_includes(spf_record: &str) -> Vec<String> {
+    let mut includes = Vec::new();
+    for part in spf_record.split_whitespace() {
+        if let Some(domain) = part.strip_prefix("include:") {
+            includes.push(domain.to_string());
+        } else if let Some(ip_range) = part.strip_prefix("ip4:") {
+            includes.push(format!("ip4:{}", ip_range));
+        } else if let Some(ip_range) = part.strip_prefix("ip6:") {
+            includes.push(format!("ip6:{}", ip_range));
+        } else if let Some(domain) = part.strip_prefix("a:") {
+            includes.push(domain.to_string());
+        } else if let Some(domain) = part.strip_prefix("mx:") {
+            includes.push(domain.to_string());
+        }
+    }
+    includes
+}
+
+/// Map SPF includes to known services for intelligence.
+pub fn identify_email_services(includes: &[String]) -> Vec<(&'static str, &'static str)> {
+    let mut services = Vec::new();
+    for inc in includes {
+        let lower = inc.to_lowercase();
+        if lower.contains("google") || lower.contains("_spf.google") {
+            services.push(("Google Workspace", "email"));
+        } else if lower.contains("outlook") || lower.contains("protection.outlook") {
+            services.push(("Microsoft 365", "email"));
+        } else if lower.contains("sendgrid") {
+            services.push(("SendGrid", "transactional-email"));
+        } else if lower.contains("mailgun") {
+            services.push(("Mailgun", "transactional-email"));
+        } else if lower.contains("mailchimp") || lower.contains("mandrillapp") {
+            services.push(("Mailchimp/Mandrill", "marketing-email"));
+        } else if lower.contains("amazonses") {
+            services.push(("AWS SES", "transactional-email"));
+        } else if lower.contains("hubspot") {
+            services.push(("HubSpot", "marketing"));
+        } else if lower.contains("zendesk") {
+            services.push(("Zendesk", "support"));
+        } else if lower.contains("freshdesk") {
+            services.push(("Freshdesk", "support"));
+        } else if lower.contains("salesforce") {
+            services.push(("Salesforce", "crm"));
+        }
+    }
+    services
 }

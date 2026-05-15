@@ -1,0 +1,37 @@
+[package]
+name = "gossan-fleet"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Distributed fleet orchestration for Gossan"
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+
+[package.metadata.santh]
+status = "alpha"
+[dependencies]
+tonic = "0.12"
+prost = "0.13"
+tokio = { workspace = true }
+tokio-stream = "0.1"
+futures = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+gossan-core = { path = "../core" }
+hickory-resolver = { workspace = true }
+uuid = { workspace = true }
+dashmap = "6"
+clap = { workspace = true }
+
+[build-dependencies]
+tonic-build = "0.12"
+
+[lints]
+workspace = true

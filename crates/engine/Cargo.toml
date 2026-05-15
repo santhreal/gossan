@@ -1,0 +1,54 @@
+[package]
+name = "gossan-engine"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "High-performance stateless SYN scanner and banner grabber"
+readme = "README.md"
+keywords = ["portscan", "syn", "scanner", "network", "security"]
+categories = ["command-line-utilities", "network-programming"]
+rust-version.workspace = true
+
+[features]
+default = []
+# Enable the AF_XDP backend in netforge. Requires libbpf-dev at link
+# time and a Linux 5.10+ kernel with CAP_BPF at runtime. Without this
+# feature, `auto_select` skips XDP and starts at sendmmsg.
+xdp = ["netforge/xdp-backend"]
+
+[dependencies]
+gossan-core = { path = "../core" }
+netforge = { workspace = true }
+async-trait.workspace = true
+tokio.workspace = true
+tracing = "0.1"
+fastrand = "2"
+anyhow = "1"
+url = "2"
+secfinding = { workspace = true }
+crossbeam-channel = "0.5"
+futures = "0.3"
+gossan-classify = { path = "../classify" }
+
+# Used in scan.rs to pin TX threads to dedicated CPU cores.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+proptest = "1"
+criterion = "0.5"
+hickory-resolver = { workspace = true }
+tracing-subscriber = "0.3"
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+libc = "0.2"
+
+[[bench]]
+name = "tx_hot_loop"
+harness = false
+
+[lints]
+workspace = true

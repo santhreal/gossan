@@ -165,8 +165,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
         let lat_increase = last_lat > avg_lat * 3; // 3× slowdown = soft throttle
 
         if lat_increase {
-            findings.push(
-                crate::finding_builder(
+            gossan_core::try_push_finding(crate::misconfig_finding(
                     target,
                     Severity::Low,
                     format!(
@@ -182,14 +181,10 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                 )
                 .tag("rate-limit")
                 .tag("brute-force")
-                .tag("web")
-                .build()
-                .expect("finding builder: required fields are set"),
-            );
+                .tag("web"), &mut findings);
         } else {
             // Hard finding: no rate limiting at all
-            findings.push(
-                crate::finding_builder(
+            gossan_core::try_push_finding(crate::misconfig_finding(
                     target,
                     Severity::High,
                     format!("No rate limiting on authentication endpoint: {}", auth_path),
@@ -204,13 +199,13 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                 .evidence(Evidence::HttpResponse {
                     status: last_status,
                     headers: vec![
-                        ("requests-sent".into(), BURST_COUNT.to_string()),
-                        ("all-returned".into(), first_status.to_string()),
+                        ("requests-sent".into(), BURST_COUNT.to_string().into()),
+                        ("all-returned".into(), first_status.to_string().into()),
                     ],
                     body_excerpt: Some(format!(
                         "All {} responses: HTTP {}",
                         BURST_COUNT, first_status
-                    )),
+                    ).into()),
                 })
                 .tag("rate-limit")
                 .tag("brute-force")
@@ -221,10 +216,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                      '{}:username=^USER^&password=^PASS^:F=401' -t 50",
                     base.split("://").nth(1).unwrap_or(base),
                     auth_url
-                ))
-                .build()
-                .expect("finding builder: required fields are set"),
-            );
+                )), &mut findings);
         }
     }
 

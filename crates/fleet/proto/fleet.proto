@@ -1,0 +1,46 @@
+syntax = "proto3";
+package gossan.fleet;
+
+service FleetControl {
+    rpc StreamMessages(stream WorkerUpdate) returns (stream MasterInstruction);
+}
+
+message WorkerUpdate {
+    string worker_id = 1;
+    oneof event {
+        Heartbeat heartbeat = 2;
+        Finding finding = 3;
+        TaskCompletion completion = 4;
+    }
+}
+
+message Heartbeat {
+    uint32 concurrent_tasks = 1;
+}
+
+message Finding {
+    string task_id = 1;
+    string data_json = 2;
+}
+
+message TaskCompletion {
+    string task_id = 1;
+    bool success = 2;
+    string error = 3;
+}
+
+message MasterInstruction {
+    oneof instruction {
+        TaskAssignment task = 1;
+        Shutdown shutdown = 2;
+    }
+}
+
+message TaskAssignment {
+    string task_id = 1;
+    string module_name = 2;
+    repeated string targets = 3;
+    string config_json = 4;
+}
+
+message Shutdown {}

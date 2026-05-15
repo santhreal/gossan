@@ -1,0 +1,14 @@
+--- web/gossan/crates/intel/tests/adversarial.rs
++++ web/gossan/crates/intel/tests/adversarial.rs
+@@ -282,10 +282,10 @@
+     let db_path = NamedTempFile::new().unwrap().into_temp_path();
+     let mut db = IntelDb::open(&db_path).unwrap();
+-    let mut jsonl_file = NamedTempFile::new().unwrap();
++    let mut jsonl_file = tempfile::NamedTempFile::new().unwrap();
+     writeln!(jsonl_file, "invalid json").unwrap();
+     writeln!(jsonl_file, "{{\"ip\": \"1.1.1.1\", \"port\": 80, \"protocol\": \"tcp\"}}").unwrap(); // valid
+     writeln!(jsonl_file, "{{\"ip\":").unwrap(); // invalid
+-    jsonl_file.flush().unwrap();
++    // jsonl_file.flush().unwrap();
+     
+     let count = Ingester::ingest_jsonl(&mut db, jsonl_file.path()).unwrap();

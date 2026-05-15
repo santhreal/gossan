@@ -1,3 +1,5 @@
+//! Bucket/asset name permutation generation from organization names.
+
 /// Generate bucket/account name candidates from an org name.
 /// These are the patterns attackers enumerate — we do the same.
 use serde::Deserialize;
@@ -84,12 +86,18 @@ pub fn generate(org: &str) -> Vec<String> {
         }
     }
 
-    // Apply transforms based on configuration
+    // Apply transforms based on configuration, but validate length AFTER transformation
     if config.transforms.dot_to_hyphen {
-        candidates.insert(o.replace('.', "-"));
+        let transformed = o.replace('.', "-");
+        if transformed.len() >= 3 && transformed.len() <= 63 {
+            candidates.insert(transformed);
+        }
     }
     if config.transforms.hyphen_to_dot {
-        candidates.insert(o.replace('-', "."));
+        let transformed = o.replace('-', ".");
+        if transformed.len() >= 3 && transformed.len() <= 63 {
+            candidates.insert(transformed);
+        }
     }
 
     candidates.into_iter().collect()

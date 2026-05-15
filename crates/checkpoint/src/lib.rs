@@ -1,3 +1,21 @@
+#![forbid(unsafe_code)]
+// pedantic moved to workspace [lints.clippy] in root Cargo.toml
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::panic
+    )
+)]
+#![allow(
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::missing_errors_doc,
+)]
+
 //! Scan checkpoint and resume — persists stage results to a local SQLite file.
 //!
 //! # Usage
@@ -217,7 +235,7 @@ mod tests {
             .title(title)
             .detail("detail")
             .build()
-            .expect("finding builder: required fields are set")
+            .expect("required finding fields")
     }
 
     #[test]
@@ -246,7 +264,7 @@ mod tests {
         let stage = record.stage("portscan").expect("stage should exist");
         assert_eq!(stage.targets.len(), 1);
         assert_eq!(stage.findings.len(), 1);
-        assert_eq!(stage.findings[0].title, "Open port 443");
+        assert_eq!(stage.findings[0].title(), "Open port 443");
     }
 
     #[test]
@@ -308,5 +326,60 @@ mod tests {
         store.new_scan("one.example", "{}").unwrap();
         store.new_scan("two.example", "{}").unwrap();
         assert_eq!(store.list_scans().unwrap().len(), 2);
+    }
+}
+
+
+/// Finding delta between two scan runs.
+#[derive(Debug)]
+pub struct ScanDelta {
+    /// Findings present in new scan but not in baseline.
+    pub new_findings: Vec<Finding>,
+    /// Findings present in baseline but not in new scan (resolved).
+    pub resolved_findings: Vec<Finding>,
+    /// Findings present in both (unchanged).
+    pub unchanged_count: usize,
+}
+
+/// Compare findings from a new scan against a baseline scan.
+///
+/// Uses (scanner, target, title) as the identity key for matching.
+/// This enables delta reporting: "what changed since last scan?"
+pub fn diff_findings(baseline: &[Finding], current: &[Finding]) -> ScanDelta {
+    use std::collections::HashSet;
+
+    // Key: (scanner, target, title) — uniquely identifies a finding class
+    let baseline_keys: HashSet<(String, String, String)> = baseline
+        .iter()
+        .map(|f| (f.scanner().to_string(), f.target().to_string(), f.title().to_string()))
+        .collect();
+
+    let current_keys: HashSet<(String, String, String)> = current
+        .iter()
+        .map(|f| (f.scanner().to_string(), f.target().to_string(), f.title().to_string()))
+        .collect();
+
+    let new_findings: Vec<Finding> = current
+        .iter()
+        .filter(|f| {
+            !baseline_keys.contains(&(f.scanner().to_string(), f.target().to_string(), f.title().to_string()))
+        })
+        .cloned()
+        .collect();
+
+    let resolved_findings: Vec<Finding> = baseline
+        .iter()
+        .filter(|f| {
+            !current_keys.contains(&(f.scanner().to_string(), f.target().to_string(), f.title().to_string()))
+        })
+        .cloned()
+        .collect();
+
+    let unchanged_count = current.len() - new_findings.len();
+
+    ScanDelta {
+        new_findings,
+        resolved_findings,
+        unchanged_count,
     }
 }

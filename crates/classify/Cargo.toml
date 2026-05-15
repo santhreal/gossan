@@ -1,0 +1,31 @@
+[package]
+name = "gossan-classify"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Banner classification and service fingerprinting for Gossan"
+readme = "README.md"
+keywords = ["fingerprint", "banner", "classification", "scanner", "security"]
+categories = ["command-line-utilities", "network-programming"]
+rust-version.workspace = true
+
+[dependencies]
+gossan-core = { path = "../core" }
+async-trait.workspace = true
+tokio.workspace = true
+tracing = "0.1"
+anyhow = "1"
+regex-lite = "0.1"
+serde = { workspace = true, features = ["derive"] }
+toml = "0.8"
+secfinding = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
+tempfile = "3"
+
+[lints]
+workspace = true

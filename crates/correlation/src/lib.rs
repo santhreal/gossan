@@ -1,3 +1,21 @@
+#![forbid(unsafe_code)]
+// pedantic moved to workspace [lints.clippy] in root Cargo.toml
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::panic
+    )
+)]
+#![allow(
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::missing_errors_doc,
+)]
+
 //! Cross-module finding correlation engine.
 //!
 //! Runs after all scanner stages complete. Applies a set of [`CorrelationRule`]s
@@ -9,13 +27,21 @@
 //! 2. Register it in [`CorrelationEngine::default()`].
 //!    That's the only change needed.
 
+pub mod confidence;
+pub mod dedup;
+pub mod relationship;
 mod rules;
+mod utils;
 
 use gossan_core::Target;
 #[allow(unused_imports)] // Severity is used by tests via `use super::*`
 use secfinding::{Finding, Severity};
 
-pub use rules::{AdminExposedRule, SourceCodeSecretsRule, SsrfInternalRule, TlsWeaknessRule};
+pub use rules::{
+    AdminExposedRule, ApiAuthRule, CorsSecretChainRule, DebugRceRule,
+    ShadowInfrastructureRule, SourceCodeSecretsRule, SsrfInternalRule,
+    TlsWeaknessRule, WildcardTakeoverRule,
+};
 
 /// A correlation rule inspects the full finding + target set and returns
 /// zero or more new "chain" findings.
@@ -33,13 +59,23 @@ pub struct CorrelationEngine {
 
 impl CorrelationEngine {
     /// Construct an engine with all built-in rules registered.
+    ///
+    /// Includes 9 cross-finding correlation rules:
+    /// TLS weakness, AdminExposed, ApiAuth, SsrfInternal,
+    /// SourceCodeSecrets, ShadowInfrastructure, WildcardTakeover,
+    /// DebugRce, CorsSecretChain.
     pub fn new() -> Self {
         Self {
             rules: vec![
                 Box::new(TlsWeaknessRule),
                 Box::new(AdminExposedRule),
+                Box::new(ApiAuthRule),
                 Box::new(SsrfInternalRule),
                 Box::new(SourceCodeSecretsRule),
+                Box::new(ShadowInfrastructureRule),
+                Box::new(WildcardTakeoverRule),
+                Box::new(DebugRceRule),
+                Box::new(CorsSecretChainRule),
             ],
         }
     }
@@ -79,6 +115,18 @@ mod tests {
             .expect("finding builder: required fields are set")
     }
 
+    /// Same as `finding()` but with one extra tag pre-applied. Replaces
+    /// the previous `v1.tags.push(...)` mutation that no longer
+    /// compiles since `Finding.tags` became a private field with no
+    /// public mutator.
+    fn finding_with_tag(scanner: &str, target: &str, title: &str, tag: &str) -> Finding {
+        Finding::builder(scanner, target, Severity::High)
+            .title(title)
+            .tag(tag)
+            .build()
+            .expect("finding builder: required fields are set")
+    }
+
     #[test]
     fn engine_empty_input_produces_no_chains() {
         let engine = CorrelationEngine::new();
@@ -88,7 +136,7 @@ mod tests {
     #[test]
     fn correlation_engine_runs_all_rules() {
         let engine = CorrelationEngine::new();
-        assert_eq!(engine.rules.len(), 4, "all 4 rules should be registered");
+        assert_eq!(engine.rules.len(), 9, "all 9 rules should be registered");
     }
 
     #[test]
@@ -101,7 +149,7 @@ mod tests {
         let chains = engine.run(&findings, &[]);
         assert!(chains
             .iter()
-            .any(|f| f.title.contains("Multiple TLS weaknesses")));
+            .any(|f| f.title().contains("Multiple TLS weaknesses")));
     }
 
     #[test]
@@ -113,7 +161,23 @@ mod tests {
         ];
         let chains = engine.run(&findings, &[]);
         assert!(chains.iter().any(|f| f
-            .title
+            .title()
             .contains("Admin panel exposed without authentication")));
+    }
+
+    #[test]
+    fn engine_returns_api_auth_chain() {
+        let engine = CorrelationEngine::new();
+        // Pre-tag instead of mutating after build (Finding.tags is now private).
+        let v1 = finding_with_tag(
+            "hidden",
+            "api.example.com",
+            "API version enumeration",
+            "api-version",
+        );
+        let auth = finding("hidden", "api.example.com", "No authentication required");
+
+        let chains = engine.run(&[v1, auth], &[]);
+        assert!(chains.iter().any(|f| f.title().contains("Unauthenticated legacy API")));
     }
 }

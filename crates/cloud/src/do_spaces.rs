@@ -65,13 +65,17 @@ fn builtin_do_regions() -> &'static Vec<DoRegion> {
 fn region_ids() -> &'static [DoRegion] {
     builtin_do_regions()
 }
-
+/// DigitalOcean Spaces bucket enumeration provider.
 pub struct DoSpacesProvider;
 
 #[async_trait]
 impl CloudProvider for DoSpacesProvider {
     fn name(&self) -> &'static str {
         "spaces"
+    }
+
+    fn endpoint(&self, name: &str) -> String {
+        format!("https://{}.ams3.digitaloceanspaces.com/", name)
     }
 
     async fn probe(
@@ -83,7 +87,13 @@ impl CloudProvider for DoSpacesProvider {
         let mut findings = Vec::new();
 
         for region in region_ids() {
-            let url = format!("https://{}.{}.digitaloceanspaces.com/", name, region.id);
+            let region_id = &region.id;
+            let url = if self.endpoint(name).contains("digitaloceanspaces.com") {
+                format!("https://{}.{}.digitaloceanspaces.com/", name, region_id)
+            } else {
+                // If overridden in tests, just use the test endpoint directly
+                self.endpoint(name)
+            };
 
             let resp = match client.get(&url).send().await {
                 Ok(r) => r,
@@ -93,10 +103,9 @@ impl CloudProvider for DoSpacesProvider {
 
             match status {
                 200 => {
-                    let body = resp.text().await.unwrap_or_default();
+                    let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
                     let listed = is_xml_listing(&body);
-                    findings.push(
-                        crate::finding_builder(
+                    gossan_core::try_push_finding(crate::finding_builder(
                             target,
                             if listed {
                                 Severity::Critical
@@ -119,21 +128,17 @@ impl CloudProvider for DoSpacesProvider {
                         )
                         .evidence(Evidence::HttpResponse {
                             status,
-                            headers: vec![("url".into(), url.clone())],
-                            body_excerpt: Some(body.chars().take(200).collect()),
+                            headers: vec![("url".into(), url.clone().into())],
+                            body_excerpt: Some(body.chars().take(200).collect::<String>().into()),
                         })
                         .tag("cloud")
                         .tag("storage")
-                        .tag("do-spaces")
-                        .build()
-                        .expect("finding builder: required fields are set"),
-                    );
+                        .tag("do-spaces"), &mut findings);
                     try_write(client, name, &region.id, &url, target, &mut findings).await;
                     break;
                 }
                 403 => {
-                    findings.push(
-                        crate::finding_builder(
+                    gossan_core::try_push_finding(crate::finding_builder(
                             target,
                             Severity::Low,
                             format!("DO Spaces bucket exists (private): {} ({})", name, region.id),
@@ -145,10 +150,7 @@ impl CloudProvider for DoSpacesProvider {
                         )
                         .tag("cloud")
                         .tag("storage")
-                        .tag("do-spaces")
-                        .build()
-                        .expect("finding builder: required fields are set"),
-                    );
+                        .tag("do-spaces"), &mut findings);
                     try_write(client, name, &region.id, &url, target, &mut findings).await;
                     break;
                 }
@@ -188,8 +190,7 @@ async fn try_write(
     let status = resp.status().as_u16();
     if matches!(status, 200 | 204) {
         let _ = client.delete(&put_url).send().await;
-        findings.push(
-            crate::finding_builder(
+        gossan_core::try_push_finding(crate::finding_builder(
                 target,
                 Severity::Critical,
                 format!(
@@ -206,16 +207,13 @@ async fn try_write(
             )
             .evidence(Evidence::HttpResponse {
                 status,
-                headers: vec![("url".into(), put_url.clone())],
+                headers: vec![("url".into(), put_url.clone().into())],
                 body_excerpt: None,
             })
             .tag("cloud")
             .tag("storage")
             .tag("do-spaces")
-            .tag("file-upload")
-            .build()
-            .expect("finding builder: required fields are set"),
-        );
+            .tag("file-upload"), findings);
     }
 }
 

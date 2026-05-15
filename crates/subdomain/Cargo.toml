@@ -4,25 +4,37 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-homepage = "https://santh.io"
-repository.workspace = true
-description = "Subdomain discovery scanner for gossan (CT logs, Wayback, permutations, DNS bruteforce) — part of the Santh security research ecosystem"
+homepage = "https://santh.dev"
+repository = "https://github.com/santhsecurity/gossan"
+description = "Subdomain discovery scanner for gossan (CT logs, Wayback, permutations, DNS bruteforce) — part of the security research ecosystem"
 readme = "../../README.md"
-keywords = ["santh", "security", "recon", "subdomain", "dns", "scanner"]
+keywords = [ "security", "recon", "subdomain", "dns" ]
 categories = ["command-line-utilities", "network-programming"]
 
+
+[package.metadata.santh]
+status = "alpha"
 [dependencies]
-gossan-core = { version = "0.2", path = "../core" }
+gossan-core = { version = "0.3", path = "../core" }
 async-trait      = { workspace = true }
 serde            = { workspace = true }
 serde_json       = { workspace = true }
 anyhow           = { workspace = true }
 tracing          = { workspace = true }
 tokio            = { workspace = true }
-upstream_reqwest = { workspace = true }
+reqwest = { workspace = true }
 futures          = { workspace = true }
 hickory-resolver = { workspace = true }
 secfinding       = { workspace = true }
 url          = { workspace = true }
 regex        = { workspace = true }
 base64       = { workspace = true }
+fastrand     = { workspace = true }
+governor     = { workspace = true }
+nonzero_ext  = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true

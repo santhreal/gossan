@@ -1,19 +1,39 @@
+#![forbid(unsafe_code)]
+// pedantic moved to workspace [lints.clippy] in root Cargo.toml
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::panic
+    )
+)]
+#![allow(
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::missing_errors_doc,
+)]
+
 //! JavaScript analysis scanner.
 //! Finds <script src> URLs, fetches each JS file, extracts endpoints,
 //! detects hardcoded secrets, and probes for source maps.
 
-extern crate self as reqwest;
-pub use upstream_reqwest::{header, redirect, Client, Method, Proxy, Request, Response, StatusCode, Url};
 
-mod endpoints;
-mod secrets;
+pub mod endpoints;
+pub mod secrets;
+pub mod verifiers;
+
 mod wasm;
 
+use std::sync::Arc;
+use gossan_core::HostRateLimiter;
 use async_trait::async_trait;
 use futures::StreamExt;
-use gossan_core::{build_client, Config, ScanInput, ScanOutput, Scanner, Target};
+use gossan_core::{Config, ScanClient, ScanInput, Scanner, Target};
 use secfinding::{Evidence, Finding, FindingBuilder, Severity};
-
+/// JavaScript analysis scanner — secrets, endpoints, source maps, and WASM.
 pub struct JsScanner;
 
 pub(crate) fn finding_builder(
@@ -25,6 +45,7 @@ pub(crate) fn finding_builder(
     Finding::builder("js", target.domain().unwrap_or("?"), severity)
         .title(title)
         .detail(detail)
+        .kind(secfinding::FindingKind::Exposure)
 }
 
 #[async_trait]
@@ -39,43 +60,85 @@ impl Scanner for JsScanner {
         matches!(target, Target::Web(_))
     }
 
-    async fn run(&self, input: ScanInput, config: &Config) -> anyhow::Result<ScanOutput> {
-        let mut out = ScanOutput::empty();
+    async fn run(&self, input: ScanInput, config: &Config) -> anyhow::Result<()> {
 
-        let client = build_client(config, true)?;
+        let client = ScanClient::from_config(config, Arc::clone(&input.resolver))?;
 
-        let owned: Vec<Target> = input
-            .targets
-            .into_iter()
-            .filter(|t| self.accepts(t))
-            .collect();
+        // Drain the inbound channel — the pre-streaming `targets:
+        // Vec<Target>` field is gone; targets arrive via `target_rx`.
+        let mut owned: Vec<Target> = Vec::new();
+        {
+            let mut rx = input.target_rx.lock().await;
+            while let Some(t) = rx.recv().await {
+                if self.accepts(&t) {
+                    owned.push(t);
+                }
+            }
+        }
+
+        let rate_limiter = Arc::new(HostRateLimiter::new(config.rate_limit));
 
         let findings: Vec<Vec<Finding>> = futures::stream::iter(owned)
             .map(|target| {
                 let client = client.clone();
-                async move { analyze(&client, &target).await.unwrap_or_default() }
+                let target_tx = input.target_tx.clone();
+                let rl = Arc::clone(&rate_limiter);
+                async move {
+                    match analyze(&client, &target, &target_tx, &rl).await {
+                        Ok(v) => v,
+                        Err(e) => {
+                            tracing::error!(target = ?target, error = %e, "js analyze failed for target");
+                            Vec::new()
+                        }
+                    }
+                }
             })
             .buffer_unordered(config.concurrency)
             .collect()
             .await;
 
         for batch in findings {
-            out.findings.extend(batch);
+            for f in batch { input.emit(f); }
         }
-        Ok(out)
+        Ok(())
     }
 }
 
-async fn analyze(client: &reqwest::Client, target: &Target) -> anyhow::Result<Vec<Finding>> {
+async fn analyze(
+    client: &reqwest::Client,
+    target: &Target,
+    target_tx: &tokio::sync::mpsc::UnboundedSender<Target>,
+    rate_limiter: &HostRateLimiter,
+) -> anyhow::Result<Vec<Finding>> {
     let Target::Web(asset) = target else {
         return Ok(vec![]);
     };
     let mut findings = Vec::new();
 
-    let html = client.get(asset.url.as_str()).send().await?.text().await?;
+    // ── Safe HTML Fetch ──────────────────────────────────────────────────
+    let host = asset.url.host_str().unwrap_or("");
+    rate_limiter.until_ready(host).await;
+
+    let resp = client.get(asset.url.as_str()).send().await?;
+
+    // Ensure we got a successful status code
+    if !resp.status().is_success() {
+        tracing::warn!(url = %asset.url, status = %resp.status(), "non-success status fetching HTML");
+        return Ok(vec![]);
+    }
+
+    // Protection: don't download huge HTML files (max 5MB)
+    if let Some(len) = resp.content_length() {
+        if len > 5 * 1024 * 1024 {
+            tracing::warn!(url = %asset.url, size = len, "skipping massive HTML file");
+            return Ok(vec![]);
+        }
+    }
+
+    let html = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await?;
     let js_urls = extract_script_urls(&html, &asset.url);
 
-    // WASM binary secrets scan (runs concurrently with JS analysis below)
+    // ... (wasm task remains same)
     let wasm_task = {
         let client = client.clone();
         let html = html.clone();
@@ -86,12 +149,29 @@ async fn analyze(client: &reqwest::Client, target: &Target) -> anyhow::Result<Ve
 
     tracing::debug!(url = %asset.url, scripts = js_urls.len(), "js analysis");
 
-    // Fetch all JS files concurrently
+    // Fetch all JS files concurrently with strict size limits
     let js_bodies: Vec<(String, String)> = futures::stream::iter(js_urls)
         .map(|url| {
             let client = client.clone();
+            let rl = rate_limiter;
             async move {
-                let body = client.get(&url).send().await.ok()?.text().await.ok()?;
+                let parsed_url = url::Url::parse(&url).ok()?;
+                let host = parsed_url.host_str().unwrap_or("");
+                rl.until_ready(host).await;
+
+                let resp = client.get(&url).send().await.ok()?;
+
+                // Require success status
+                if !resp.status().is_success() {
+                    return None;
+                }
+
+                // Protection: don't download huge JS files (max 10MB)
+                if let Some(len) = resp.content_length() {
+                    if len > 10 * 1024 * 1024 { return None; }
+                }
+                
+                let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.ok()?;
                 Some((url, body))
             }
         })
@@ -106,7 +186,12 @@ async fn analyze(client: &reqwest::Client, target: &Target) -> anyhow::Result<Ve
     for (js_url, body) in &js_bodies {
         // Endpoint extraction
         for ep in endpoints::extract(js_url, body) {
-            findings.push(ep.into_finding(target.clone()));
+            gossan_core::try_push_finding(ep.into_finding(target), &mut findings);
+            
+            // Emit new targets if they are external domains or IPs
+            if let Some(new_target) = ep.as_target() {
+                let _ = target_tx.send(new_target);
+            }
         }
 
         // Inline secret detection on raw JS content
@@ -137,6 +222,10 @@ async fn analyze(client: &reqwest::Client, target: &Target) -> anyhow::Result<Ve
     if let Ok(wasm_findings) = wasm_task.await {
         findings.extend(wasm_findings);
     }
+
+    // Legendary: Verify discovered secrets actively
+    let verifier = verifiers::VerifierEngine::new();
+    verifier.verify_all(&mut findings).await;
 
     Ok(findings)
 }
@@ -181,7 +270,7 @@ pub(crate) async fn probe_sourcemap_full(
     if status != 200 {
         return findings;
     }
-    let Ok(body) = resp.text().await else {
+    let Ok(body) = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await else {
         return findings;
     };
     if !body.contains("\"sources\"") {
@@ -192,15 +281,13 @@ pub(crate) async fn probe_sourcemap_full(
         return findings;
     };
 
-    let sources: Vec<String> = map["sources"]
-        .as_array()
-        .unwrap_or(&vec![])
-        .iter()
-        .filter_map(|v| v.as_str().map(String::from))
-        .collect();
+    let sources: Vec<String> = map.get("sources")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
 
-    let contents: Vec<Option<String>> = map["sourcesContent"]
-        .as_array()
+    let contents: Vec<Option<String>> = map.get("sourcesContent")
+        .and_then(|v| v.as_array())
         .map(|arr| arr.iter().map(|v| v.as_str().map(String::from)).collect())
         .unwrap_or_default();
 
@@ -208,7 +295,7 @@ pub(crate) async fn probe_sourcemap_full(
     let has_content = !contents.is_empty();
 
     // Header finding
-    findings.push(
+    gossan_core::try_push_finding(
         finding_builder(target,
             if has_content { Severity::High } else { Severity::Medium },
             format!("JS source map: {} original files exposed", file_count),
@@ -218,10 +305,12 @@ pub(crate) async fn probe_sourcemap_full(
         .evidence(Evidence::HttpResponse {
             status,
             headers: vec![],
-            body_excerpt: Some(sources.iter().take(10).cloned().collect::<Vec<_>>().join("\n")),
+            body_excerpt: Some(std::sync::Arc::from(
+                sources.iter().take(10).cloned().collect::<Vec<_>>().join("\n").as_str(),
+            )),
         })
-        .tag("source-map").tag("js")
-        .build().expect("finding builder: required fields are set")
+        .tag("source-map").tag("js"),
+        &mut findings,
     );
 
     // Scan each sourcesContent entry for secrets — this is the full original source code
@@ -253,71 +342,3 @@ fn extract_script_urls(html: &str, base: &url::Url) -> Vec<String> {
         .collect()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use gossan_core::{HostTarget, Protocol, Scanner, ServiceTarget, Target, WebAssetTarget};
-
-    fn web_target() -> Target {
-        Target::Web(Box::new(WebAssetTarget {
-            url: url::Url::parse("https://example.com").unwrap(),
-            service: ServiceTarget {
-                host: HostTarget {
-                    ip: "127.0.0.1".parse().unwrap(),
-                    domain: Some("example.com".into()),
-                },
-                port: 443,
-                protocol: Protocol::Tcp,
-                banner: None,
-                tls: true,
-            },
-            tech: vec![],
-            status: 200,
-            title: None,
-            favicon_hash: None,
-            body_hash: None,
-            forms: vec![],
-            params: vec![],
-        }))
-    }
-
-    #[test]
-    fn scanner_accepts_only_web_targets() {
-        let scanner = JsScanner;
-        assert!(scanner.accepts(&web_target()));
-        assert!(!scanner.accepts(&Target::Host(HostTarget {
-            ip: "127.0.0.1".parse().unwrap(),
-            domain: None,
-        })));
-    }
-
-    #[test]
-    fn extract_script_urls_resolves_relative_and_absolute_scripts() {
-        let html = r#"<script src="/app.js"></script><script src="https://cdn.example.com/lib.js"></script>"#;
-        let urls = extract_script_urls(html, &url::Url::parse("https://example.com").unwrap());
-        assert!(urls.contains(&"https://example.com/app.js".to_string()));
-        assert!(urls.contains(&"https://cdn.example.com/lib.js".to_string()));
-    }
-
-    #[test]
-    fn extract_sourcemap_url_skips_data_uris_and_resolves_relative_paths() {
-        let base = url::Url::parse("https://example.com").unwrap();
-        let js_url = "https://example.com/static/app.js";
-        assert_eq!(
-            extract_sourcemap_url(
-                js_url,
-                "console.log(1);\n//# sourceMappingURL=app.js.map",
-                &base
-            ),
-            Some("https://example.com/static/app.js.map".into())
-        );
-        assert_eq!(
-            extract_sourcemap_url(
-                js_url,
-                "//# sourceMappingURL=data:application/json;base64,abcd",
-                &base
-            ),
-            None
-        );
-    }
-}

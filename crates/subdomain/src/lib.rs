@@ -1,63 +1,79 @@
-//! Subdomain discovery — 26 concurrent sources + DNS bruteforce + permutation engine.
+#![forbid(unsafe_code)]
+// pedantic moved to workspace [lints.clippy] in root Cargo.toml
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::panic
+    )
+)]
+#![allow(
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::missing_errors_doc,
+)]
+
+//! Subdomain discovery — 80+ concurrent sources + DNS bruteforce + permutation engine.
 //!
-//! Sources (no API key):  crt.sh, CertSpotter, Wayback Machine, HackerTarget,
-//!                        RapidDNS, AlienVault OTX, Urlscan.io, CommonCrawl, DNSdumpster
-//! Sources (API key):     VirusTotal ($VT_API_KEY), SecurityTrails ($ST_API_KEY),
-//!                        Shodan ($SHODAN_API_KEY), Censys ($CENSYS_API_KEY),
-//!                        BinaryEdge ($BINARYEDGE_API_KEY), FullHunt ($FULLHUNT_API_KEY),
-//!                        GitHub ($GITHUB_TOKEN), Chaos ($CHAOS_API_KEY),
-//!                        Bevigil ($BEVIGIL_API_KEY), FOFA ($FOFA_API_KEY),
-//!                        Hunter.io ($HUNTER_API_KEY), Netlas ($NETLAS_API_KEY),
-//!                        ZoomEye ($ZOOMEYE_API_KEY), C99 ($C99_API_KEY),
-//!                        Quake ($QUAKE_API_KEY), ThreatBook ($THREATBOOK_API_KEY)
+//! Sources (no API key): crt.sh, CertSpotter, Wayback Machine, HackerTarget,
+//!                        RapidDNS, AlienVault OTX, Urlscan.io, CommonCrawl, DNSdumpster,
+//!                        Anubis, BufferOver, Robtex, DNSRepo, and 30+ more.
+//! Sources (API key):   VirusTotal, SecurityTrails, Shodan, Censys, BinaryEdge,
+//!                        FullHunt, GitHub, Chaos, Bevigil, FOFA, Hunter.io, Netlas,
+//!                        ZoomEye, C99, Quake, ThreatBook, IntelX, LeakIX, WhoisXML,
+//!                        and 15+ more.
 //!
 //! Every confirmed target is emitted via `input.emit_target()` immediately
 //! so the port scanner can start while subdomain discovery is still running.
 
-extern crate self as reqwest;
-pub use upstream_reqwest::{header, redirect, Client, Method, Proxy, Request, Response, StatusCode, Url};
+pub mod dedup;
+pub mod sources;
+pub mod wildcard;
 
-mod alienvault;
-mod bevigil;
-mod binaryedge;
 mod bruteforce;
-mod c99;
-mod censys;
-mod certspotter;
-mod chaos;
-mod commoncrawl;
-mod ct;
-mod dnsdumpster;
-mod fofa;
-mod fullhunt;
-mod github;
-mod hackertarget;
-mod hunter;
-mod netlas;
 mod permutations;
-mod quake;
-mod rapiddns;
-mod securitytrails;
-mod shodan;
-mod threatbook;
-mod urlscan;
-mod virustotal;
-mod wayback;
-mod zoomeye;
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use async_trait::async_trait;
-use gossan_core::{
-    build_client, send_with_backoff, Config, HostRateLimiter, ScanInput, ScanOutput, Scanner,
-    Target,
-};
-use hickory_resolver::{
-    config::{NameServerConfigGroup, ResolverConfig, ResolverOpts},
-    TokioAsyncResolver,
-};
+use gossan_core::{Config, ScanInput, Scanner, Target};
 use secfinding::{Evidence, Finding, Severity};
+use tokio::sync::Mutex;
 
+use crate::dedup::normalize_domain;
+use crate::sources::{all_sources, SubdomainSource};
+use crate::wildcard::detect_wildcards;
+
+/// Downstream emitter wrapper — cloneable so it can be moved into spawned tasks.
+#[derive(Clone)]
+struct Emitter {
+    live_tx: tokio::sync::mpsc::UnboundedSender<Finding>,
+    target_tx: tokio::sync::mpsc::UnboundedSender<Target>,
+}
+
+impl Emitter {
+    fn emit_target(&self, t: Target) {
+        let _ = self.target_tx.send(t);
+    }
+    fn emit_finding(&self, f: Finding) {
+        let _ = self.live_tx.send(f);
+    }
+}
+
+impl From<&ScanInput> for Emitter {
+    fn from(input: &ScanInput) -> Self {
+        Self {
+            live_tx: input.live_tx.clone(),
+            target_tx: input.target_tx.clone(),
+        }
+    }
+}
+
+/// Multi-source subdomain enumeration and brute-force scanner.
 pub struct SubdomainScanner;
 
 #[async_trait]
@@ -72,203 +88,177 @@ impl Scanner for SubdomainScanner {
         matches!(target, Target::Domain(_))
     }
 
-    async fn run(&self, input: ScanInput, config: &Config) -> anyhow::Result<ScanOutput> {
-        let mut out = ScanOutput::empty();
-        // Build one HTTP client, shared across all passive sources for this domain
-        let client = build_client(config, true)?;
-        let passive_rate_limiter = HostRateLimiter::new(config.rate_limit);
+    async fn run(&self, input: ScanInput, config: &Config) -> anyhow::Result<()> {
+        let client = gossan_core::ScanClient::from_config(config, Arc::clone(&input.resolver))?;
+        let sources = Arc::new(all_sources());
+        let emitter = Emitter::from(&input);
 
-        for target in &input.targets {
+        // Drain all targets from the channel
+        let mut all_targets = Vec::new();
+        {
+            let mut rx = input.target_rx.lock().await;
+            while let Ok(t) = rx.try_recv() {
+                all_targets.push(t);
+            }
+        }
+
+        for target in &all_targets {
             let Target::Domain(d) = target else { continue };
-            tracing::info!(domain = %d.domain, "subdomain scan — 26 sources");
+            tracing::info!(domain = %d.domain, sources = sources.len(), "subdomain scan");
 
-            let has_wildcard = detect_wildcard(&d.domain, config).await;
-            if has_wildcard {
-                tracing::warn!(domain = %d.domain, "wildcard DNS — bruteforce disabled");
+            let wildcard_ips = detect_wildcards(&d.domain, &input.resolver, 5).await;
+            if !wildcard_ips.is_empty() {
+                tracing::warn!(domain = %d.domain, ips = ?wildcard_ips, "wildcard DNS detected");
             }
 
-            // ── All passive sources + bruteforce in parallel ─────────────────
-            let (ct, cs, wb, ht, rd, av, us, cc, dd, vt, st, sd, cn, be, fh, gh, ch, bv, ff, hu, nl, ze, c9, qk, tb, brute) = tokio::join!(
-                ct::query(&d.domain, config, &client, &passive_rate_limiter),
-                certspotter::query(&d.domain, config, &client, &passive_rate_limiter),
-                wayback::query(&d.domain, config, &client, &passive_rate_limiter),
-                hackertarget::query(&d.domain, config, &client, &passive_rate_limiter),
-                rapiddns::query(&d.domain, config, &client, &passive_rate_limiter),
-                alienvault::query(&d.domain, config, &client, &passive_rate_limiter),
-                urlscan::query(&d.domain, config, &client, &passive_rate_limiter),
-                commoncrawl::query(&d.domain, config, &client, &passive_rate_limiter),
-                dnsdumpster::query(&d.domain, config, &client, &passive_rate_limiter),
-                virustotal::query(&d.domain, config, &client, &passive_rate_limiter),
-                securitytrails::query(&d.domain, config, &client, &passive_rate_limiter),
-                shodan::query(&d.domain, config, &client, &passive_rate_limiter),
-                censys::query(&d.domain, config, &client, &passive_rate_limiter),
-                binaryedge::query(&d.domain, config, &client, &passive_rate_limiter),
-                fullhunt::query(&d.domain, config, &client, &passive_rate_limiter),
-                github::query(&d.domain, config, &client, &passive_rate_limiter),
-                chaos::query(&d.domain, config, &client, &passive_rate_limiter),
-                bevigil::query(&d.domain, config, &client, &passive_rate_limiter),
-                fofa::query(&d.domain, config, &client, &passive_rate_limiter),
-                hunter::query(&d.domain, config, &client, &passive_rate_limiter),
-                netlas::query(&d.domain, config, &client, &passive_rate_limiter),
-                zoomeye::query(&d.domain, config, &client, &passive_rate_limiter),
-                c99::query(&d.domain, config, &client, &passive_rate_limiter),
-                quake::query(&d.domain, config, &client, &passive_rate_limiter),
-                threatbook::query(&d.domain, config, &client, &passive_rate_limiter),
-                async {
-                    if has_wildcard {
-                        Ok(vec![])
-                    } else {
-                        bruteforce::scan(&d.domain, config, input.target_tx.clone()).await
+            let seen = Arc::new(Mutex::new(HashSet::<String>::new()));
+            let mut tasks = Vec::new();
+
+            // Spawn all passive sources
+            for i in 0..sources.len() {
+                let sources = Arc::clone(&sources);
+                let domain = d.domain.clone();
+                let client = client.clone();
+                let config = config.clone();
+                let emitter = emitter.clone();
+                let seen = Arc::clone(&seen);
+                let limiter = sources[i].rate_limit().build_limiter();
+                let source_name = sources[i].name();
+                let discovery = sources[i].discovery_source();
+
+                tasks.push(tokio::spawn(async move {
+                    match sources[i].query(&domain, &config, &client, &limiter).await {
+                        Ok(targets) => {
+                            for mut t in targets {
+                                // Rewrite discovery source to the canonical one for this source
+                                if let Target::Domain(ref mut dt) = t {
+                                    dt.source = discovery.clone();
+                                }
+                                if let Some(dom) = t.domain() {
+                                    if let Some(norm) = normalize_domain(dom) {
+                                        if seen.lock().await.insert(norm) {
+                                            emitter.emit_target(t);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            tracing::warn!(source = source_name, domain, err = %err, "subdomain source error");
+                            let severity = if config.api_keys.contains_key(source_name) {
+                                Severity::High
+                            } else {
+                                Severity::Medium
+                            };
+                            if let Some(finding) = Finding::builder("subdomain", &domain, severity)
+                                .title(format!("Subdomain source failed: {source_name}"))
+                                .detail(format!(
+                                    "Passive source {source_name} failed while enumerating {domain}. \
+                                     Fix: inspect connectivity, credentials, and upstream throttling. Error: {err}"
+                                ))
+                                .kind(secfinding::FindingKind::Other)
+                                .tag("subdomain")
+                                .tag("source-error")
+                                .evidence(Evidence::Raw(err.to_string().into()))
+                                .build_or_log()
+                            {
+                                emitter.emit_finding(finding);
+                            }
+                        }
                     }
-                },
-            );
-
-            for t in take_targets("ct", &d.domain, &mut out, &input, ct) {
-                emit_and_push(&input, &mut out, t);
-            }
-            for t in take_targets("certspotter", &d.domain, &mut out, &input, cs) {
-                emit_and_push(&input, &mut out, t);
-            }
-            for t in take_targets("wayback", &d.domain, &mut out, &input, wb) {
-                emit_and_push(&input, &mut out, t);
-            }
-            for t in take_targets("hackertarget", &d.domain, &mut out, &input, ht) {
-                emit_and_push(&input, &mut out, t);
-            }
-            for t in take_targets("rapiddns", &d.domain, &mut out, &input, rd) {
-                emit_and_push(&input, &mut out, t);
-            }
-            for t in take_targets("alienvault", &d.domain, &mut out, &input, av) {
-                emit_and_push(&input, &mut out, t);
-            }
-            for t in take_targets("urlscan", &d.domain, &mut out, &input, us) {
-                emit_and_push(&input, &mut out, t);
-            }
-            for t in take_targets("commoncrawl", &d.domain, &mut out, &input, cc) {
-                emit_and_push(&input, &mut out, t);
-            }
-            for t in take_targets("dnsdumpster", &d.domain, &mut out, &input, dd) {
-                emit_and_push(&input, &mut out, t);
-            }
-            for t in take_targets("virustotal", &d.domain, &mut out, &input, vt) {
-                emit_and_push(&input, &mut out, t);
-            }
-            for t in take_targets("securitytrails", &d.domain, &mut out, &input, st) {
-                emit_and_push(&input, &mut out, t);
-            }
-            for t in take_targets("shodan", &d.domain, &mut out, &input, sd) {
-                emit_and_push(&input, &mut out, t);
-            }
-            for t in take_targets("censys", &d.domain, &mut out, &input, cn) {
-                emit_and_push(&input, &mut out, t);
-            }
-            for t in take_targets("binaryedge", &d.domain, &mut out, &input, be) {
-                emit_and_push(&input, &mut out, t);
-            }
-            for t in take_targets("fullhunt", &d.domain, &mut out, &input, fh) {
-                emit_and_push(&input, &mut out, t);
-            }
-            for t in take_targets("github", &d.domain, &mut out, &input, gh) {
-                emit_and_push(&input, &mut out, t);
-            }
-            for t in take_targets("chaos", &d.domain, &mut out, &input, ch) {
-                emit_and_push(&input, &mut out, t);
-            }
-            for t in take_targets("bevigil", &d.domain, &mut out, &input, bv) {
-                emit_and_push(&input, &mut out, t);
-            }
-            for t in take_targets("fofa", &d.domain, &mut out, &input, ff) {
-                emit_and_push(&input, &mut out, t);
-            }
-            for t in take_targets("hunter", &d.domain, &mut out, &input, hu) {
-                emit_and_push(&input, &mut out, t);
-            }
-            for t in take_targets("netlas", &d.domain, &mut out, &input, nl) {
-                emit_and_push(&input, &mut out, t);
-            }
-            for t in take_targets("zoomeye", &d.domain, &mut out, &input, ze) {
-                emit_and_push(&input, &mut out, t);
-            }
-            for t in take_targets("c99", &d.domain, &mut out, &input, c9) {
-                emit_and_push(&input, &mut out, t);
-            }
-            for t in take_targets("quake", &d.domain, &mut out, &input, qk) {
-                emit_and_push(&input, &mut out, t);
-            }
-            for t in take_targets("threatbook", &d.domain, &mut out, &input, tb) {
-                emit_and_push(&input, &mut out, t);
-            }
-            for t in take_targets("bruteforce", &d.domain, &mut out, &input, brute) {
-                /* bruteforce already emits via target_tx */
-                out.targets.push(t);
+                }));
             }
 
-            // ── Deduplicate before permutation ───────────────────────────────
-            let mut seen: HashSet<String> = HashSet::new();
-            out.targets.retain(|t| {
-                t.domain()
-                    .map(|d| seen.insert(d.to_string()))
-                    .unwrap_or(true)
-            });
+            // Spawn bruteforce with wildcard filtering
+            let domain_bf = d.domain.clone();
+            let config_bf = config.clone();
+            let resolver_bf = Arc::clone(&input.resolver);
+            let emitter_bf = emitter.clone();
+            let seen_bf = Arc::clone(&seen);
+            let wildcard_ips_bf = wildcard_ips.clone();
+            tasks.push(tokio::spawn(async move {
+                match bruteforce::scan(
+                    &domain_bf,
+                    &config_bf,
+                    Some(emitter_bf.target_tx.clone()),
+                    resolver_bf,
+                    Some(&wildcard_ips_bf),
+                )
+                .await
+                {
+                    Ok(targets) => {
+                        for mut t in targets {
+                            if let Target::Domain(ref mut dt) = t {
+                                dt.source = gossan_core::DiscoverySource::DnsBruteforce;
+                            }
+                            if let Some(dom) = t.domain() {
+                                if let Some(norm) = normalize_domain(dom) {
+                                    if seen_bf.lock().await.insert(norm) {
+                                        emitter_bf.emit_target(t);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        tracing::warn!(source = "bruteforce", domain = domain_bf, err = %err, "bruteforce error");
+                    }
+                }
+            }));
 
-            // ── Permutation expansion ─────────────────────────────────────────
-            match permutations::expand(&out.targets, &d.domain, config).await {
+            // Wait for all tasks; failure isolation is automatic because each task is independent.
+            for task in tasks {
+                let _ = task.await;
+            }
+
+            // Collect currently seen domains for permutation input
+            let current_seen: Vec<Target> = {
+                let locked = seen.lock().await;
+                locked
+                    .iter()
+                    .map(|dom| {
+                        Target::Domain(gossan_core::DomainTarget {
+                            domain: dom.clone(),
+                            source: gossan_core::DiscoverySource::PassiveDns,
+                        })
+                    })
+                    .collect()
+            };
+
+            // Permutation expansion with wildcard-aware resolver
+            match permutations::expand(
+                &current_seen,
+                &d.domain,
+                config,
+                &wildcard_ips,
+                &input.resolver,
+            )
+            .await
+            {
                 Ok(perms) => {
-                    for t in perms {
-                        emit_and_push(&input, &mut out, t);
+                    for mut t in perms {
+                        if let Target::Domain(ref mut dt) = t {
+                            dt.source = gossan_core::DiscoverySource::DnsBruteforce;
+                        }
+                        if let Some(dom) = t.domain() {
+                            if let Some(norm) = normalize_domain(dom) {
+                                if seen.lock().await.insert(norm) {
+                                    emitter.emit_target(t);
+                                }
+                            }
+                        }
                     }
                 }
                 Err(e) => tracing::warn!(err = %e, "permutation expansion error"),
             }
         }
 
-        // ── Final deduplication ───────────────────────────────────────────────
-        let mut seen = HashSet::new();
-        out.targets.retain(|t| {
-            t.domain()
-                .map(|d| seen.insert(d.to_string()))
-                .unwrap_or(true)
-        });
-
-        tracing::info!(found = out.targets.len(), "subdomain scan complete");
-        Ok(out)
+        tracing::info!("subdomain scan complete");
+        Ok(())
     }
 }
 
-/// Emit a target via the streaming channel and push to output.
-fn emit_and_push(input: &ScanInput, out: &mut ScanOutput, t: Target) {
-    input.emit_target(t.clone());
-    out.targets.push(t);
-}
-
-fn take_targets(
-    source: &'static str,
-    domain: &str,
-    out: &mut ScanOutput,
-    input: &ScanInput,
-    result: anyhow::Result<Vec<Target>>,
-) -> Vec<Target> {
-    match result {
-        Ok(targets) => targets,
-        Err(err) => {
-            tracing::warn!(source, domain, err = %err, "subdomain source error");
-            let finding = Finding::builder("subdomain", domain, Severity::Low)
-                .title(format!("Subdomain source failed: {source}"))
-                .detail(format!(
-                    "Passive source {source} failed while enumerating {domain}. Fix: inspect connectivity, credentials, and upstream throttling. Error: {err}"
-                ))
-                .tag("subdomain")
-                .tag("source-error")
-                .evidence(Evidence::Raw(err.to_string()))
-                .build()
-                .expect("finding builder: required fields are set");
-            input.emit(finding.clone());
-            out.findings.push(finding);
-            Vec::new()
-        }
-    }
-}
-
+/// Returns `true` if `candidate` is a direct subdomain of `domain`.
 pub(crate) fn is_subdomain_of(candidate: &str, domain: &str) -> bool {
     let candidate = candidate.trim_end_matches('.');
     let domain = domain.trim_end_matches('.');
@@ -277,60 +267,10 @@ pub(crate) fn is_subdomain_of(candidate: &str, domain: &str) -> bool {
         .is_some_and(|prefix| prefix.ends_with('.'))
 }
 
-pub(crate) async fn get_text(
-    client: &reqwest::Client,
-    url: &str,
-    rate_limiter: &HostRateLimiter,
-) -> anyhow::Result<String> {
-    send_with_backoff(url, Some(rate_limiter), || async {
-        Ok::<reqwest::Response, anyhow::Error>(client.get(url).send().await?)
-    })
-    .await?
-    .text()
-    .await
-    .map_err(Into::into)
-}
-
-pub(crate) async fn get_json<T: serde::de::DeserializeOwned>(
-    client: &reqwest::Client,
-    url: &str,
-    rate_limiter: &HostRateLimiter,
-) -> anyhow::Result<T> {
-    send_with_backoff(url, Some(rate_limiter), || async {
-        Ok::<reqwest::Response, anyhow::Error>(client.get(url).send().await?)
-    })
-    .await?
-    .json()
-    .await
-    .map_err(Into::into)
-}
-
-/// Returns true if the domain has a wildcard DNS record.
-async fn detect_wildcard(domain: &str, config: &Config) -> bool {
-    let Ok(resolver) = build_resolver(config) else {
-        return false;
-    };
-    let probe = format!("this-label-should-not-exist-gossan-probe.{}", domain);
-    resolver.lookup_ip(probe.as_str()).await.is_ok()
-}
-
-pub fn build_resolver(config: &Config) -> anyhow::Result<TokioAsyncResolver> {
-    let servers = if config.resolvers.is_empty() {
-        NameServerConfigGroup::cloudflare()
-    } else {
-        NameServerConfigGroup::from_ips_clear(&config.resolvers, 53, true)
-    };
-    let rc = ResolverConfig::from_parts(None, vec![], servers);
-    let mut opts = ResolverOpts::default();
-    opts.timeout = config.timeout();
-    opts.attempts = 1;
-    Ok(TokioAsyncResolver::tokio(rc, opts))
-}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gossan_core::{Config, DiscoverySource, DomainTarget, ScanOutput, Scanner};
-    use tokio::sync::mpsc;
+    use gossan_core::{DiscoverySource, DomainTarget};
 
     fn domain_target(domain: &str) -> Target {
         Target::Domain(DomainTarget {
@@ -350,47 +290,9 @@ mod tests {
     }
 
     #[test]
-    fn emit_and_push_streams_target_and_adds_to_output() {
-        let (target_tx, mut target_rx) = mpsc::unbounded_channel::<Target>();
-        let input = ScanInput {
-            seed: "example.com".into(),
-            targets: vec![],
-            live_tx: None,
-            target_tx: Some(target_tx),
-        };
-        let mut out = ScanOutput::empty();
-        let target = domain_target("api.example.com");
-
-        emit_and_push(&input, &mut out, target.clone());
-
-        assert_eq!(out.targets.len(), 1);
-        assert_eq!(out.targets[0].domain(), Some("api.example.com"));
-        assert_eq!(
-            target_rx.try_recv().unwrap().domain(),
-            Some("api.example.com")
-        );
-    }
-
-    #[test]
-    fn build_resolver_uses_custom_resolvers_when_supplied() {
-        let config = Config {
-            resolvers: vec!["9.9.9.9".parse().unwrap()],
-            ..Config::default()
-        };
-        assert!(build_resolver(&config).is_ok());
-    }
-
-    #[test]
     fn is_subdomain_of_requires_label_boundary() {
         assert!(is_subdomain_of("api.example.com", "example.com"));
         assert!(!is_subdomain_of("badexample.com", "example.com"));
         assert!(!is_subdomain_of("example.com", "example.com"));
-    }
-
-    #[tokio::test]
-    async fn test_detect_wildcard() {
-        let config = Config::default();
-        // example.com should not have a wildcard
-        assert!(!detect_wildcard("example.com", &config).await);
     }
 }

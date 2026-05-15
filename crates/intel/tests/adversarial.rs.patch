@@ -1,0 +1,16 @@
+--- web/gossan/crates/intel/tests/adversarial.rs
++++ web/gossan/crates/intel/tests/adversarial.rs
+@@ -285,12 +285,13 @@
+     writeln!(jsonl_file, "invalid json").unwrap();
+     writeln!(jsonl_file, "{{\"ip\": \"1.1.1.1\", \"port\": 80, \"protocol\": \"tcp\"}}").unwrap(); // valid
+     writeln!(jsonl_file, "{{\"ip\":").unwrap(); // invalid
+     jsonl_file.flush().unwrap();
+     let _ = jsonl_file.as_file().sync_all();
+     
+-    
+     let count = Ingester::ingest_jsonl(&mut db, jsonl_file.path()).unwrap();
++    
+     assert_eq!(count, 1);
+     
+     let res = db.query_by_ip("1.1.1.1").unwrap();
+     assert_eq!(res.len(), 1);

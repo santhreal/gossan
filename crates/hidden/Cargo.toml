@@ -2,23 +2,39 @@
 name = "gossan-hidden"
 version.workspace = true
 edition.workspace = true
-authors = ["CORUM COLLECTIVE LLC <contact@santh.io>"]
+authors = ["Santh Project <contact@santh.dev>"]
 license.workspace = true
-homepage = "https://santh.io"
-repository.workspace = true
-description = "Hidden endpoint and misconfiguration scanner for gossan (CORS, SSRF, JWT, Swagger, cache deception) — part of the Santh security research ecosystem"
+homepage = "https://santh.dev"
+repository = "https://github.com/santhsecurity/gossan"
+description = "Hidden endpoint and misconfiguration scanner for gossan (CORS, SSRF, JWT, Swagger, cache deception) — part of the security research ecosystem"
+readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+
+[package.metadata.santh]
+status = "alpha"
 [dependencies]
-gossan-core = { version = "0.2", path = "../core" }
+gossan-core = { version = "0.3", path = "../core" }
 async-trait = { workspace = true }
 serde       = { workspace = true }
 serde_json  = { workspace = true }
 anyhow      = { workspace = true }
 tracing     = { workspace = true }
 tokio       = { workspace = true }
-upstream_reqwest = { workspace = true }
+reqwest = { workspace = true }
 futures     = { workspace = true }
-regex       = { workspace = true }
 secfinding  = { workspace = true }
+toml        = { workspace = true }
+flate2 = "1.0"
+urlencoding = "2"
+wafrift-detect = { workspace = true }
+
+[dev-dependencies]
+wiremock = {workspace = true}
+url = { workspace = true }
+proptest = {workspace = true}
+tempfile = "3"
+
+[lints]
+workspace = true

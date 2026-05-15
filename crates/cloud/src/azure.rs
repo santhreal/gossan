@@ -61,13 +61,17 @@ fn builtin_azure_containers() -> &'static Vec<AzureContainer> {
 fn container_names() -> &'static [AzureContainer] {
     builtin_azure_containers()
 }
-
+/// Azure Blob Storage container enumeration.
 pub struct AzureProvider;
 
 #[async_trait]
 impl CloudProvider for AzureProvider {
     fn name(&self) -> &'static str {
         "azure"
+    }
+
+    fn endpoint(&self, name: &str) -> String {
+        format!("https://{}.blob.core.windows.net/", name)
     }
 
     async fn probe(
@@ -86,15 +90,13 @@ impl CloudProvider for AzureProvider {
             return Ok(vec![]);
         }
 
+        let base_endpoint = self.endpoint(&account);
         let mut findings = Vec::new();
         let mut account_confirmed = false;
 
         for container in container_names() {
             let container_name = &container.name;
-            let url = format!(
-                "https://{}.blob.core.windows.net/{}/",
-                account, container_name
-            );
+            let url = format!("{}{}/", base_endpoint, container_name);
             let resp = match client.get(&url).send().await {
                 Ok(r) => r,
                 Err(_) => continue,
@@ -103,10 +105,9 @@ impl CloudProvider for AzureProvider {
 
             match status {
                 200 => {
-                    let body = resp.text().await.unwrap_or_default();
+                    let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
                     let is_web = container_name == "$web";
-                    findings.push(
-                        crate::finding_builder(target, Severity::Critical,
+                    gossan_core::try_push_finding(crate::finding_builder(target, Severity::Critical,
                             format!("Azure Blob container public: {}/{}", account, container_name),
                             if is_web {
                                 format!(
@@ -123,12 +124,10 @@ impl CloudProvider for AzureProvider {
                             })
                         .evidence(Evidence::HttpResponse {
                             status,
-                            headers: vec![("url".into(), url)],
-                            body_excerpt: Some(body.chars().take(300).collect()),
+                            headers: vec![("url".into(), url.clone().into())],
+                            body_excerpt: Some(body.chars().take(300).collect::<String>().into()),
                         })
-                        .tag("azure").tag("cloud").tag("exposure")
-                        .build().expect("finding builder: required fields are set"),
-                    );
+                        .tag("azure").tag("cloud").tag("exposure"), &mut findings);
                     return Ok(findings); // one public container is enough to report
                 }
                 403 | 404 if !account_confirmed => {
@@ -136,8 +135,7 @@ impl CloudProvider for AzureProvider {
                     // still confirms the account exists
                     if status == 403 {
                         account_confirmed = true;
-                        findings.push(
-                            crate::finding_builder(target, Severity::Low,
+                        gossan_core::try_push_finding(crate::finding_builder(target, Severity::Low,
                                 format!("Azure storage account exists: {}", account),
                                 format!(
                                     "https://{}.blob.core.windows.net exists — account name confirmed \
@@ -146,12 +144,10 @@ impl CloudProvider for AzureProvider {
                                 ))
                             .evidence(Evidence::HttpResponse {
                                 status,
-                                headers: vec![("url".into(), url)],
+                                headers: vec![("url".into(), url.clone().into())],
                                 body_excerpt: None,
                             })
-                            .tag("azure").tag("cloud")
-                            .build().expect("finding builder: required fields are set"),
-                        );
+                            .tag("azure").tag("cloud"), &mut findings);
                     }
                 }
                 _ => {}

@@ -8,7 +8,7 @@
 //! unprotected internal services — a common path to full infrastructure compromise.
 
 use gossan_core::Target;
-use secfinding::{Finding, Severity};
+use secfinding::{Finding, FindingKind, Severity};
 
 /// SSRF patterns we look for in existing finding titles.
 const SSRF_SIGNALS: &[&str] = &[
@@ -45,14 +45,14 @@ impl super::super::CorrelationRule for SsrfInternalRule {
 
     fn check(&self, findings: &[Finding], _targets: &[Target]) -> Vec<Finding> {
         let has_ssrf = findings.iter().any(|f| {
-            let lower = f.title.to_lowercase();
+            let lower = f.title().to_lowercase();
             SSRF_SIGNALS.iter().any(|sig| lower.contains(sig))
         });
 
         let internal_services: Vec<&Finding> = findings
             .iter()
             .filter(|f| {
-                let lower = f.title.to_lowercase();
+                let lower = f.title().to_lowercase();
                 INTERNAL_SIGNALS.iter().any(|sig| lower.contains(sig))
             })
             .collect();
@@ -63,7 +63,7 @@ impl super::super::CorrelationRule for SsrfInternalRule {
 
         let service_names: Vec<String> = internal_services
             .iter()
-            .map(|f| f.title.clone())
+            .map(|f| f.title().to_string())
             .take(5)
             .collect();
 
@@ -71,7 +71,7 @@ impl super::super::CorrelationRule for SsrfInternalRule {
             "correlation",
             internal_services
                 .first()
-                .map(|f| f.target.as_str())
+                .map(|f| f.target())
                 .unwrap_or("unknown"),
             Severity::Critical,
         )
@@ -84,13 +84,13 @@ impl super::super::CorrelationRule for SsrfInternalRule {
             internal_services.len(),
             service_names.join(", ")
         ))
-        .tag("chain")
+        .kind(FindingKind::Vulnerability)
+                        .tag("chain")
         .tag("ssrf")
         .tag("internal")
-        .build()
-        .expect("finding builder: required fields are set");
+        .build_or_log();
 
-        vec![chain]
+        chain.into_iter().collect()
     }
 }
 
@@ -102,8 +102,7 @@ mod tests {
     fn finding(scanner: &str, target: &str, title: &str) -> Finding {
         Finding::builder(scanner, target, Severity::High)
             .title(title)
-            .build()
-            .expect("finding builder: required fields are set")
+            .build().expect("test finding")
     }
 
     #[test]
@@ -115,7 +114,7 @@ mod tests {
         ];
         let chains = rule.check(&findings, &[]);
         assert_eq!(chains.len(), 1);
-        assert!(chains[0].title.contains("SSRF"));
+        assert!(chains[0].title().contains("SSRF"));
     }
 
     #[test]

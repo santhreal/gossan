@@ -1,3 +1,21 @@
+#![forbid(unsafe_code)]
+// pedantic moved to workspace [lints.clippy] in root Cargo.toml
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::panic
+    )
+)]
+#![allow(
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::missing_errors_doc,
+)]
+
 //! Core types and traits for the Gossan attack surface scanner.
 //!
 //! This crate defines the foundational pipeline architecture:
@@ -10,9 +28,8 @@
 //!
 //! All 14 scanner crates depend on `gossan-core` for these shared types.
 
-extern crate self as reqwest;
-pub use upstream_reqwest::{header, redirect, Client, Method, Proxy, Request, Response, StatusCode, Url};
 
+pub mod accuracy;
 pub mod config;
 pub mod error;
 pub mod finding;
@@ -20,16 +37,21 @@ pub mod net;
 pub mod ratelimit;
 pub mod scanner;
 pub mod target;
+pub mod transport;
 
+pub use accuracy::{ResponseBaseline, calculate_fuzzy_hash, generate_dom_fingerprint};
 pub use config::{
     ApiKeys, Config, CrawlConfig, ModuleConfig, OutputConfig, OutputFormat, PortMode,
 };
 pub use error::Error;
-pub use finding::{make_finding, Evidence, Finding, FindingExt, Severity};
+pub use finding::{make_finding, try_push_finding, Evidence, Finding, FindingKind, Severity};
 pub use net::connect_tcp;
-pub use ratelimit::{build_client, get_with_backoff, send_with_backoff, HostRateLimiter};
-pub use scanner::{ScanInput, ScanOutput, Scanner};
+pub use ratelimit::{build_client, get_with_backoff, read_response_limited, send_with_backoff, HostRateLimiter};
+pub use scanner::{ScanInput, Scanner};
 pub use target::{
     DiscoveredForm, DiscoveredParam, DiscoverySource, DomainTarget, HostTarget, ParamLocation,
     ParamSource, Protocol, ServiceTarget, Target, TechCategory, Technology, WebAssetTarget,
+    NetworkTarget,
 };
+pub use transport::ScanClient;
+pub use reqwest;

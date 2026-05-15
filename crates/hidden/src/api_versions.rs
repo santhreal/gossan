@@ -92,8 +92,8 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
             continue;
         }
 
-        let body = resp.text().await.unwrap_or_default();
-        let body_excerpt: String = body.chars().take(200).collect();
+        let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
+        let body_excerpt: String = body.chars().take(200).collect::<String>().into();
 
         // Must look like an API response, not a generic error page
         let looks_like_api = looks_like_api_response(&body_excerpt, status);
@@ -116,8 +116,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
             .unwrap_or("/v0");
         let (first_path, first_status, first_body) = &found_versions[0];
 
-        findings.push(
-            crate::finding_builder(
+        gossan_core::try_push_finding(crate::exposure_finding(
                 target,
                 Severity::High,
                 format!(
@@ -135,8 +134,8 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
             )
             .evidence(Evidence::HttpResponse {
                 status: *first_status,
-                headers: vec![("active-path".into(), first_path.clone())],
-                body_excerpt: Some(first_body.clone()),
+                headers: vec![("active-path".into(), first_path.clone().into())],
+                body_excerpt: Some(first_body.clone().into()),
             })
             .tag("api-version")
             .tag("exposure")
@@ -146,10 +145,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                  curl -s '{base}{oldest}/admin'  # admin endpoints sometimes unprotected\n\
                  # Compare responses with current version:\n\
                  diff <(curl -s '{base}/v1/users') <(curl -s '{base}{oldest}/users')"
-            ))
-            .build()
-            .expect("finding builder: required fields are set"),
-        );
+            )), &mut findings);
     }
 
     // Shadow / non-production endpoint detection
@@ -164,14 +160,13 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
             continue;
         }
 
-        let body = resp.text().await.unwrap_or_default();
-        let excerpt: String = body.chars().take(200).collect();
+        let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
+        let excerpt: String = body.chars().take(200).collect::<String>().into();
 
         let is_interesting = is_interesting_shadow_response(&excerpt, status);
 
         if is_interesting {
-            findings.push(
-                crate::finding_builder(
+            gossan_core::try_push_finding(crate::exposure_finding(
                     target,
                     *severity,
                     format!("{} exposed: {}", description, path),
@@ -186,7 +181,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                 .evidence(Evidence::HttpResponse {
                     status,
                     headers: vec![],
-                    body_excerpt: Some(excerpt),
+                    body_excerpt: Some((excerpt).into()),
                 })
                 .tag("api-version")
                 .tag("shadow-api")
@@ -194,10 +189,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                 .exploit_hint(format!(
                     "# Explore shadow environment:\n\
                      ffuf -u '{base}{path}/FUZZ' -w api_wordlist.txt -mc 200,401,403"
-                ))
-                .build()
-                .expect("finding builder: required fields are set"),
-            );
+                )), &mut findings);
         }
     }
 

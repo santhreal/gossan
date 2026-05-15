@@ -1,0 +1,38 @@
+[Unit]
+Description=Gossan Fleet Master (distributed scan coordinator)
+Documentation=https://github.com/santhsecurity/gossan
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+ExecStart=/usr/local/bin/gossan fleet-master --listen 0.0.0.0:50051
+Restart=on-failure
+RestartSec=5s
+
+# Hardening
+DynamicUser=true
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+
+# Logging — emit structured JSON for journald → loki / cloudwatch.
+Environment=GOSSAN_LOG_JSON=1
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

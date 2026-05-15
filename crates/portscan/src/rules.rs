@@ -553,6 +553,8 @@ detail = "Test detail."
         let services = parse_risky_services(toml).unwrap();
         assert_eq!(services.len(), 1);
         assert_eq!(services[0].port, 8080);
+        // `severity` is a public field on RiskyService, not an
+        // accessor method.
         assert_eq!(services[0].severity, Severity::High);
     }
 }

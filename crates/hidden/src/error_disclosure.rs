@@ -211,25 +211,22 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                 .find(|(k, _)| k.eq_ignore_ascii_case(header))
             {
                 if reported_patterns.insert(header) {
-                    findings.push(
-                        crate::finding_builder(target, *severity,
+                    gossan_core::try_push_finding(crate::info_finding(target, *severity,
                             format!("{} header present", name),
                             format!("Response to {} contains debug header {}: {}. \
                                      Debug infrastructure is active and leaking implementation details.",
                                      url, header, val.chars().take(80).collect::<String>()))
                         .evidence(Evidence::HttpResponse {
                             status,
-                            headers: vec![(header.to_string(), val.clone())],
+                            headers: vec![(header.to_string().into(), val.clone().into())],
                             body_excerpt: None,
                         })
-                        .tag("debug").tag("exposure").tag("headers")
-                        .build().expect("finding builder: required fields are set")
-                    );
+                        .tag("debug").tag("exposure").tag("headers"), &mut findings);
                 }
             }
         }
 
-        let body = resp.text().await.unwrap_or_default();
+        let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
 
         // SSTI: only flag 159401 if the trigger was actually a template probe
         let is_ssti_probe = suffix.contains("473*337");
@@ -246,7 +243,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                 let excerpt = body
                     .lines()
                     .find(|l| l.contains(pattern))
-                    .map(|l| l.trim().chars().take(200).collect::<String>())
+                    .map(|l| crate::path_sanitize::sanitize_excerpt(l.trim(), 200))
                     .unwrap_or_default();
 
                 let is_ssti = *pattern == SSTI_PRODUCT && is_ssti_probe;
@@ -260,15 +257,14 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                              internal paths, framework versions, and class names aid further attacks.", name, url)
                 };
 
-                findings.push(
-                    crate::finding_builder(target,
+                gossan_core::try_push_finding(crate::info_finding(target,
                         if is_ssti { Severity::Critical } else { *severity },
                         if is_ssti { "Server-Side Template Injection (SSTI) confirmed" } else { name },
                         detail)
                     .evidence(Evidence::HttpResponse {
                         status,
                         headers: vec![],
-                        body_excerpt: Some(excerpt),
+                        body_excerpt: Some((excerpt).into()),
                     })
                     .tag("error-disclosure").tag("debug").tag("exposure")
                     .tag(if is_ssti { "ssti" } else { "stack-trace" })
@@ -288,16 +284,14 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                             base, base, base, base, base)
                     } else {
                         String::new()
-                    })
-                    .build().expect("finding builder: required fields are set")
-                );
+                    }), &mut findings);
             }
         }
 
         // Stop after finding critical issues — don't keep probing
         if findings
             .iter()
-            .any(|f: &Finding| f.severity == Severity::Critical)
+            .any(|f: &Finding| f.severity() == Severity::Critical)
         {
             break;
         }

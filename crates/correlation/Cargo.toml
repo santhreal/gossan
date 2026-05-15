@@ -2,15 +2,43 @@
 name = "gossan-correlation"
 version.workspace = true
 edition.workspace = true
-authors = ["CORUM COLLECTIVE LLC <contact@santh.io>"]
+authors = ["Santh Project <contact@santh.dev>"]
 license.workspace = true
-homepage = "https://santh.io"
-repository.workspace = true
-description = "Cross-module finding correlation engine for gossan (attack chain detection) — part of the Santh security research ecosystem"
+homepage = "https://santh.dev"
+repository = "https://github.com/santhsecurity/gossan"
+description = "Cross-module finding correlation engine for gossan (attack chain detection) — part of the security research ecosystem"
+readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+
+[package.metadata.santh]
+status = "alpha"
 [dependencies]
-gossan-core = { version = "0.2", path = "../core" }
+gossan-core = { version = "0.3", path = "../core" }
+gossan-graph = { path = "../graph" }
 tracing     = { workspace = true }
 secfinding  = { workspace = true }
+idna        = "1"
+
+[dev-dependencies]
+proptest = "1.4"
+
+[[test]]
+name = "unit"
+path = "tests/unit/mod.rs"
+
+[[test]]
+name = "adversarial"
+path = "tests/adversarial/mod.rs"
+
+[[test]]
+name = "property"
+path = "tests/property/mod.rs"
+
+[[test]]
+name = "gap"
+path = "tests/gap/mod.rs"
+
+[lints]
+workspace = true

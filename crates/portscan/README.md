@@ -1,4 +1,4 @@
-> Part of the [Santh](https://santh.io) security research ecosystem.
+> Part of the [Santh](https://santh.dev) security research ecosystem.
 
 # gossan-portscan
 

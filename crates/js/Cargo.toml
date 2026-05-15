@@ -2,25 +2,63 @@
 name = "gossan-js"
 version.workspace = true
 edition.workspace = true
-authors = ["CORUM COLLECTIVE LLC <contact@santh.io>"]
+authors = ["Santh Project <contact@santh.dev>"]
 license.workspace = true
-homepage = "https://santh.io"
-repository.workspace = true
-description = "JavaScript analysis scanner for gossan (secret detection, prototype pollution, WASM inspection) — part of the Santh security research ecosystem"
+homepage = "https://santh.dev"
+repository = "https://github.com/santhsecurity/gossan"
+description = "JavaScript analysis scanner for gossan (secret detection, endpoint extraction, source maps, WASM inspection)"
+readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[package.metadata.santh]
+status = "alpha"
+
 [dependencies]
-gossan-core = { version = "0.2", path = "../core" }
+gossan-core = { version = "0.3", path = "../core" }
 async-trait = { workspace = true }
 anyhow      = { workspace = true }
 tracing     = { workspace = true }
 tokio       = { workspace = true }
-upstream_reqwest = { workspace = true }
+reqwest = { workspace = true }
 futures     = { workspace = true }
 regex       = "1"
 scraper     = "0.21"
 url         = { workspace = true }
+serde       = { workspace = true }
 serde_json  = { workspace = true }
 base64      = "0.22"
 secfinding  = { workspace = true }
+# CPU-only vendor slice. See crates/keyhog-lite/README.md for the
+# rationale and refresh process. Replaces the upstream
+# keyhog-core/scanner/verifier triple, which pulls wgpu + vyre +
+# vyre-driver-wgpu via path-deps and broke gossan's workspace
+# resolution.
+gossan-keyhog-lite = { path = "../keyhog-lite" }
+sha2        = { workspace = true }
+hex         = { workspace = true }
+
+# JS AST parsing
+oxc_parser = "0.126"
+oxc_ast = "0.126"
+oxc_allocator = "0.126"
+oxc_span = "0.126"
+
+# WASM disassembly
+wasmparser = "0.246"
+
+# Source maps
+sourcemap = "9"
+
+# Utilities
+lru = "0.14"
+governor = { workspace = true }
+toml = { workspace = true }
+nonzero_ext = { workspace = true }
+
+[dev-dependencies]
+wiremock = { workspace = true }
+tokio = { workspace = true }
+
+[lints]
+workspace = true

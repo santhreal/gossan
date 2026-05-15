@@ -11,41 +11,168 @@ use url::Url;
 /// How a target was discovered — preserved for auditing and deduplication.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum DiscoverySource {
+    /// Discovered via Seed.
     Seed,
+    /// Discovered via CertificateTransparency.
     CertificateTransparency,
+    /// Discovered via DnsBruteforce.
     DnsBruteforce,
+    /// Discovered via PassiveDns.
     PassiveDns,
+    /// Discovered via PortScan.
     PortScan,
+    /// Discovered via TechStack.
     TechStack,
+    /// Discovered via JsAnalysis.
     JsAnalysis,
+    /// Discovered via HiddenProbe.
     HiddenProbe,
     /// From authenticated crawling (link following, form discovery).
+    /// Discovered via Crawl.
     Crawl,
     // Passive sources (no API key required)
+    /// Discovered via RapidDns.
     RapidDns,
+    /// Discovered via AlienVault.
     AlienVault,
+    /// Discovered via UrlScan.
     UrlScan,
+    /// Discovered via CommonCrawl.
     CommonCrawl,
     // Passive sources (API key required)
+    /// Discovered via VirusTotal.
     VirusTotal,
+    /// Discovered via SecurityTrails.
     SecurityTrails,
+    /// Discovered via Shodan.
     Shodan,
+    /// Discovered via GitHub.
     GitHub,
+    /// Discovered via Censys.
     Censys,
+    /// Discovered via BinaryEdge.
     BinaryEdge,
+    /// Discovered via FullHunt.
     FullHunt,
+    /// Discovered via Chaos.
     Chaos,
+    /// Discovered via Bevigil.
     Bevigil,
+    /// Discovered via Fofa.
     Fofa,
+    /// Discovered via HunterIo.
     HunterIo,
+    /// Discovered via Netlas.
     Netlas,
+    /// Discovered via ZoomEye.
     ZoomEye,
+    /// Discovered via C99.
     C99,
+    /// Discovered via Quake.
     Quake,
+    /// Discovered via ThreatBook.
     ThreatBook,
+    /// Discovered via Anubis.
+    Anubis,
+    /// Discovered via Asn.
+    Asn,
+    /// Discovered via AsnLookup (Horizontal).
+    AsnLookup,
+    /// Discovered via ScmMapping (GitHub/GitLab).
+    ScmMapping,
     // Passive sources (no API key / scraping)
+    /// Discovered via DnsDumpster.
     DnsDumpster,
+    /// Discovered via CloudDiscovery.
+    CloudDiscovery,
+    /// Discovered via BufferOver.
+    BufferOver,
+    /// Discovered via Google CT.
+    GoogleCt,
+    /// Discovered via Facebook CT.
+    FacebookCt,
+    /// Discovered via Apple CT.
+    AppleCt,
+    /// Discovered via Cloudflare CT.
+    CloudflareCt,
+    /// Discovered via DigiCert CT.
+    DigiCertCt,
+    /// Discovered via Sectigo CT.
+    SectigoCt,
+    /// Discovered via IdenTrust CT.
+    IdenTrustCt,
+    /// Discovered via Entrust CT.
+    EntrustCt,
+    /// Discovered via GoDaddy CT.
+    GoDaddyCt,
+    /// Discovered via Amazon CT.
+    AmazonCt,
+    /// Discovered via PassiveTotal.
+    PassiveTotal,
+    /// Discovered via Spyse.
+    Spyse,
+    /// Discovered via Dnslytics.
+    Dnslytics,
+    /// Discovered via ThreatMiner.
+    ThreatMiner,
+    /// Discovered via PtrArchive.
+    PtrArchive,
+    /// Discovered via Riddler.
+    Riddler,
+    /// Discovered via SiteDossier.
+    SiteDossier,
+    /// Discovered via SonarSearch.
+    SonarSearch,
+    /// Discovered via Circl.
+    Circl,
+    /// Discovered via Mnemonic.
+    Mnemonic,
+    /// Discovered via FarsightDnsdb.
+    FarsightDnsdb,
+    /// Discovered via Sublist3r.
+    Sublist3r,
+    /// Discovered via Omnisint.
+    Omnisint,
+    /// Discovered via Digitorus.
+    Digitorus,
+    /// Discovered via Columbus.
+    Columbus,
+    /// Discovered via Crobat.
+    Crobat,
+    /// Discovered via ThreatCrowd.
+    ThreatCrowd,
+    /// Discovered via Rook.
+    Rook,
+    /// Discovered via Pugrecon.
+    Pugrecon,
+    /// Discovered via SubdomainCenter.
+    SubdomainCenter,
+    /// Discovered via Synapsint.
+    Synapsint,
+    /// Discovered via Jter.
+    Jter,
+    /// Discovered via Bing.
+    Bing,
+    /// Discovered via Baidu.
+    Baidu,
+    /// Discovered via DuckDuckGo.
+    DuckDuckGo,
+    /// Discovered via Yahoo.
+    Yahoo,
+    /// Discovered via Exalead.
+    Exalead,
+    /// Discovered via Ask.
+    Ask,
+    /// Discovered via GreyNoise.
+    GreyNoise,
+    /// Discovered via IpInfo.
+    IpInfo,
+    /// Discovered via ViewDns.
+    ViewDns,
+    /// Discovered via ZoneWalk.
+    ZoneWalk,
 }
 
 /// A discovered domain — the entry point for most scans.
@@ -55,6 +182,30 @@ pub struct DomainTarget {
     pub domain: String,
     /// How this domain was discovered.
     pub source: DiscoverySource,
+}
+
+/// A source control repository (GitHub, GitLab, etc.).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RepositoryTarget {
+    /// The canonical URL of the repository.
+    pub url: Url,
+    /// Which SM platform hosts it.
+    pub service: ScmService,
+    /// How this repository was discovered.
+    pub source: DiscoverySource,
+    /// Optional branch/ref to scan.
+    pub branch: Option<String>,
+}
+
+/// Supported Source Control Management platforms.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+#[non_exhaustive]
+pub enum ScmService {
+    /// GitHub.com or GitHub Enterprise.
+    GitHub,
+    /// GitLab.com or self-hosted GitLab.
+    GitLab,
 }
 
 /// A resolved host — an IP address with an optional reverse-DNS domain.
@@ -69,6 +220,7 @@ pub struct HostTarget {
 /// Transport layer protocol.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum Protocol {
     /// Transmission Control Protocol.
     Tcp,
@@ -92,14 +244,21 @@ pub struct ServiceTarget {
 }
 
 impl ServiceTarget {
-    /// Returns `true` if this service is likely HTTP/HTTPS based on port or banner.
+    /// Returns `true` if this service is likely HTTP/HTTPS based on banner or port.
+    ///
+    /// Banner detection is prioritized over port matching since it's more reliable.
     #[must_use]
     pub fn is_web(&self) -> bool {
-        matches!(self.port, 80 | 443 | 8080 | 8443 | 8000 | 8888)
-            || self
-                .banner
-                .as_deref()
-                .is_some_and(|b| b.starts_with("HTTP"))
+        // Banner check first — most reliable signal
+        self.banner
+            .as_deref()
+            .is_some_and(|b| b.starts_with("HTTP"))
+            || matches!(
+                self.port,
+                80 | 443 | 3000 | 3443 | 4443 | 4433 | 5000 | 5443
+                    | 7443 | 8000 | 8080 | 8443 | 8888
+                    | 9000 | 9090 | 9443 | 10443
+            )
     }
 
     /// Constructs the base URL for this service (e.g. `https://example.com:8443/`).
@@ -127,8 +286,11 @@ impl ServiceTarget {
 /// A detected technology fingerprint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Technology {
+    /// Canonical technology name.
     pub name: String,
+    /// Detected version string when the scanner can infer one.
     pub version: Option<String>,
+    /// High-level technology category.
     pub category: TechCategory,
     /// 0–100 confidence score.
     pub confidence: u8,
@@ -138,6 +300,7 @@ pub struct Technology {
 #[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum TechCategory {
     /// Content management system (WordPress, Drupal, etc.).
     Cms,
@@ -165,10 +328,15 @@ pub enum TechCategory {
 #[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebAssetTarget {
+    /// Canonical URL of the confirmed web asset.
     pub url: Url,
+    /// Network service that served this web asset.
     pub service: ServiceTarget,
+    /// Technology fingerprints detected on the asset.
     pub tech: Vec<Technology>,
+    /// HTTP status code observed during probing.
     pub status: u16,
+    /// HTML title extracted from the response, when present.
     pub title: Option<String>,
     /// Shodan-compatible MurmurHash3 of the favicon (i32 signed).
     /// Use this to pivot on Shodan: `http.favicon.hash:{value}`
@@ -211,6 +379,7 @@ pub struct DiscoveredParam {
 /// Where a parameter is sent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ParamLocation {
     /// In the URL query string.
     Query,
@@ -225,6 +394,7 @@ pub enum ParamLocation {
 /// How a parameter was discovered.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ParamSource {
     /// Extracted from an HTML form.
     HtmlForm,
@@ -242,11 +412,46 @@ pub enum ParamSource {
 /// Every scanner consumes a Vec<Target> and emits Vec<Target> + Vec<Finding>.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Target {
+    /// Target is a Domain.
     Domain(DomainTarget),
+    /// Target is a Host.
     Host(HostTarget),
+    /// Target is a Service.
     Service(ServiceTarget),
+    /// A web asset found during a crawl or via JS analysis.
+    /// Target is a Web.
     Web(Box<WebAssetTarget>),
+    /// A network range or CIDR subnet (e.g. `192.168.1.0/24`).
+    /// Target is a Network.
+    Network(NetworkTarget),
+    /// A source control repository.
+    /// Target is a Repository.
+    Repository(RepositoryTarget),
+    /// An internal package name found in dependency files.
+    /// Target is an InternalPackage.
+    InternalPackage(InternalPackageTarget),
+}
+
+/// An internal package name discovered in dependency files.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InternalPackageTarget {
+    /// Name of the package (e.g. `@myorg/private-utils`).
+    pub name: String,
+    /// URL of the repo where it was found.
+    pub source_repo: Url,
+    /// Ecosystem (npm, pip, go, etc.).
+    pub ecosystem: String,
+}
+
+/// A network range discovered via ASN mapping or cloud metadata.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkTarget {
+    /// CIDR notation (e.g. `1.2.3.0/24`).
+    pub cidr: String,
+    /// How this network was discovered.
+    pub source: DiscoverySource,
 }
 
 impl Target {
@@ -257,7 +462,49 @@ impl Target {
             Target::Domain(d) => Some(&d.domain),
             Target::Host(h) => h.domain.as_deref(),
             Target::Service(s) => s.host.domain.as_deref(),
-            Target::Web(w) => w.url.host_str(),
+            // Prefer the service's recorded domain when present —
+            // probes that derive bait origins (CORS, host-header, etc.)
+            // need the real DNS name, not whatever happens to be in the
+            // URL (which may be an IP or an internal name). Fall back
+            // to the URL host only when no service domain is set.
+            Target::Web(w) => w
+                .service
+                .host
+                .domain
+                .as_deref()
+                .or_else(|| w.url.host_str()),
+            Target::Repository(r) => r.url.host_str(),
+            Target::Network(_) | Target::InternalPackage(_) => None,
+        }
+    }
+
+    /// Returns the IP address associated with this target, if any.
+    #[must_use]
+    pub fn ip(&self) -> Option<IpAddr> {
+        match self {
+            Target::Host(h) => Some(h.ip),
+            Target::Service(s) => Some(s.host.ip),
+            Target::Web(w) => Some(w.service.host.ip),
+            _ => None,
+        }
+    }
+
+    /// Returns a base URL string for this target (e.g. `https://example.com/`).
+    #[must_use]
+    pub fn base_url(&self) -> Option<String> {
+        match self {
+            Target::Domain(d) => Some(format!("https://{}/", d.domain)),
+            Target::Host(h) => Some(format!("http://{}/", h.ip)),
+            Target::Service(s) => s.base_url().map(|u| u.to_string()),
+            Target::Web(w) => {
+                let mut u = w.url.clone();
+                u.set_path("/");
+                u.set_query(None);
+                u.set_fragment(None);
+                Some(u.to_string())
+            }
+            Target::Repository(r) => Some(r.url.to_string()),
+            Target::Network(_) | Target::InternalPackage(_) => None,
         }
     }
 }

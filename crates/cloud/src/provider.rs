@@ -16,6 +16,10 @@ pub trait CloudProvider: Send + Sync {
     /// Short identifier used in log messages (e.g. `"s3"`, `"gcs"`).
     fn name(&self) -> &'static str;
 
+    /// Returns the base URL for this provider. Defaults to the official production endpoint.
+    /// Can be overridden in tests to redirect to a mock server.
+    fn endpoint(&self, name: &str) -> String;
+
     /// Probe `name` as a candidate bucket/account name for this provider.
     ///
     /// `target` is the scan-seed `Target` — used as the finding's target so

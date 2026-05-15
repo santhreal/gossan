@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/santhsecurity/gossan/blob/main/docs/schema/v1.json",
+  "title": "gossan finding output (v1)",
+  "description": "Canonical JSON shape emitted by `gossan ... --format json`. The output is a top-level array of findings (matches the `santh-output::render(_, Format::Json, _)` contract). Each element of the array is a Finding-shaped object documented under $defs/Finding. Note: the older v0 sketch wrapped the array under `{\"tool\":\"gossan\",\"findings\":[…]}` — that wrapper is NOT used today; see `docs/schema/v1-old.json` if you depended on it.",
+  "type": "array",
+  "items": { "$ref": "#/$defs/Finding" },
+  "$defs": {
+    "Severity": {
+      "enum": ["info", "low", "medium", "high", "critical"]
+    },
+    "Finding": {
+      "type": "object",
+      "required": ["scanner", "target", "severity", "title"],
+      "properties": {
+        "scanner": { "type": "string", "minLength": 1 },
+        "target": { "type": "string", "minLength": 1 },
+        "severity": { "$ref": "#/$defs/Severity" },
+        "title": { "type": "string", "minLength": 1 },
+        "detail": { "type": "string" },
+        "evidence": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "cve_ids": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^CVE-\\d{4}-\\d+$" }
+        },
+        "cwe_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "exploit_hint": { "type": "string" },
+        "rule_id": { "type": "string" },
+        "kind": { "type": "string" },
+        "confidence": { "type": "number" }
+      }
+    }
+  }
+}

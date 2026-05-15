@@ -1,0 +1,41 @@
+[package]
+name = "gossan-intel"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage = "https://santh.dev"
+repository = "https://github.com/santhsecurity/gossan"
+description = "Global Passive and Active Intel pillar for Gossan — part of the security research ecosystem"
+readme = "README.md"
+keywords = ["security", "recon", "intel", "passive", "enrichment"]
+categories = ["command-line-utilities", "network-programming"]
+
+[package.metadata.santh]
+status = "alpha"
+[dependencies]
+gossan-core = { version = "0.3", path = "../core" }
+async-trait  = { workspace = true }
+anyhow       = { workspace = true }
+tracing      = { workspace = true }
+tokio        = { workspace = true, features = ["full"] }
+futures      = { workspace = true }
+serde        = { workspace = true, features = ["derive"] }
+serde_json   = { workspace = true }
+rusqlite     = { workspace = true, features = ["bundled"] }
+secfinding   = { workspace = true }
+reqwest      = { workspace = true }
+governor     = { workspace = true }
+nonzero_ext  = { workspace = true }
+url          = { workspace = true }
+chrono       = { workspace = true }
+uuid         = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+gossan-core = { version = "0.3", path = "../core" }
+tempfile = "3"
+wiremock = { workspace = true }
+
+[lints]
+workspace = true

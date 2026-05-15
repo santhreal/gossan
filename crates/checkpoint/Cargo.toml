@@ -2,16 +2,20 @@
 name = "gossan-checkpoint"
 version.workspace = true
 edition.workspace = true
-authors = ["CORUM COLLECTIVE LLC <contact@santh.io>"]
+authors = ["Santh Project <contact@santh.dev>"]
 license.workspace = true
-homepage = "https://santh.io"
-repository.workspace = true
-description = "Scan checkpoint and resume for gossan — persists stage results to SQLite — part of the Santh security research ecosystem"
+homepage = "https://santh.dev"
+repository = "https://github.com/santhsecurity/gossan"
+description = "Scan checkpoint and resume for gossan — persists stage results to SQLite — part of the security research ecosystem"
+readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+
+[package.metadata.santh]
+status = "alpha"
 [dependencies]
-gossan-core = { version = "0.2", path = "../core" }
+gossan-core = { version = "0.3", path = "../core" }
 anyhow      = { workspace = true }
 serde       = { workspace = true }
 serde_json  = { workspace = true }
@@ -20,3 +24,10 @@ chrono      = { workspace = true }
 uuid        = { workspace = true }
 rusqlite    = { workspace = true }
 secfinding  = { workspace = true }
+
+[dev-dependencies]
+proptest = "1.0"
+tempfile = "3"
+
+[lints]
+workspace = true

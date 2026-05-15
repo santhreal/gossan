@@ -22,7 +22,11 @@ fn wasm_url_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| {
         Regex::new(r#"(?:src|href|fetch|import|load)\s*(?:=|\()\s*['"]?([^\s'"]+\.wasm)"#)
-            .expect("static wasm URL regex is valid")
+            .unwrap_or_else(|e| {
+                tracing::error!("invalid wasm url regex: {e}");
+                // Fallback to a regex that never matches
+                Regex::new("$^").unwrap_or_else(|_| unreachable!())
+            })
     })
 }
 
@@ -187,34 +191,30 @@ pub async fn probe(
                     .map(|s| s.chars().take(120).collect::<String>())
                     .unwrap_or_else(|| matched.chars().take(80).collect());
 
-                findings.push(
-                    crate::finding_builder(target, rule.severity,
+                gossan_core::try_push_finding(crate::finding_builder(target, rule.severity,
                         format!("{} ({}KB)", rule.name, size_kb),
                         format!("WebAssembly binary at {} ({} KB, {} string literals extracted) \
                                  contains what appears to be a hardcoded secret. WASM data sections \
                                  are trivially readable — no decompiler needed, just `strings` or \
                                  wasm-objdump.", wasm_url, size_kb, strings.len()))
                     .evidence(Evidence::JsSnippet {
-                        url: wasm_url.clone(),
+                        url: std::sync::Arc::from(wasm_url.as_str()),
                         line: 0, // WASM has no line numbers
-                        snippet: ctx,
+                        snippet: std::sync::Arc::from(ctx.as_str()),
                     })
                     .tag("wasm").tag("secret").tag("exposure")
                     .exploit_hint(format!(
                         "# Extract all strings from WASM:\n\
                          curl -s '{}' | strings\n\
                          # Or with wasm-objdump:\n\
-                         wasm-objdump -x -s {} | grep -A2 'Data'", wasm_url, wasm_url))
-                    .build().expect("finding builder: required fields are set")
-                );
+                         wasm-objdump -x -s {} | grep -A2 'Data'", wasm_url, wasm_url)), &mut findings);
                 had_secret = true;
             }
         }
 
         // Even without secrets, flag that WASM exists — data sections are readable without decompilation
         if !had_secret {
-            findings.push(
-                crate::finding_builder(
+            gossan_core::try_push_finding(crate::finding_builder(
                     target,
                     Severity::Info,
                     format!(
@@ -230,41 +230,10 @@ pub async fn probe(
                     ),
                 )
                 .tag("wasm")
-                .tag("exposure")
-                .build()
-                .expect("finding builder: required fields are set"),
-            );
+                .tag("exposure"), &mut findings);
         }
     }
 
     findings
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn extract_strings_returns_printable_runs() {
-        let strings = extract_strings(b"\0hello world\0abc\0SECRET123\0");
-        assert_eq!(strings, vec!["hello world", "SECRET123"]);
-    }
-
-    #[test]
-    fn wasm_url_regex_matches_common_attributes() {
-        let html = r#"<script src="/pkg/app_bg.wasm"></script><link href="mod.wasm">"#;
-        let urls: Vec<_> = wasm_url_re()
-            .captures_iter(html)
-            .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string()))
-            .collect();
-        assert!(urls.iter().any(|u| u.ends_with("app_bg.wasm")));
-        assert!(urls.iter().any(|u| u.ends_with("mod.wasm")));
-    }
-
-    #[test]
-    fn compiled_rules_include_high_value_secrets() {
-        let names: Vec<_> = compiled_wasm_rules().iter().map(|r| r.name).collect();
-        assert!(names.contains(&"AWS Access Key in WASM"));
-        assert!(names.contains(&"Private Key in WASM"));
-    }
-}

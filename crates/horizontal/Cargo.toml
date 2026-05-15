@@ -1,0 +1,45 @@
+[package]
+name = "gossan-horizontal"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository = "https://github.com/santhsecurity/gossan"
+description = "Horizontal discovery engine for gossan (ASN pivoting, BGP prefix mapping, WHOIS correlation)"
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+
+[package.metadata.santh]
+status = "alpha"
+[dependencies]
+gossan-core = { version = "0.3", path = "../core" }
+gossan-portscan = { version = "0.3", path = "../portscan" }
+async-trait      = { workspace = true }
+serde            = { workspace = true }
+serde_json       = { workspace = true }
+anyhow           = { workspace = true }
+tracing          = { workspace = true }
+tokio            = { workspace = true }
+tokio-rustls     = { workspace = true }
+rustls           = { workspace = true }
+reqwest = { workspace = true }
+futures          = { workspace = true }
+secfinding       = { workspace = true }
+hickory-resolver = { workspace = true }
+url              = { workspace = true }
+regex            = { workspace = true }
+ipnet            = "2"
+x509-cert        = { workspace = true }
+sha2             = { workspace = true }
+base64           = { workspace = true }
+hex.workspace = true
+
+[[test]]
+name = "adversarial"
+path = "tests/adversarial/conservative.rs"
+
+[lints]
+workspace = true

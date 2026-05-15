@@ -7,6 +7,44 @@
 //! [`build_proxy_route`] when they need to pass a route to reqwest.
 
 use tokio::net::TcpStream;
+use hickory_resolver::{
+    config::{NameServerConfigGroup, ResolverConfig, ResolverOpts},
+    TokioAsyncResolver,
+};
+use crate::Config;
+
+/// Build a high-performance, async DNS resolver.
+///
+/// If `config.resolvers` is empty, uses Cloudflare's public DNS.
+/// # Errors
+///
+/// Returns an error if the resolver configuration is invalid.
+pub fn build_resolver(config: &Config) -> anyhow::Result<TokioAsyncResolver> {
+    let servers = if config.resolvers.is_empty() {
+        NameServerConfigGroup::cloudflare()
+    } else {
+        NameServerConfigGroup::from_ips_clear(&config.resolvers, 53, true)
+    };
+    let rc = ResolverConfig::from_parts(None, vec![], servers);
+    let mut opts = ResolverOpts::default();
+    opts.timeout = config.timeout();
+    opts.attempts = 1;
+    // DNS rebinding mitigation: hold the first positive resolution for
+    // a long minimum TTL so the same hostname does not silently
+    // re-resolve to a different IP mid-scan. An attacker's authoritative
+    // server can otherwise hand back a private/loopback IP after the
+    // initial public-facing answer and trick a follow-up probe into
+    // hitting an internal asset. We pin to 1 hour — long enough for any
+    // single scan to finish, short enough that a real IP change is
+    // picked up on the next process invocation.
+    opts.positive_min_ttl =
+        Some(std::time::Duration::from_secs(3600));
+    // Cap negative caching so a transient NXDOMAIN doesn't permanently
+    // poison the resolver for the rest of the process.
+    opts.negative_min_ttl = Some(std::time::Duration::from_secs(60));
+    opts.cache_size = 8192;
+    Ok(TokioAsyncResolver::tokio(rc, opts))
+}
 
 /// Create a TCP connection, optionally routing through a proxy.
 ///
@@ -93,6 +131,10 @@ mod tests {
                 assert_eq!(hops[0].protocol, proxywire::ProxyProtocol::Socks5);
             }
             proxywire::ProxyRoute::Direct => panic!("expected chain, got direct"),
+            // ProxyRoute is `#[non_exhaustive]`; future variants must
+            // not silently swallow data — panic loudly so we notice
+            // when proxywire grows a new transport.
+            _ => panic!("unhandled ProxyRoute variant"),
         }
     }
 
@@ -104,6 +146,7 @@ mod tests {
                 assert_eq!(hops[0].protocol, proxywire::ProxyProtocol::HttpConnect);
             }
             proxywire::ProxyRoute::Direct => panic!("expected chain"),
+            _ => panic!("unhandled ProxyRoute variant"),
         }
     }
 
@@ -115,6 +158,7 @@ mod tests {
                 assert_eq!(hops[0].protocol, proxywire::ProxyProtocol::Socks5LocalDns);
             }
             proxywire::ProxyRoute::Direct => panic!("expected chain"),
+            _ => panic!("unhandled ProxyRoute variant"),
         }
     }
 
@@ -127,5 +171,115 @@ mod tests {
     #[test]
     fn parse_rejects_missing_port() {
         assert!(parse_proxy_route("socks5://localhost").is_err());
+    }
+}
+
+/// Read up to `limit` bytes from a reqwest response and return as a `String`.
+///
+/// Bounds the response body before any caller calls `.text()` or
+/// `.bytes()`. Without this, a malicious endpoint can return a 10 GB
+/// body and OOM the scanner. Every HTTP-consuming scanner should
+/// route through this helper or `bounded_bytes`.
+///
+/// # Errors
+///
+/// Returns the underlying reqwest error if the stream fails mid-read.
+pub async fn bounded_text(resp: reqwest::Response, limit: usize) -> anyhow::Result<String> {
+    use futures::StreamExt;
+    let mut buf = Vec::with_capacity(limit.min(4096));
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        let remaining = limit.saturating_sub(buf.len());
+        if remaining == 0 {
+            break;
+        }
+        let take = chunk.len().min(remaining);
+        buf.extend_from_slice(&chunk[..take]);
+    }
+    Ok(String::from_utf8_lossy(&buf).to_string())
+}
+
+/// Read up to `limit` bytes from a reqwest response and return as raw bytes.
+///
+/// # Errors
+///
+/// Returns the underlying reqwest error if the stream fails mid-read.
+pub async fn bounded_bytes(resp: reqwest::Response, limit: usize) -> anyhow::Result<Vec<u8>> {
+    use futures::StreamExt;
+    let mut buf = Vec::with_capacity(limit.min(4096));
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        let remaining = limit.saturating_sub(buf.len());
+        if remaining == 0 {
+            break;
+        }
+        let take = chunk.len().min(remaining);
+        buf.extend_from_slice(&chunk[..take]);
+    }
+    Ok(buf)
+}
+
+/// Read up to `limit` bytes from a reqwest response and deserialize as JSON.
+///
+/// # Errors
+///
+/// Returns an error on stream failure or JSON parse failure.
+pub async fn bounded_json<T: serde::de::DeserializeOwned>(
+    resp: reqwest::Response,
+    limit: usize,
+) -> anyhow::Result<T> {
+    let text = bounded_text(resp, limit).await?;
+    serde_json::from_str(&text).map_err(Into::into)
+}
+
+#[cfg(test)]
+mod bounded_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn bounded_text_caps_at_limit() {
+        // Spin up a tiny tokio listener that writes 100 KiB.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            let (mut s, _) = listener.accept().await.unwrap();
+            let body = "x".repeat(100 * 1024);
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = s.write_all(resp.as_bytes()).await;
+            let _ = s.shutdown().await;
+        });
+        let url = format!("http://{addr}/");
+        let resp = reqwest::get(&url).await.unwrap();
+        let body = bounded_text(resp, 4096).await.unwrap();
+        assert_eq!(body.len(), 4096, "must clamp to limit, got {}", body.len());
+    }
+
+    #[tokio::test]
+    async fn bounded_text_returns_full_body_when_smaller_than_limit() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            let (mut s, _) = listener.accept().await.unwrap();
+            let body = "hello";
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = s.write_all(resp.as_bytes()).await;
+            let _ = s.shutdown().await;
+        });
+        let url = format!("http://{addr}/");
+        let resp = reqwest::get(&url).await.unwrap();
+        let body = bounded_text(resp, 1024 * 1024).await.unwrap();
+        assert_eq!(body, "hello");
     }
 }

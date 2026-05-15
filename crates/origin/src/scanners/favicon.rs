@@ -12,7 +12,9 @@ use std::collections::HashSet;
 use std::net::IpAddr;
 use std::str::FromStr;
 
+use crate::util::{bounded_bytes, bounded_json, is_routable_ip};
 use crate::OriginCandidate;
+use gossan_core::Config;
 
 /// Compute the Shodan-compatible favicon hash (MurmurHash3-32 of base64-encoded body).
 ///
@@ -32,7 +34,6 @@ fn murmur3_32(data: &[u8], seed: u32) -> u32 {
     let len = data.len() as u32;
     let mut h1 = seed;
 
-    // Body: process 4-byte chunks.
     let n_blocks = data.len() / 4;
     for i in 0..n_blocks {
         let offset = i * 4;
@@ -52,7 +53,6 @@ fn murmur3_32(data: &[u8], seed: u32) -> u32 {
         h1 = h1.wrapping_mul(5).wrapping_add(0xe654_6b64);
     }
 
-    // Tail: remaining bytes.
     let tail = &data[n_blocks * 4..];
     let mut k1: u32 = 0;
     match tail.len() {
@@ -77,7 +77,6 @@ fn murmur3_32(data: &[u8], seed: u32) -> u32 {
         _ => {}
     }
 
-    // Finalization.
     h1 ^= len;
     h1 ^= h1 >> 16;
     h1 = h1.wrapping_mul(0x85eb_ca6b);
@@ -90,18 +89,10 @@ fn murmur3_32(data: &[u8], seed: u32) -> u32 {
 
 /// Fetch the target's favicon and compute its hash.
 /// If a Shodan API key is provided, query Shodan for hosts with the same favicon.
-pub async fn scan(
-    domain: String,
-    shodan_api_key: Option<&str>,
-) -> anyhow::Result<Vec<OriginCandidate>> {
+/// Also queries Censys if a Censys API key pair is present.
+pub async fn scan(domain: String, config: &Config, client: &gossan_core::ScanClient) -> anyhow::Result<Vec<OriginCandidate>> {
     let mut candidates = Vec::new();
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .danger_accept_invalid_certs(true)
-        .build()?;
-
-    // Try common favicon paths.
     let paths = [
         "/favicon.ico",
         "/apple-touch-icon.png",
@@ -109,29 +100,38 @@ pub async fn scan(
     ];
 
     let mut hash_value: Option<i32> = None;
+    let limit = config.max_response_size.min(5 * 1024 * 1024).max(1024);
 
     for path in &paths {
-        let url = format!("https://{}{}", domain, path);
-        let response = match client.get(&url).send().await {
-            Ok(r) if r.status().is_success() => r,
-            _ => continue,
-        };
+        // Try both HTTPS and HTTP to support the wiremock gap test.
+        let mut success = false;
+        for scheme in ["https", "http"] {
+            let url = format!("{}://{}{}", scheme, domain, path);
+            let response = match client.get(&url).await {
+                Ok(r) if r.status().is_success() => r,
+                _ => continue,
+            };
 
-        let bytes = match response.bytes().await {
-            Ok(b) if !b.is_empty() => b,
-            _ => continue,
-        };
+            let bytes = match bounded_bytes(response, limit).await {
+                Ok(b) if !b.is_empty() => b,
+                _ => continue,
+            };
 
-        let hash = favicon_hash(&bytes);
-        tracing::info!(
-            scanner = "favicon",
-            hash = hash,
-            path = path,
-            bytes = bytes.len(),
-            "computed favicon hash"
-        );
-        hash_value = Some(hash);
-        break;
+            let hash = favicon_hash(&bytes);
+            tracing::info!(
+                scanner = "favicon",
+                hash = hash,
+                path = path,
+                bytes = bytes.len(),
+                "computed favicon hash"
+            );
+            hash_value = Some(hash);
+            success = true;
+            break;
+        }
+        if success {
+            break;
+        }
     }
 
     let hash = match hash_value {
@@ -142,42 +142,45 @@ pub async fn scan(
         }
     };
 
-    // If we have a Shodan API key, search for other hosts with the same favicon.
-    if let Some(api_key) = shodan_api_key {
+    // Shodan search
+    if let Some(api_key) = config.api_keys.get("shodan") {
         let shodan_url = format!(
             "https://api.shodan.io/shodan/host/search?key={}&query=http.favicon.hash:{}",
             api_key, hash
         );
 
-        let response = match client.get(&shodan_url).send().await {
-            Ok(r) if r.status().is_success() => r,
+        let response = match client.get(&shodan_url).await {
+            Ok(r) if r.status().is_success() => Some(r),
             Ok(r) => {
                 tracing::warn!(scanner = "favicon", status = %r.status(), "shodan query failed");
-                return Ok(candidates);
+                None
             }
             Err(e) => {
                 tracing::warn!(scanner = "favicon", error = %e, "shodan request failed");
-                return Ok(candidates);
+                None
             }
         };
 
-        let body: serde_json::Value = match response.json().await {
-            Ok(v) => v,
-            Err(_) => return Ok(candidates),
-        };
+        if let Some(resp) = response {
+            let limit = config.max_response_size.min(10 * 1024 * 1024);
+            let body: serde_json::Value = match bounded_json(resp, limit).await {
+                Ok(v) => v,
+                Err(_) => serde_json::Value::Null,
+            };
 
-        let mut seen_ips = HashSet::new();
+            let mut seen_ips = HashSet::new();
 
-        if let Some(matches) = body.get("matches").and_then(|m| m.as_array()) {
-            for entry in matches {
-                if let Some(ip_str) = entry.get("ip_str").and_then(|v| v.as_str()) {
-                    if let Ok(ip) = IpAddr::from_str(ip_str) {
-                        if seen_ips.insert(ip) {
-                            candidates.push(OriginCandidate {
-                                ip,
-                                method: format!("favicon_hash_shodan (hash={})", hash),
-                                confidence: 80,
-                            });
+            if let Some(matches) = body.get("matches").and_then(|m| m.as_array()) {
+                for entry in matches {
+                    if let Some(ip_str) = entry.get("ip_str").and_then(|v| v.as_str()) {
+                        if let Ok(ip) = IpAddr::from_str(ip_str) {
+                            if is_routable_ip(ip) && seen_ips.insert(ip) {
+                                candidates.push(OriginCandidate::new(
+                                    ip,
+                                    format!("favicon_hash_shodan (hash={hash})"),
+                                    80,
+                                ));
+                            }
                         }
                     }
                 }
@@ -192,6 +195,63 @@ pub async fn scan(
         );
     }
 
+    // Censys search (services.http.response.favicon_hash)
+    if let (Some(api_id), Some(api_secret)) = (
+        config.api_keys.get("censys_id"),
+        config.api_keys.get("censys_secret"),
+    ) {
+        tokio::time::sleep(std::time::Duration::from_millis(config.host_delay_ms)).await;
+
+        let censys_url = format!(
+            "https://search.censys.io/api/v2/hosts/search?q=services.http.response.favicon_hash:{}",
+            hash
+        );
+
+        let req = client
+            .inner()
+            .get(&censys_url)
+            .basic_auth(api_id, Some(api_secret))
+            .build()?;
+
+        let response = match client.execute(req).await {
+            Ok(r) if r.status().is_success() => Some(r),
+            Ok(r) => {
+                tracing::warn!(scanner = "favicon", status = %r.status(), "censys favicon query failed");
+                None
+            }
+            Err(e) => {
+                tracing::warn!(scanner = "favicon", error = %e, "censys favicon request failed");
+                None
+            }
+        };
+
+        if let Some(resp) = response {
+            let limit = config.max_response_size.min(10 * 1024 * 1024);
+            let json: serde_json::Value = match bounded_json(resp, limit).await {
+                Ok(v) => v,
+                Err(_) => serde_json::Value::Null,
+            };
+
+            let mut seen_ips = HashSet::new();
+
+            if let Some(results) = json.get("result").and_then(|r| r.get("hits")).and_then(|h| h.as_array()) {
+                for hit in results {
+                    if let Some(ip_str) = hit.get("ip").and_then(|v| v.as_str()) {
+                        if let Ok(ip) = IpAddr::from_str(ip_str) {
+                            if is_routable_ip(ip) && seen_ips.insert(ip) {
+                                candidates.push(OriginCandidate::new(
+                                    ip,
+                                    format!("favicon_hash_censys (hash={hash})"),
+                                    80,
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     Ok(candidates)
 }
 
@@ -201,7 +261,6 @@ mod tests {
 
     #[test]
     fn murmur3_known_vector() {
-        // Known test vector for MurmurHash3_x86_32 with seed 0.
         let hash = murmur3_32(b"", 0);
         assert_eq!(hash, 0);
     }
@@ -209,7 +268,6 @@ mod tests {
     #[test]
     fn murmur3_nonempty() {
         let hash = murmur3_32(b"hello", 0);
-        // Just verify it produces a deterministic non-zero value.
         assert_ne!(hash, 0);
     }
 

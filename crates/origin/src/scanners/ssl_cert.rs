@@ -7,6 +7,7 @@
 use std::collections::HashSet;
 use std::net::IpAddr;
 
+use crate::util::{bounded_json, is_routable_ip};
 use crate::OriginCandidate;
 
 /// JSON shape returned by crt.sh API.
@@ -16,12 +17,20 @@ struct CrtShEntry {
     name_value: String,
 }
 
+/// Maximum number of unique hostnames to resolve from CT logs.
+const MAX_HOSTNAMES: usize = 500;
+
 /// Query crt.sh for certificate transparency logs, extract hostnames,
 /// resolve them, and return candidate origin IPs.
 ///
 /// crt.sh is free, requires no API key, and indexes the full CT log
 /// ecosystem (Google Argon, Cloudflare Nimbus, Let's Encrypt Oak, etc.).
-pub async fn scan(domain: String) -> anyhow::Result<Vec<OriginCandidate>> {
+/// Query crt.sh for certificate transparency logs, extract hostnames,
+/// resolve them, and return candidate origin IPs.
+///
+/// crt.sh is free, requires no API key, and indexes the full CT log
+/// ecosystem (Google Argon, Cloudflare Nimbus, Let's Encrypt Oak, etc.).
+pub async fn scan(domain: String, client: &gossan_core::ScanClient) -> anyhow::Result<Vec<OriginCandidate>> {
     let mut candidates = Vec::new();
 
     let url = format!(
@@ -29,11 +38,7 @@ pub async fn scan(domain: String) -> anyhow::Result<Vec<OriginCandidate>> {
         urlencoding::encode(&domain)
     );
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()?;
-
-    let response = match client.get(&url).send().await {
+    let response = match client.get(&url).await {
         Ok(r) => r,
         Err(e) => {
             tracing::warn!(scanner = "ssl_cert", error = %e, "crt.sh request failed");
@@ -50,7 +55,7 @@ pub async fn scan(domain: String) -> anyhow::Result<Vec<OriginCandidate>> {
         return Ok(candidates);
     }
 
-    let entries: Vec<CrtShEntry> = match response.json().await {
+    let entries: Vec<CrtShEntry> = match bounded_json(response, 10 * 1024 * 1024).await {
         Ok(e) => e,
         Err(e) => {
             tracing::warn!(scanner = "ssl_cert", error = %e, "failed to parse crt.sh response");
@@ -66,7 +71,6 @@ pub async fn scan(domain: String) -> anyhow::Result<Vec<OriginCandidate>> {
             let clean = name.trim().to_lowercase();
             // Skip wildcard-only entries — they don't resolve.
             if let Some(base) = clean.strip_prefix("*.") {
-                // Try the base domain (strip the wildcard).
                 if !base.is_empty() {
                     hostnames.insert(base.to_string());
                 }
@@ -76,9 +80,18 @@ pub async fn scan(domain: String) -> anyhow::Result<Vec<OriginCandidate>> {
         }
     }
 
+    if hostnames.len() > MAX_HOSTNAMES {
+        tracing::warn!(
+            scanner = "ssl_cert",
+            total = hostnames.len(),
+            max = MAX_HOSTNAMES,
+            "truncating hostname list to avoid excessive DNS queries"
+        );
+    }
+
     tracing::info!(
         scanner = "ssl_cert",
-        unique_hostnames = hostnames.len(),
+        unique_hostnames = hostnames.len().min(MAX_HOSTNAMES),
         "extracted hostnames from CT logs"
     );
 
@@ -90,16 +103,16 @@ pub async fn scan(domain: String) -> anyhow::Result<Vec<OriginCandidate>> {
 
     let mut seen_ips = HashSet::new();
 
-    for hostname in &hostnames {
+    for hostname in hostnames.iter().take(MAX_HOSTNAMES) {
         if let Ok(lookup) = resolver.ipv4_lookup(hostname.as_str()).await {
             for ip in lookup {
                 let addr = IpAddr::V4(ip.0);
-                if seen_ips.insert(addr) {
-                    candidates.push(OriginCandidate {
-                        ip: addr,
-                        method: format!("ssl_cert_ct_log ({})", hostname),
-                        confidence: 70,
-                    });
+                if is_routable_ip(addr) && seen_ips.insert(addr) {
+                    candidates.push(OriginCandidate::new(
+                        addr,
+                        format!("ssl_cert_ct_log ({hostname})"),
+                        70,
+                    ));
                 }
             }
         }

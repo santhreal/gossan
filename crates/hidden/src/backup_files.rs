@@ -1,323 +1,165 @@
-//! Backup and configuration file exposure scanner.
+//! Dedicated backup-file exposure probe.
 //!
-//! Probes for common backup, swap, and configuration files left on web servers.
-//! These files often contain database credentials, API keys, internal paths,
-//! and architectural information that aids further compromise.
+//! Targets the long tail of "developer left a snapshot in webroot"
+//! mistakes: editor swap files, archive dumps, version-suffixed
+//! configs, IDE project metadata, and SQL dumps. Overlaps with
+//! [`crate::git_env`] on a handful of canonical paths but goes
+//! deeper on the per-extension permutations editors and CI scripts
+//! tend to leave behind.
 //!
-//! Covers:
-//!   - Editor swap/backup files (`.swp`, `~`, `.bak`, `.old`)
-//!   - Configuration files (`.env`, `wp-config.php.bak`, `web.config`)
-//!   - Database dumps (`dump.sql`, `database.sql`)
-//!   - Archive files (`backup.tar.gz`, `backup.zip`)
-//!   - Version control (`/.svn/entries`, `/.hg/dirstate`)
-
-use gossan_core::Target;
-use reqwest::Client;
+//! Verified by content-validation: an HTTP 200 alone is not enough
+//! — we either match a magic byte sequence (zip / gzip / tar / vim
+//! swap) or a content-probe substring that the real file shape
+//! requires.
+use crate::{finding_builder, soft404, MAX_BODY_BYTES};
+use futures::StreamExt;
+use gossan_core::{try_push_finding, Target};
 use secfinding::{Evidence, Finding, Severity};
 
-/// A backup/config file probe with expected content confirmation.
-struct BackupProbe {
-    /// Path to probe (relative to root).
+const PARALLEL_REQUESTS: usize = 25;
+
+/// One backup-path probe.
+struct BackupCheck {
     path: &'static str,
-    /// Human-readable description of what this file is.
-    description: &'static str,
-    /// Severity if found.
+    title: &'static str,
     severity: Severity,
-    /// Substring(s) expected in the response body to confirm a real finding.
-    /// Empty slice means any 200 response is a finding.
-    body_confirms: &'static [&'static str],
-    /// Minimum body length to consider it a real file (avoids custom 404 pages).
-    min_body_len: usize,
+    /// Body must contain this substring (case-sensitive). `None` means
+    /// any 200 + magic-byte match is enough.
+    content_probe: Option<&'static str>,
+    /// Body must start with one of these magic byte sequences. Applied
+    /// before `content_probe`. Empty list means no magic check.
+    magic: &'static [&'static [u8]],
 }
 
-/// All backup and configuration file probes.
-const PROBES: &[BackupProbe] = &[
-    // ── Editor swap/backup files ────────────────────────────────────────────
-    BackupProbe {
-        path: "/index.php.bak",
-        description: "PHP backup file — may contain database credentials and internal logic.",
-        severity: Severity::High,
-        body_confirms: &["<?php", "<?="],
-        min_body_len: 20,
-    },
-    BackupProbe {
-        path: "/index.php~",
-        description: "Editor backup of index.php — may expose source code.",
-        severity: Severity::High,
-        body_confirms: &["<?php", "<?="],
-        min_body_len: 20,
-    },
-    BackupProbe {
-        path: "/index.php.swp",
-        description: "Vim swap file — contains partial source code.",
-        severity: Severity::Medium,
-        body_confirms: &["b0VIM"],
-        min_body_len: 100,
-    },
-    BackupProbe {
-        path: "/index.php.old",
-        description: "Old copy of index.php — may contain outdated credentials.",
-        severity: Severity::High,
-        body_confirms: &["<?php", "<?="],
-        min_body_len: 20,
-    },
-    // ── WordPress config backups ────────────────────────────────────────────
-    BackupProbe {
-        path: "/wp-config.php.bak",
-        description: "WordPress config backup — contains DB credentials and auth salts.",
-        severity: Severity::Critical,
-        body_confirms: &["DB_PASSWORD", "DB_NAME", "AUTH_KEY"],
-        min_body_len: 100,
-    },
-    BackupProbe {
-        path: "/wp-config.php.old",
-        description: "Old WordPress config — database credentials likely exposed.",
-        severity: Severity::Critical,
-        body_confirms: &["DB_PASSWORD", "DB_NAME"],
-        min_body_len: 100,
-    },
-    BackupProbe {
-        path: "/wp-config.php~",
-        description: "Editor backup of WordPress config.",
-        severity: Severity::Critical,
-        body_confirms: &["DB_PASSWORD", "DB_NAME"],
-        min_body_len: 100,
-    },
-    BackupProbe {
-        path: "/wp-config.php.save",
-        description: "Nano save file of WordPress config.",
-        severity: Severity::Critical,
-        body_confirms: &["DB_PASSWORD", "DB_NAME"],
-        min_body_len: 100,
-    },
-    // ── Configuration files ────────────────────────────────────────────────
-    BackupProbe {
-        path: "/.env",
-        description: "Dotenv file — application secrets, API keys, database URLs.",
-        severity: Severity::Critical,
-        body_confirms: &["="],
-        min_body_len: 10,
-    },
-    BackupProbe {
-        path: "/.env.production",
-        description: "Production dotenv — live credentials.",
-        severity: Severity::Critical,
-        body_confirms: &["="],
-        min_body_len: 10,
-    },
-    BackupProbe {
-        path: "/.env.staging",
-        description: "Staging dotenv — may contain production-adjacent credentials.",
-        severity: Severity::High,
-        body_confirms: &["="],
-        min_body_len: 10,
-    },
-    BackupProbe {
-        path: "/.env.backup",
-        description: "Backed-up dotenv file.",
-        severity: Severity::Critical,
-        body_confirms: &["="],
-        min_body_len: 10,
-    },
-    BackupProbe {
-        path: "/web.config",
-        description: "IIS/ASP.NET web.config — may contain connection strings and auth settings.",
-        severity: Severity::High,
-        body_confirms: &["<configuration", "connectionString"],
-        min_body_len: 50,
-    },
-    BackupProbe {
-        path: "/config.php",
-        description: "PHP config file — may contain database credentials.",
-        severity: Severity::High,
-        body_confirms: &["<?php"],
-        min_body_len: 20,
-    },
-    BackupProbe {
-        path: "/configuration.php",
-        description: "Joomla config — database credentials and secret.",
-        severity: Severity::Critical,
-        body_confirms: &["JConfig", "password"],
-        min_body_len: 50,
-    },
-    // ── Database dumps ─────────────────────────────────────────────────────
-    BackupProbe {
-        path: "/dump.sql",
-        description: "SQL dump — full database contents including user tables.",
-        severity: Severity::Critical,
-        body_confirms: &["INSERT INTO", "CREATE TABLE", "mysqldump"],
-        min_body_len: 100,
-    },
-    BackupProbe {
-        path: "/database.sql",
-        description: "Database export — credentials and user data.",
-        severity: Severity::Critical,
-        body_confirms: &["INSERT INTO", "CREATE TABLE"],
-        min_body_len: 100,
-    },
-    BackupProbe {
-        path: "/backup.sql",
-        description: "SQL backup — full table contents.",
-        severity: Severity::Critical,
-        body_confirms: &["INSERT INTO", "CREATE TABLE"],
-        min_body_len: 100,
-    },
-    BackupProbe {
-        path: "/db.sql",
-        description: "Database dump.",
-        severity: Severity::Critical,
-        body_confirms: &["INSERT INTO", "CREATE TABLE"],
-        min_body_len: 100,
-    },
-    // ── Archive files ──────────────────────────────────────────────────────
-    BackupProbe {
-        path: "/backup.zip",
-        description: "ZIP backup archive — may contain source code and config files.",
-        severity: Severity::Critical,
-        body_confirms: &[],
-        min_body_len: 100,
-    },
-    BackupProbe {
-        path: "/backup.tar.gz",
-        description: "Tarball backup — likely contains full application source.",
-        severity: Severity::Critical,
-        body_confirms: &[],
-        min_body_len: 100,
-    },
-    // ── Version control ────────────────────────────────────────────────────
-    BackupProbe {
-        path: "/.svn/entries",
-        description: "Subversion metadata — reveals file listing and repo structure.",
-        severity: Severity::High,
-        body_confirms: &["dir", "svn"],
-        min_body_len: 10,
-    },
-    BackupProbe {
-        path: "/.hg/dirstate",
-        description: "Mercurial dirstate — reveals tracked files.",
-        severity: Severity::High,
-        body_confirms: &[],
-        min_body_len: 20,
-    },
-    // ── server-generated files ──────────────────────────────────────────────
-    BackupProbe {
-        path: "/phpinfo.php",
-        description: "phpinfo() output — exposes PHP version, extensions, paths, env vars.",
-        severity: Severity::Medium,
-        body_confirms: &["phpinfo()", "PHP Version", "php.ini"],
-        min_body_len: 200,
-    },
-    BackupProbe {
-        path: "/.DS_Store",
-        description: "macOS directory metadata — reveals file listing.",
-        severity: Severity::Low,
-        body_confirms: &[],
-        min_body_len: 8,
-    },
-    BackupProbe {
-        path: "/crossdomain.xml",
-        description: "Flash cross-domain policy — may allow cross-origin data access.",
-        severity: Severity::Medium,
-        body_confirms: &["allow-access-from", "cross-domain-policy"],
-        min_body_len: 30,
-    },
-    BackupProbe {
-        path: "/.dockerenv",
-        description: "Docker environment marker — confirms containerized deployment.",
-        severity: Severity::Info,
-        body_confirms: &[],
-        min_body_len: 0,
-    },
+const BACKUP_CHECKS: &[BackupCheck] = &[
+    // ── Generic archives ──────────────────────────────────────────
+    BackupCheck { path: "/backup.zip",          title: "Backup archive (zip) exposed",        severity: Severity::Critical, content_probe: None,                magic: &[b"PK\x03\x04"] },
+    BackupCheck { path: "/backup.tar",          title: "Backup archive (tar) exposed",        severity: Severity::Critical, content_probe: None,                magic: &[b"\x1f\x8b", b"ustar"] },
+    BackupCheck { path: "/backup.tar.gz",       title: "Backup archive (tar.gz) exposed",     severity: Severity::Critical, content_probe: None,                magic: &[b"\x1f\x8b"] },
+    BackupCheck { path: "/site.zip",            title: "Site snapshot exposed",               severity: Severity::Critical, content_probe: None,                magic: &[b"PK\x03\x04"] },
+    BackupCheck { path: "/website.zip",         title: "Website snapshot exposed",            severity: Severity::Critical, content_probe: None,                magic: &[b"PK\x03\x04"] },
+    BackupCheck { path: "/www.zip",             title: "wwwroot snapshot exposed",            severity: Severity::Critical, content_probe: None,                magic: &[b"PK\x03\x04"] },
+    BackupCheck { path: "/htdocs.zip",          title: "htdocs snapshot exposed",             severity: Severity::Critical, content_probe: None,                magic: &[b"PK\x03\x04"] },
+    BackupCheck { path: "/public_html.zip",     title: "public_html snapshot exposed",        severity: Severity::Critical, content_probe: None,                magic: &[b"PK\x03\x04"] },
+    BackupCheck { path: "/admin.zip",           title: "/admin snapshot exposed",             severity: Severity::Critical, content_probe: None,                magic: &[b"PK\x03\x04"] },
+
+    // ── SQL dumps ─────────────────────────────────────────────────
+    BackupCheck { path: "/db.sql",              title: "SQL dump exposed",                    severity: Severity::Critical, content_probe: Some("CREATE TABLE"), magic: &[] },
+    BackupCheck { path: "/dump.sql",            title: "SQL dump exposed",                    severity: Severity::Critical, content_probe: Some("INSERT INTO"),  magic: &[] },
+    BackupCheck { path: "/dump.sql.gz",         title: "Gzipped SQL dump exposed",            severity: Severity::Critical, content_probe: None,                magic: &[b"\x1f\x8b"] },
+    BackupCheck { path: "/data.sql",            title: "SQL dump exposed",                    severity: Severity::Critical, content_probe: Some("INSERT INTO"),  magic: &[] },
+    BackupCheck { path: "/database.sql",        title: "SQL dump exposed",                    severity: Severity::Critical, content_probe: Some("CREATE TABLE"), magic: &[] },
+    BackupCheck { path: "/backup.sql",          title: "SQL dump exposed",                    severity: Severity::Critical, content_probe: Some("CREATE TABLE"), magic: &[] },
+    BackupCheck { path: "/mysql.sql",           title: "MySQL dump exposed",                  severity: Severity::Critical, content_probe: Some("INSERT INTO"),  magic: &[] },
+    BackupCheck { path: "/postgres.sql",        title: "Postgres dump exposed",               severity: Severity::Critical, content_probe: Some("CREATE TABLE"), magic: &[] },
+
+    // ── Editor / IDE artefacts ────────────────────────────────────
+    BackupCheck { path: "/.swp",                title: "Vim swap file exposed",               severity: Severity::High,     content_probe: None,                magic: &[b"b0VIM"] },
+    BackupCheck { path: "/index.php.swp",       title: "Vim swap (index.php) exposed",        severity: Severity::High,     content_probe: None,                magic: &[b"b0VIM"] },
+    BackupCheck { path: "/index.html.swp",      title: "Vim swap (index.html) exposed",       severity: Severity::High,     content_probe: None,                magic: &[b"b0VIM"] },
+    BackupCheck { path: "/wp-config.php.swp",   title: "Vim swap (wp-config.php) exposed",    severity: Severity::Critical, content_probe: None,                magic: &[b"b0VIM"] },
+    BackupCheck { path: "/.DS_Store",           title: ".DS_Store exposed",                   severity: Severity::Low,      content_probe: None,                magic: &[b"BUD1", b"bplist"] },
+
+    // ── Common version-suffix backups ─────────────────────────────
+    BackupCheck { path: "/index.php.bak",       title: "index.php backup exposed",            severity: Severity::High,     content_probe: Some("<?"),          magic: &[] },
+    BackupCheck { path: "/index.html.bak",      title: "index.html backup exposed",           severity: Severity::Medium,   content_probe: None,                magic: &[] },
+    BackupCheck { path: "/index.php~",          title: "index.php~ backup exposed",           severity: Severity::High,     content_probe: Some("<?"),          magic: &[] },
+    BackupCheck { path: "/index.php.old",       title: "index.php.old backup exposed",        severity: Severity::High,     content_probe: Some("<?"),          magic: &[] },
+    BackupCheck { path: "/index.php.orig",      title: "index.php.orig backup exposed",       severity: Severity::High,     content_probe: Some("<?"),          magic: &[] },
+    BackupCheck { path: "/web.config.bak",      title: "web.config backup exposed",           severity: Severity::High,     content_probe: Some("<configuration"), magic: &[] },
+    BackupCheck { path: "/config.php.bak",      title: "config.php backup exposed",           severity: Severity::Critical, content_probe: Some("<?"),          magic: &[] },
+    BackupCheck { path: "/settings.py.bak",     title: "settings.py backup exposed",          severity: Severity::Critical, content_probe: Some("SECRET_KEY"),  magic: &[] },
+    BackupCheck { path: "/application.yml.bak", title: "application.yml backup exposed",      severity: Severity::High,     content_probe: Some(":"),           magic: &[] },
+    BackupCheck { path: "/database.yml.bak",    title: "database.yml backup exposed",         severity: Severity::Critical, content_probe: Some("password"),    magic: &[] },
+
+    // ── IDE project metadata ──────────────────────────────────────
+    BackupCheck { path: "/.idea/workspace.xml", title: "JetBrains IDE workspace exposed",     severity: Severity::Medium,   content_probe: Some("<project"),    magic: &[] },
+    BackupCheck { path: "/.vscode/settings.json", title: "VSCode settings exposed",           severity: Severity::Low,      content_probe: Some("{"),           magic: &[] },
+    BackupCheck { path: "/.project",            title: "Eclipse .project exposed",            severity: Severity::Low,      content_probe: Some("<projectDescription"), magic: &[] },
+
+    // ── Compressed config / log dumps ─────────────────────────────
+    BackupCheck { path: "/logs.zip",            title: "Logs archive exposed",                severity: Severity::High,     content_probe: None,                magic: &[b"PK\x03\x04"] },
+    BackupCheck { path: "/access.log.gz",       title: "Access-log archive exposed",          severity: Severity::Medium,   content_probe: None,                magic: &[b"\x1f\x8b"] },
+    BackupCheck { path: "/error.log.gz",        title: "Error-log archive exposed",           severity: Severity::Medium,   content_probe: None,                magic: &[b"\x1f\x8b"] },
 ];
 
-/// Probe for backup and configuration files on a web target.
-///
-/// Sends a GET request for each path in the probe list. A finding is generated
-/// when the server responds with HTTP 200 and the body either:
-///   1. Contains at least one of the expected confirmation strings, OR
-///   2. Has no confirmation strings required but meets the minimum body length.
-///
-/// # Returns
-///
-/// A vector of `Finding`s for each confirmed backup/config file.
-pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Finding>> {
-    let asset = match target {
-        Target::Web(asset) => asset,
-        _ => return Ok(vec![]),
+/// Probe the target for backup-file exposures. No-op for non-Web targets.
+pub async fn probe(client: &reqwest::Client, target: &Target) -> anyhow::Result<Vec<Finding>> {
+    let Target::Web(asset) = target else {
+        return Ok(vec![]);
     };
+    let base = asset.url.as_str().trim_end_matches('/').to_string();
 
-    let base = asset.url.as_str().trim_end_matches('/');
+    let indices: Vec<usize> = (0..BACKUP_CHECKS.len()).collect();
+    let results: Vec<Vec<Finding>> = futures::stream::iter(indices)
+        .map(|idx| {
+            let client = client.clone();
+            let base = base.clone();
+            let target = target.clone();
+            async move { process_one(client, base, target, &BACKUP_CHECKS[idx]).await }
+        })
+        .buffer_unordered(PARALLEL_REQUESTS)
+        .collect()
+        .await;
+
+    Ok(results.into_iter().flatten().collect())
+}
+
+async fn process_one(
+    client: reqwest::Client,
+    base: String,
+    target: Target,
+    check: &BackupCheck,
+) -> Vec<Finding> {
     let mut findings = Vec::new();
+    let url = format!("{}{}", base, check.path);
 
-    for p in PROBES {
-        let url = format!("{}{}", base, p.path);
-
-        let resp = match client.get(&url).send().await {
-            Ok(r) => r,
-            Err(_) => continue,
-        };
-
-        let status = resp.status().as_u16();
-        if status != 200 {
-            continue;
-        }
-
-        // Check Content-Type: skip HTML error pages for binary probes
-        let content_type = resp
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .to_string();
-
-        let is_archive = p.path.ends_with(".zip")
-            || p.path.ends_with(".tar.gz")
-            || p.path.ends_with(".DS_Store")
-            || p.path.ends_with(".hg/dirstate");
-
-        if is_archive && content_type.contains("text/html") {
-            continue; // custom 404 page
-        }
-
-        let body = match resp.text().await {
-            Ok(b) => b,
-            Err(_) => continue,
-        };
-
-        if body.len() < p.min_body_len {
-            continue;
-        }
-
-        // Body confirmation check
-        if !p.body_confirms.is_empty()
-            && !p.body_confirms.iter().any(|s| body.contains(s))
-        {
-            continue;
-        }
-
-        findings.push(
-            Finding::builder("hidden", target.domain().unwrap_or("?"), p.severity)
-                .title(format!("Backup/config file exposed: {}", p.path))
-                .detail(format!(
-                    "{} ({} bytes accessible at {})",
-                    p.description,
-                    body.len(),
-                    url
-                ))
-                .evidence(Evidence::HttpResponse {
-                    status,
-                    headers: vec![("content-type".into(), content_type.clone())],
-                    body_excerpt: Some(body.chars().take(200).collect()),
-                })
-                .tag("backup")
-                .tag("exposure")
-                .tag("config")
-                .build()
-                .expect("finding builder: required fields are set"),
-        );
+    let Ok(resp) = client.get(&url).send().await else {
+        return findings;
+    };
+    if resp.status().as_u16() != 200 {
+        return findings;
     }
 
-    Ok(findings)
+    let bytes = match soft404::read_limited(resp, MAX_BODY_BYTES).await {
+        Some(b) => b,
+        None => return findings,
+    };
+
+    if !check.magic.is_empty() && !magic_matches(check.magic, &bytes) {
+        return findings;
+    }
+    if let Some(needle) = check.content_probe {
+        let body = String::from_utf8_lossy(&bytes);
+        if !body.contains(needle) {
+            return findings;
+        }
+    }
+
+    let body_excerpt: String = String::from_utf8_lossy(&bytes).chars().take(300).collect();
+    try_push_finding(
+        finding_builder(&target, check.severity, check.title, check.title)
+            .evidence(Evidence::HttpResponse {
+                status: 200,
+                headers: vec![],
+                body_excerpt: Some(body_excerpt.into()),
+            })
+            .tag("exposure")
+            .tag("backup"),
+        &mut findings,
+    );
+    findings
+}
+
+fn magic_matches(magics: &[&[u8]], data: &[u8]) -> bool {
+    magics.iter().any(|m| {
+        if m == &b"ustar".as_slice() {
+            // tar magic lives at offset 257.
+            data.len() >= 262 && data[257..].starts_with(m)
+        } else {
+            data.starts_with(m)
+        }
+    })
 }
 
 #[cfg(test)]
@@ -325,58 +167,50 @@ mod tests {
     use super::*;
 
     #[test]
-    fn all_probe_paths_start_with_slash() {
-        for probe in PROBES {
-            assert!(
-                probe.path.starts_with('/'),
-                "probe path must start with /: {}",
-                probe.path
-            );
+    fn check_list_is_non_trivial() {
+        // Spec calls for a long tail of common paths.
+        assert!(BACKUP_CHECKS.len() >= 30);
+    }
+
+    #[test]
+    fn check_paths_are_unique() {
+        use std::collections::HashSet;
+        let mut seen = HashSet::new();
+        for c in BACKUP_CHECKS {
+            assert!(seen.insert(c.path), "duplicate backup check path: {}", c.path);
         }
     }
 
     #[test]
-    fn probe_count_is_substantial() {
-        assert!(
-            PROBES.len() >= 25,
-            "should have 25+ backup/config probes, got {}",
-            PROBES.len()
-        );
-    }
-
-    #[test]
-    fn critical_probes_have_body_confirms() {
-        for probe in PROBES {
-            if probe.severity == Severity::Critical && !probe.path.ends_with(".zip") && !probe.path.ends_with(".tar.gz") {
-                assert!(
-                    !probe.body_confirms.is_empty(),
-                    "critical probe {} should have body confirmation strings to prevent FPs",
-                    probe.path
-                );
-            }
+    fn check_paths_start_with_slash() {
+        for c in BACKUP_CHECKS {
+            assert!(c.path.starts_with('/'), "{} must start with /", c.path);
         }
     }
 
     #[test]
-    fn no_duplicate_paths() {
-        let mut seen = std::collections::HashSet::new();
-        for probe in PROBES {
-            assert!(
-                seen.insert(probe.path),
-                "duplicate probe path: {}",
-                probe.path
-            );
-        }
+    fn magic_matches_zip_at_offset_zero() {
+        assert!(magic_matches(&[b"PK\x03\x04"], b"PK\x03\x04somezipdata"));
+        assert!(!magic_matches(&[b"PK\x03\x04"], b"<html></html>"));
     }
 
     #[test]
-    fn descriptions_are_nonempty() {
-        for probe in PROBES {
-            assert!(
-                !probe.description.is_empty(),
-                "probe {} has empty description",
-                probe.path
-            );
-        }
+    fn magic_matches_tar_at_offset_257() {
+        let mut data = vec![0u8; 257];
+        data.extend_from_slice(b"ustar  ");
+        data.extend_from_slice(&[0u8; 100]);
+        assert!(magic_matches(&[b"ustar"], &data));
+        assert!(!magic_matches(&[b"ustar"], b"too short"));
+    }
+
+    #[test]
+    fn probe_is_noop_on_non_web_target() {
+        let target = Target::Domain(gossan_core::DomainTarget {
+            domain: "example.com".into(),
+            source: gossan_core::DiscoverySource::Seed,
+        });
+        let client = reqwest::Client::new();
+        let findings = futures::executor::block_on(probe(&client, &target)).unwrap();
+        assert!(findings.is_empty());
     }
 }

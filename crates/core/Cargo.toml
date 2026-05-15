@@ -4,13 +4,16 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-homepage = "https://santh.io"
-repository.workspace = true
-description = "Core types, traits, and shared networking utilities for the gossan attack-surface scanner — part of the Santh security research ecosystem"
+homepage = "https://santh.dev"
+repository = "https://github.com/santhsecurity/gossan"
+description = "Core types, traits, and shared networking utilities for the gossan attack-surface scanner — part of the security research ecosystem"
 readme = "../../README.md"
-keywords = ["santh", "security", "recon", "attack-surface", "scanner", "networking"]
+keywords = [ "security", "recon", "attack-surface", "scanner" ]
 categories = ["command-line-utilities", "network-programming"]
 
+
+[package.metadata.santh]
+status = "alpha"
 [dependencies]
 async-trait = { workspace = true }
 serde       = { workspace = true }
@@ -19,13 +22,24 @@ thiserror   = { workspace = true }
 anyhow      = { workspace = true }
 tracing     = { workspace = true }
 url         = { workspace = true }
-futures     = { workspace = true }
-chrono      = { workspace = true }
 uuid        = { workspace = true }
+hashkit     = { workspace = true }
+chrono      = { workspace = true }
 tokio       = { workspace = true }
-upstream_reqwest = { workspace = true }
+reqwest = { workspace = true }
+futures      = { workspace = true }
 governor    = { workspace = true }
 nonzero_ext = { workspace = true }
 secfinding = { workspace = true }
 toml = "0.8"
-proxywire = { path = "../../../../libs/runtime/proxywire" }
+proxywire = { workspace = true }
+hickory-resolver = { workspace = true }
+
+[dev-dependencies]
+proptest = {workspace = true}
+tempfile = "3.27.0"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+wiremock = {workspace = true}
+
+[lints]
+workspace = true
