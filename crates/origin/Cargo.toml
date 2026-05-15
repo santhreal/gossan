@@ -2,17 +2,21 @@
 name = "gossan-origin"
 version.workspace = true
 edition.workspace = true
-authors = ["CORUM COLLECTIVE LLC <contact@santh.io>"]
+authors = ["Santh Project <contact@santh.dev>"]
 license.workspace = true
-homepage = "https://santh.io"
+homepage = "https://santh.dev"
 repository = "https://github.com/santhsecurity/gossan"
-description = "Discovers the true origin IP of web assets behind CDNs/WAFs — part of the Santh security research ecosystem"
-keywords = ["santh", "security", "origin-ip", "cdn-bypass", "waf", "recon"]
+description = "Discovers the true origin IP of web assets behind CDNs/WAFs — part of the security research ecosystem"
+readme.workspace = true
+keywords = [ "security", "origin-ip", "cdn-bypass", "waf" ]
 categories = ["network-programming", "command-line-utilities"]
 
+
+[package.metadata.santh]
+status = "alpha"
 [dependencies]
-gossan-core = { version = "0.2", path = "../core" }
-upstream_reqwest = { workspace = true }
+gossan-core = { version = "0.3", path = "../core" }
+reqwest = { workspace = true }
 tracing = { workspace = true }
 anyhow = { workspace = true }
 hickory-resolver = { workspace = true }
@@ -24,6 +28,9 @@ tokio = { workspace = true }
 urlencoding = "2"
 base64 = { workspace = true }
 toml = { workspace = true }
+uuid = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
 
 [features]
 default = [
@@ -38,3 +45,11 @@ ssl_cert = []
 http_header = []
 favicon = []
 dns_history = []
+
+[dev-dependencies]
+proptest = "1.4"
+tokio = { workspace = true, features = ["full", "test-util"] }
+wiremock = "0.6"
+
+[lints]
+workspace = true

@@ -1,4 +1,5 @@
 use super::*;
+use gossan_core::NetworkTarget;
 use std::net::IpAddr;
 use std::time::Duration;
 use tokio::net::TcpListener;
@@ -17,7 +18,7 @@ fn service(port: u16, banner: Option<&str>) -> ServiceTarget {
 }
 
 #[test]
-fn scanner_accepts_domains_and_hosts_only() {
+fn scanner_accepts_domains_hosts_and_networks() {
     let scanner = PortScanner;
     assert!(scanner.accepts(&Target::Domain(DomainTarget {
         domain: "example.com".into(),
@@ -26,6 +27,10 @@ fn scanner_accepts_domains_and_hosts_only() {
     assert!(scanner.accepts(&Target::Host(HostTarget {
         ip: IpAddr::from([127, 0, 0, 1]),
         domain: None,
+    })));
+    assert!(scanner.accepts(&Target::Network(NetworkTarget {
+        cidr: "1.2.3.0/24".into(),
+        source: DiscoverySource::Asn,
     })));
     assert!(!scanner.accepts(&Target::Service(service(443, None))));
 }
@@ -42,74 +47,75 @@ fn risky_ports_list_contains_high_value_targets() {
 
 #[test]
 fn identify_banner_detects_old_ssh_versions_as_high() {
-    let finding = identify_banner(
+    let finding = identify_banner_or_probe(
         "SSH-2.0-OpenSSH_7.2p1 Ubuntu-4ubuntu2.10",
+        &[], // probe_matches: tests exercise the banner path only
         &service(22, None),
         22,
     )
     .unwrap();
 
-    assert_eq!(finding.severity, Severity::High);
-    assert!(finding.title.contains("SSH version disclosed"));
-    assert!(finding.tags.contains(&"ssh".to_string()));
+    assert_eq!(finding.severity(), Severity::High);
+    assert!(finding.title().contains("SSH version disclosed"));
+    assert!(finding.tags().iter().any(|t| t.as_ref() == "ssh"));
 }
 
 #[test]
 fn identify_banner_detects_modern_ssh_versions_as_info() {
-    let finding = identify_banner("SSH-2.0-OpenSSH_9.7", &service(22, None), 22).unwrap();
+    let finding = identify_banner_or_probe("SSH-2.0-OpenSSH_9.7", &[], &service(22, None), 22).unwrap();
 
-    assert_eq!(finding.severity, Severity::Info);
+    assert_eq!(finding.severity(), Severity::Info);
 }
 
 #[test]
 fn identify_banner_detects_ftp_banner() {
-    let finding = identify_banner("220 ProFTPD 1.3.5 Server", &service(21, None), 21).unwrap();
-    assert!(finding.title.contains("FTP banner"));
-    assert!(finding.tags.contains(&"ftp".to_string()));
+    let finding = identify_banner_or_probe("220 ProFTPD 1.3.5 Server", &[], &service(21, None), 21).unwrap();
+    assert!(finding.title().contains("FTP banner"));
+    assert!(finding.tags().iter().any(|t| t.as_ref() == "ftp"));
 }
 
 #[test]
 fn identify_banner_detects_smtp_banner() {
     let finding =
-        identify_banner("220 mx.example.com ESMTP Postfix", &service(25, None), 25).unwrap();
-    assert!(finding.title.contains("SMTP banner"));
-    assert!(finding.tags.contains(&"smtp".to_string()));
+        identify_banner_or_probe("220 mx.example.com ESMTP Postfix", &[], &service(25, None), 25).unwrap();
+    assert!(finding.title().contains("SMTP banner"));
+    assert!(finding.tags().iter().any(|t| t.as_ref() == "smtp"));
 }
 
 #[test]
 fn identify_banner_extracts_http_server_header() {
     let banner = "HTTP/1.1 200 OK\r\nServer: nginx/1.18.0\r\n\r\n";
-    let finding = identify_banner(banner, &service(80, None), 80).unwrap();
-    assert!(finding.title.contains("HTTP server header"));
-    assert!(finding.detail.contains("discloses"));
+    let finding = identify_banner_or_probe(banner, &[], &service(80, None), 80).unwrap();
+    assert!(finding.title().contains("HTTP server header"));
+    assert!(finding.detail().contains("discloses"));
 }
 
 #[test]
 fn identify_banner_detects_redis_no_auth() {
-    let finding = identify_banner("+PONG", &service(6379, None), 6379).unwrap();
-    assert_eq!(finding.severity, Severity::Critical);
+    let finding = identify_banner_or_probe("+PONG", &[], &service(6379, None), 6379).unwrap();
+    assert_eq!(finding.severity(), Severity::Critical);
     assert!(finding
-        .title
+        .title()
         .contains("Redis responds without authentication"));
 }
 
 #[test]
 fn identify_banner_detects_mongodb_no_auth() {
-    let finding = identify_banner("ismaster MongoDB", &service(27017, None), 27017).unwrap();
-    assert_eq!(finding.severity, Severity::Critical);
-    assert!(finding.tags.contains(&"mongodb".to_string()));
+    let finding = identify_banner_or_probe("ismaster MongoDB", &[], &service(27017, None), 27017).unwrap();
+    assert_eq!(finding.severity(), Severity::Critical);
+    assert!(finding.tags().iter().any(|t| t.as_ref() == "mongodb"));
 }
 
 #[test]
 fn identify_banner_detects_telnet_response() {
-    let finding = identify_banner("Welcome", &service(23, None), 23).unwrap();
-    assert_eq!(finding.severity, Severity::Critical);
-    assert!(finding.tags.contains(&"telnet".to_string()));
+    let finding = identify_banner_or_probe("Welcome", &[], &service(23, None), 23).unwrap();
+    assert_eq!(finding.severity(), Severity::Critical);
+    assert!(finding.tags().iter().any(|t| t.as_ref() == "telnet"));
 }
 
 #[test]
 fn identify_banner_returns_none_for_unrecognized_banner() {
-    assert!(identify_banner("some random banner", &service(1234, None), 1234).is_none());
+    assert!(identify_banner_or_probe("some random banner", &[], &service(1234, None), 1234).is_none());
 }
 
 #[test]
@@ -274,7 +280,7 @@ fn banner_processing_handles_large_input() {
     // Create a banner larger than the 512-byte buffer
     let large_banner = "A".repeat(2000);
     // This shouldn't match SSH patterns but also shouldn't panic
-    let finding = identify_banner(&large_banner, &svc, 22);
+    let finding = identify_banner_or_probe(&large_banner, &[], &svc, 22);
 
     // Should return None since it doesn't match any pattern
     assert!(finding.is_none());
@@ -357,11 +363,11 @@ fn cve_correlation_edge_cases() {
     let long_banner = format!("Server: Apache/2.4.49{}", "x".repeat(10000));
     let findings = correlate(&long_banner, &svc);
     // Should still match the pattern
-    assert!(findings.iter().any(|f| f.title.contains("CVE-2021-41773")));
+    assert!(findings.iter().any(|f| f.title().contains("CVE-2021-41773")));
 
     // Case insensitivity check
     let findings = correlate("SERVER: APACHE/2.4.49", &svc);
-    assert!(findings.iter().any(|f| f.title.contains("CVE-2021-41773")));
+    assert!(findings.iter().any(|f| f.title().contains("CVE-2021-41773")));
 }
 
 /// Test TLS info display formatting.
@@ -375,6 +381,8 @@ fn tls_cert_info_display() {
         sans: vec!["test.com".into(), "www.test.com".into()],
         not_after_unix: 1893456000,
         is_self_signed: false,
+        cipher_suite: "TLS13_AES_256_GCM_SHA384".into(),
+        protocol_version: "TLS1.3".into(),
     };
 
     let display = format!("{}", info);

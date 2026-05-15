@@ -58,112 +58,108 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
 
         // Missing Secure flag
         if !lower.contains("; secure") && !lower.starts_with("secure") {
-            findings.push(
-                crate::finding_builder(
-                    target,
-                    Severity::Medium,
-                    format!(
-                        "Cookie '{}' missing Secure flag",
-                        cookie_str.split('=').next().unwrap_or("?")
-                    ),
-                    format!(
-                        "Session cookie is transmitted over HTTP as well as HTTPS. \
-                             Network-layer attackers (MITM, coffee shop) can steal the session. \
-                             Cookie: {}",
-                        &cookie_str.chars().take(100).collect::<String>()
-                    ),
-                )
-                .evidence(Evidence::HttpResponse {
-                    status: resp.status().as_u16(),
-                    headers: vec![("set-cookie".into(), cookie_str.chars().take(120).collect())],
-                    body_excerpt: None,
-                })
-                .tag("cookie")
-                .tag("session")
-                .tag("web")
-                .build()
-                .expect("finding builder: required fields are set"),
-            );
+crate::try_push_finding(
+    crate::misconfig_finding(
+        target,
+        Severity::Medium,
+        format!(
+            "Cookie '{}' missing Secure flag",
+            cookie_str.split('=').next().unwrap_or("?")
+        ),
+        format!(
+            "Session cookie is transmitted over HTTP as well as HTTPS. \
+                 Network-layer attackers (MITM, coffee shop) can steal the session. \
+                 Cookie: {}",
+            &cookie_str.chars().take(100).collect::<String>()
+        ),
+    )
+    .evidence(Evidence::HttpResponse {
+        status: resp.status().as_u16(),
+        headers: vec![("set-cookie".into(), cookie_str.chars().take(120).collect::<String>().into())],
+        body_excerpt: None,
+    })
+    .tag("cookie")
+    .tag("session")
+    .tag("web"),
+    &mut findings,
+);
         }
 
         // Missing HttpOnly flag
         if !lower.contains("httponly") {
-            findings.push(
-                crate::finding_builder(
-                    target,
-                    Severity::Medium,
-                    format!(
-                        "Cookie '{}' missing HttpOnly flag",
-                        cookie_str.split('=').next().unwrap_or("?")
-                    ),
-                    format!(
-                        "Session cookie is accessible via document.cookie — any XSS vulnerability \
-                             can steal it. Add HttpOnly to prevent JS access. \
-                             Cookie: {}",
-                        &cookie_str.chars().take(100).collect::<String>()
-                    ),
-                )
-                .evidence(Evidence::HttpResponse {
-                    status: resp.status().as_u16(),
-                    headers: vec![("set-cookie".into(), cookie_str.chars().take(120).collect())],
-                    body_excerpt: None,
-                })
-                .tag("cookie")
-                .tag("session")
-                .tag("web")
-                .tag("xss")
-                .build()
-                .expect("finding builder: required fields are set"),
-            );
+crate::try_push_finding(
+    crate::misconfig_finding(
+        target,
+        Severity::Medium,
+        format!(
+            "Cookie '{}' missing HttpOnly flag",
+            cookie_str.split('=').next().unwrap_or("?")
+        ),
+        format!(
+            "Session cookie is accessible via document.cookie — any XSS vulnerability \
+                 can steal it. Add HttpOnly to prevent JS access. \
+                 Cookie: {}",
+            &cookie_str.chars().take(100).collect::<String>()
+        ),
+    )
+    .evidence(Evidence::HttpResponse {
+        status: resp.status().as_u16(),
+        headers: vec![("set-cookie".into(), cookie_str.chars().take(120).collect::<String>().into())],
+        body_excerpt: None,
+    })
+    .tag("cookie")
+    .tag("session")
+    .tag("web")
+    .tag("xss"),
+    &mut findings,
+);
         }
 
         // Missing or weak SameSite
         if !lower.contains("samesite") {
-            findings.push(
-                crate::finding_builder(
-                    target,
-                    Severity::Low,
-                    format!(
-                        "Cookie '{}' missing SameSite attribute",
-                        cookie_str.split('=').next().unwrap_or("?")
-                    ),
-                    format!(
-                        "No SameSite attribute — cookie is sent on cross-origin requests, \
-                             enabling classic CSRF attacks on state-changing endpoints. \
-                             Use SameSite=Strict or SameSite=Lax. \
-                             Cookie: {}",
-                        &cookie_str.chars().take(100).collect::<String>()
-                    ),
-                )
-                .evidence(Evidence::HttpResponse {
-                    status: resp.status().as_u16(),
-                    headers: vec![("set-cookie".into(), cookie_str.chars().take(120).collect())],
-                    body_excerpt: None,
-                })
-                .tag("cookie")
-                .tag("csrf")
-                .tag("web")
-                .build()
-                .expect("finding builder: required fields are set"),
-            );
+crate::try_push_finding(
+    crate::misconfig_finding(
+        target,
+        Severity::Low,
+        format!(
+            "Cookie '{}' missing SameSite attribute",
+            cookie_str.split('=').next().unwrap_or("?")
+        ),
+        format!(
+            "No SameSite attribute — cookie is sent on cross-origin requests, \
+                 enabling classic CSRF attacks on state-changing endpoints. \
+                 Use SameSite=Strict or SameSite=Lax. \
+                 Cookie: {}",
+            &cookie_str.chars().take(100).collect::<String>()
+        ),
+    )
+    .evidence(Evidence::HttpResponse {
+        status: resp.status().as_u16(),
+        headers: vec![("set-cookie".into(), cookie_str.chars().take(120).collect::<String>().into())],
+        body_excerpt: None,
+    })
+    .tag("cookie")
+    .tag("csrf")
+    .tag("web"),
+    &mut findings,
+);
         } else if lower.contains("samesite=none") && !lower.contains("; secure") {
             // SameSite=None without Secure is rejected by browsers but worth flagging
-            findings.push(
-                crate::finding_builder(
-                    target,
-                    Severity::Low,
-                    format!(
-                        "Cookie '{}' SameSite=None without Secure",
-                        cookie_str.split('=').next().unwrap_or("?")
-                    ),
-                    "SameSite=None requires the Secure flag or browsers will reject the cookie. \
-                     This is a misconfiguration that can cause auth failures.",
-                )
-                .tag("cookie")
-                .tag("web")
-                .build()
-                .expect("finding builder: required fields are set"),
-            );
+crate::try_push_finding(
+    crate::misconfig_finding(
+        target,
+        Severity::Low,
+        format!(
+            "Cookie '{}' SameSite=None without Secure",
+            cookie_str.split('=').next().unwrap_or("?")
+        ),
+        "SameSite=None requires the Secure flag or browsers will reject the cookie. \
+         This is a misconfiguration that can cause auth failures.",
+    )
+    .tag("cookie")
+    .tag("web"),
+    &mut findings,
+);
         }
     }
 

@@ -13,7 +13,7 @@ use secfinding::{Evidence, Finding, Severity};
 
 use crate::common::is_xml_listing;
 use crate::provider::CloudProvider;
-
+/// Google Cloud Storage bucket discovery.
 pub struct GcsProvider;
 
 #[async_trait]
@@ -22,16 +22,23 @@ impl CloudProvider for GcsProvider {
         "gcs"
     }
 
+    fn endpoint(&self, name: &str) -> String {
+        format!("https://{}.storage.googleapis.com/", name)
+    }
+
     async fn probe(
         &self,
         client: &reqwest::Client,
         name: &str,
         target: &Target,
     ) -> anyhow::Result<Vec<Finding>> {
-        let urls = [
-            format!("https://storage.googleapis.com/{}/", name),
-            format!("https://{}.storage.googleapis.com/", name),
-        ];
+        let vhost = self.endpoint(name);
+        let path = format!("https://storage.googleapis.com/{}/", name);
+
+        let mut urls = vec![vhost.clone()];
+        if vhost.contains("googleapis.com") {
+            urls.push(path);
+        }
 
         let mut findings = Vec::new();
 
@@ -44,9 +51,8 @@ impl CloudProvider for GcsProvider {
 
             match status {
                 200 => {
-                    let body = resp.text().await.unwrap_or_default();
-                    findings.push(
-                        crate::finding_builder(
+                    let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
+                    gossan_core::try_push_finding(crate::finding_builder(
                             target,
                             Severity::Critical,
                             format!("GCS bucket publicly listed: {}", name),
@@ -58,9 +64,9 @@ impl CloudProvider for GcsProvider {
                         )
                         .evidence(Evidence::HttpResponse {
                             status,
-                            headers: vec![("url".into(), url.clone())],
+                            headers: vec![("url".into(), url.clone().into())],
                             body_excerpt: if is_xml_listing(&body) {
-                                Some(body.chars().take(300).collect())
+                                Some(body.chars().take(300).collect::<String>().into())
                             } else {
                                 None
                             },
@@ -72,16 +78,12 @@ impl CloudProvider for GcsProvider {
                             "# List objects:\ngsutil ls gs://{}\n\
                              # Download everything:\ngsutil -m cp -r gs://{}/* .",
                             name, name
-                        ))
-                        .build()
-                        .expect("finding builder: required fields are set"),
-                    );
+                        )), &mut findings);
                     try_write(client, name, url, target, &mut findings).await;
                     break; // found — no need to try second URL form
                 }
                 403 => {
-                    findings.push(
-                        crate::finding_builder(
+                    gossan_core::try_push_finding(crate::finding_builder(
                             target,
                             Severity::Low,
                             format!("GCS bucket exists (access denied): {}", name),
@@ -92,14 +94,11 @@ impl CloudProvider for GcsProvider {
                         )
                         .evidence(Evidence::HttpResponse {
                             status,
-                            headers: vec![("url".into(), url.clone())],
+                            headers: vec![("url".into(), url.clone().into())],
                             body_excerpt: None,
                         })
                         .tag("gcs")
-                        .tag("cloud")
-                        .build()
-                        .expect("finding builder: required fields are set"),
-                    );
+                        .tag("cloud"), &mut findings);
                     try_write(client, name, url, target, &mut findings).await;
                     break;
                 }
@@ -142,8 +141,7 @@ async fn try_write(
     let status = resp.status().as_u16();
     if matches!(status, 200 | 204) {
         let _ = client.delete(&put_url).send().await;
-        findings.push(
-            crate::finding_builder(
+        gossan_core::try_push_finding(crate::finding_builder(
                 target,
                 Severity::Critical,
                 format!("GCS bucket writable without authentication: {}", bucket),
@@ -156,15 +154,12 @@ async fn try_write(
             )
             .evidence(Evidence::HttpResponse {
                 status,
-                headers: vec![("url".into(), put_url)],
+                headers: vec![("url".into(), put_url.into())],
                 body_excerpt: None,
             })
             .tag("gcs")
             .tag("cloud")
             .tag("file-upload")
-            .tag("exposure")
-            .build()
-            .expect("finding builder: required fields are set"),
-        );
+            .tag("exposure"), findings);
     }
 }

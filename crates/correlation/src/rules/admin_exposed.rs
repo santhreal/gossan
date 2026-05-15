@@ -2,10 +2,11 @@
 //! Admin UI reachable without auth controls = immediate privilege escalation.
 
 use gossan_core::Target;
-use secfinding::{Evidence, Finding, Severity};
+use secfinding::{Evidence, Finding, FindingKind, Severity};
 
 use crate::CorrelationRule;
-
+use crate::utils::normalize_host;
+/// AdminExposedRule correlation rule — detects multi-signal attack chains.
 pub struct AdminExposedRule;
 
 impl CorrelationRule for AdminExposedRule {
@@ -20,12 +21,12 @@ impl CorrelationRule for AdminExposedRule {
         let admin_hosts: std::collections::HashSet<String> = findings
             .iter()
             .filter(|f| {
-                f.scanner == "hidden"
-                    && (f.title.to_lowercase().contains("admin")
-                        || f.title.to_lowercase().contains("dashboard")
-                        || f.title.to_lowercase().contains("console"))
+                f.scanner() == "hidden"
+                    && (f.title().to_lowercase().contains("admin")
+                        || f.title().to_lowercase().contains("dashboard")
+                        || f.title().to_lowercase().contains("console"))
             })
-            .filter_map(|f| Some(f.target.as_str()).map(|d| d.to_string()))
+            .filter_map(|f| Some(f.target()).map(|d| normalize_host(d)))
             .collect();
 
         if admin_hosts.is_empty() {
@@ -36,24 +37,52 @@ impl CorrelationRule for AdminExposedRule {
         let unauth_hosts: std::collections::HashSet<String> = findings
             .iter()
             .filter(|f| {
-                (f.scanner == "techstack" || f.scanner == "hidden")
-                    && (f.title.to_lowercase().contains("missing")
-                        || f.title.to_lowercase().contains("no authentication"))
+                (f.scanner() == "techstack" || f.scanner() == "hidden")
+                    && (f.title().to_lowercase().contains("missing")
+                        || f.title().to_lowercase().contains("no authentication"))
             })
-            .filter_map(|f| Some(f.target.as_str()).map(|d| d.to_string()))
+            .filter_map(|f| Some(f.target()).map(|d| normalize_host(d)))
             .collect();
 
         for host in admin_hosts.intersection(&unauth_hosts) {
-            // Find the original admin finding for evidence
-            let evidence_id = findings
+            // Find all relevant findings for evidence
+            let admin_findings: Vec<&Finding> = findings
                 .iter()
-                .filter(|f| f.scanner == "hidden" && Some(f.target.as_str()) == Some(host.as_str()))
-                .map(|f| f.id.to_string())
-                .next()
-                .unwrap_or_default();
+                .filter(|f| {
+                    f.scanner() == "hidden" 
+                        && normalize_host(f.target()) == *host
+                        && (f.title().to_lowercase().contains("admin")
+                            || f.title().to_lowercase().contains("dashboard")
+                            || f.title().to_lowercase().contains("console"))
+                })
+                .collect();
+                
+            let auth_findings: Vec<&Finding> = findings
+                .iter()
+                .filter(|f| {
+                    (f.scanner() == "techstack" || f.scanner() == "hidden")
+                        && normalize_host(f.target()) == *host
+                        && (f.title().to_lowercase().contains("missing")
+                            || f.title().to_lowercase().contains("no authentication"))
+                })
+                .collect();
+            
+            let mut evidence_ids = Vec::new();
+            for finding in admin_findings.iter().chain(auth_findings.iter()) {
+                evidence_ids.push(finding.id().to_string());
+            }
+            let evidence_string = evidence_ids.join(", ");
 
-            chains.push(
-                Finding::builder("correlation", host.clone(), Severity::Critical)
+            // The chain output preserves the *original* target (path,
+            // unicode, port) of the contributing admin finding — only
+            // grouping uses the normalized form. Tests assert the chain
+            // target round-trips the original verbatim.
+            let display_target = admin_findings
+                .first()
+                .map(|f| f.target().to_string())
+                .unwrap_or_else(|| host.clone());
+
+            if let Some(finding) = Finding::builder("correlation", display_target, Severity::Critical)
                     .title(format!(
                         "Admin panel exposed without authentication: {}",
                         host
@@ -64,13 +93,15 @@ impl CorrelationRule for AdminExposedRule {
                          Immediate privilege escalation and full application compromise likely.",
                         host
                     ))
-                    .tag("chain")
+                    .kind(FindingKind::Vulnerability)
+                        .tag("chain")
                     .tag("admin")
                     .tag("auth-bypass")
-                    .evidence(Evidence::Raw(format!("Admin finding id: {}", evidence_id)))
-                    .build()
-                    .expect("finding builder: required fields are set"),
-            );
+                    .evidence(Evidence::Raw(format!("Finding IDs: {}", evidence_string).into()))
+                    .build_or_log()
+            {
+                chains.push(finding);
+            }
         }
 
         chains
@@ -84,7 +115,7 @@ mod tests {
         Finding::builder(scanner, target, Severity::High)
             .title(title)
             .build()
-            .expect("finding builder: required fields are set")
+            .expect("test finding")
     }
 
     #[test]
@@ -104,7 +135,7 @@ mod tests {
         ];
         let chains = AdminExposedRule.check(&findings, &[]);
         assert_eq!(chains.len(), 1);
-        assert_eq!(chains[0].severity, Severity::Critical);
-        assert!(chains[0].title.contains("without authentication"));
+        assert_eq!(chains[0].severity(), Severity::Critical);
+        assert!(chains[0].title().contains("without authentication"));
     }
 }

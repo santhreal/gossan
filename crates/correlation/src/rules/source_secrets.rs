@@ -9,7 +9,7 @@
 //! attack chain is: discover source → extract secret → authenticate as app.
 
 use gossan_core::Target;
-use secfinding::{Finding, Severity};
+use secfinding::{Finding, FindingKind, Severity};
 
 /// Patterns indicating source code has been exposed.
 const SOURCE_SIGNALS: &[&str] = &[
@@ -54,7 +54,7 @@ impl super::super::CorrelationRule for SourceCodeSecretsRule {
         let source_exposures: Vec<&Finding> = findings
             .iter()
             .filter(|f| {
-                let lower = f.title.to_lowercase();
+                let lower = f.title().to_lowercase();
                 SOURCE_SIGNALS.iter().any(|sig| lower.contains(sig))
             })
             .collect();
@@ -62,7 +62,7 @@ impl super::super::CorrelationRule for SourceCodeSecretsRule {
         let secret_findings: Vec<&Finding> = findings
             .iter()
             .filter(|f| {
-                let lower = f.title.to_lowercase();
+                let lower = f.title().to_lowercase();
                 SECRET_SIGNALS.iter().any(|sig| lower.contains(sig))
             })
             .collect();
@@ -73,12 +73,12 @@ impl super::super::CorrelationRule for SourceCodeSecretsRule {
 
         let source_types: Vec<String> = source_exposures
             .iter()
-            .map(|f| f.title.clone())
+            .map(|f| f.title().to_string())
             .take(3)
             .collect();
         let secret_types: Vec<String> = secret_findings
             .iter()
-            .map(|f| f.title.clone())
+            .map(|f| f.title().to_string())
             .take(3)
             .collect();
 
@@ -86,7 +86,7 @@ impl super::super::CorrelationRule for SourceCodeSecretsRule {
             "correlation",
             source_exposures
                 .first()
-                .map(|f| f.target.as_str())
+                .map(|f| f.target())
                 .unwrap_or("unknown"),
             Severity::Critical,
         )
@@ -100,13 +100,13 @@ impl super::super::CorrelationRule for SourceCodeSecretsRule {
             source_types.join(", "),
             secret_types.join(", "),
         ))
-        .tag("chain")
+        .kind(FindingKind::Vulnerability)
+                        .tag("chain")
         .tag("source-exposure")
         .tag("credential-leak")
-        .build()
-        .expect("finding builder: required fields are set");
+        .build_or_log();
 
-        vec![chain]
+        chain.into_iter().collect()
     }
 }
 
@@ -118,8 +118,7 @@ mod tests {
     fn finding(scanner: &str, target: &str, title: &str) -> Finding {
         Finding::builder(scanner, target, Severity::High)
             .title(title)
-            .build()
-            .expect("finding builder: required fields are set")
+            .build().expect("test finding")
     }
 
     #[test]
@@ -131,7 +130,7 @@ mod tests {
         ];
         let chains = rule.check(&findings, &[]);
         assert_eq!(chains.len(), 1);
-        assert!(chains[0].title.contains("Source Code Exposure"));
+        assert!(chains[0].title().contains("Source Code Exposure"));
     }
 
     #[test]

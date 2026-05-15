@@ -2,25 +2,37 @@
 name = "gossan-techstack"
 version.workspace = true
 edition.workspace = true
-authors = ["CORUM COLLECTIVE LLC <contact@santh.io>"]
+authors = ["Santh Project <contact@santh.dev>"]
 license.workspace = true
-homepage = "https://santh.io"
-repository.workspace = true
-description = "Tech stack fingerprinting scanner for panoram — powered by truestack — part of the Santh security research ecosystem"
+homepage = "https://santh.dev"
+repository = "https://github.com/santhsecurity/gossan"
+description = "Tech stack fingerprinting scanner for panoram — powered by truestack — part of the security research ecosystem"
+readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+
+[package.metadata.santh]
+status = "alpha"
 [dependencies]
-gossan-core = { version = "0.2", path = "../core" }
-truestack    = "0.1.0"
+gossan-core = { version = "0.3", path = "../core" }
+truestack    = { workspace = true }
 async-trait = { workspace = true }
 serde       = { workspace = true }
 serde_json  = { workspace = true }
 anyhow      = { workspace = true }
 tracing     = { workspace = true }
 tokio       = { workspace = true }
-upstream_reqwest = { workspace = true }
+reqwest = { workspace = true }
 futures     = { workspace = true }
 sha2        = { workspace = true }
 hex         = { workspace = true }
 secfinding  = { workspace = true }
+
+[dev-dependencies]
+wiremock = { workspace = true }
+tempfile = { workspace = true }
+url = { workspace = true }
+
+[lints]
+workspace = true

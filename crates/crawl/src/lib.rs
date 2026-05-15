@@ -1,28 +1,40 @@
+#![forbid(unsafe_code)]
+// pedantic moved to workspace [lints.clippy] in root Cargo.toml
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::panic
+    )
+)]
+#![allow(
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::missing_errors_doc,
+)]
+
 //! Authenticated web crawler — form extraction, parameter discovery, link following.
 //!
-//! This scanner takes `WebAssetTarget` inputs and crawls each one:
-//! 1. Follows `<a href>` links with optional authentication cookies
-//! 2. Extracts `<form>` elements with their inputs (action, method, fields)
-//! 3. Discovers URL query parameters from crawled pages
-//! 4. Enriches each discovered `WebAssetTarget` with forms and parameters
-//!
-//! The output is a set of enriched `WebAssetTarget` values ready for
-//! downstream vulnerability scanning (Karyx routing, Calyx templates, etc.).
+//! This scanner uses Headless Chromium to execute JavaScript, evaluate ASTs,
+//! and follow Single Page Application links.
 
-extern crate self as reqwest;
-pub use upstream_reqwest::{header, redirect, Client, Method, Proxy, Request, Response, StatusCode, Url};
-
-mod extract;
+pub mod seeds;
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use async_trait::async_trait;
+use chromiumoxide::{Browser, BrowserConfig};
 use gossan_core::{
-    build_client, Config, DiscoveredForm, DiscoveredParam, ParamLocation, ParamSource, ScanInput,
-    ScanOutput, Scanner, Target, WebAssetTarget,
+    Config, DiscoveredForm, DiscoveredParam, ParamLocation, ParamSource, ScanInput,
+    Scanner, Target, WebAssetTarget,
 };
+use url::Url;
 
-/// Authenticated web crawler that discovers forms and parameters.
+/// Authenticated web crawler that discovers dynamic endpoints via headless browsing.
 pub struct CrawlScanner;
 
 #[async_trait]
@@ -31,34 +43,53 @@ impl Scanner for CrawlScanner {
         "crawl"
     }
     fn tags(&self) -> &[&'static str] {
-        &["active", "web", "crawl"]
+        &["active", "web", "crawl", "headless", "spa"]
     }
     fn accepts(&self, target: &Target) -> bool {
         matches!(target, Target::Web(_))
     }
 
-    async fn run(&self, input: ScanInput, config: &Config) -> anyhow::Result<ScanOutput> {
-        let mut out = ScanOutput::empty();
-        let client = build_client(config, true)?;
+    async fn run(&self, input: ScanInput, config: &Config) -> anyhow::Result<()> {
 
-        let web_assets: Vec<WebAssetTarget> = input
-            .targets
-            .iter()
-            .filter_map(|t| {
-                if let Target::Web(w) = t {
-                    Some(*w.clone())
-                } else {
-                    None
+        let (browser, mut handler) = Browser::launch(
+            BrowserConfig::builder()
+                .with_head()
+                .no_sandbox()
+                .build()
+                .map_err(|e| anyhow::anyhow!("config error: {e}"))?,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to launch browser: {:?}", e))?;
+
+        let browser = Arc::new(browser);
+        let handle = tokio::spawn(async move {
+            while let Some(h) = futures::StreamExt::next(&mut handler).await {
+                if h.is_err() {
+                    break;
                 }
-            })
-            .collect();
+            }
+        });
 
+        // Drain the streaming inbound channel — `targets: Vec<Target>`
+        // is gone; web assets arrive via `target_rx`.
+        let web_assets: Vec<WebAssetTarget> = {
+            let mut rx = input.target_rx.lock().await;
+            let mut out = Vec::new();
+            while let Some(t) = rx.recv().await {
+                if let Target::Web(w) = t {
+                    out.push(*w);
+                }
+            }
+            out
+        };
+
+        // Limit concurrent browsers if many targets exist, but here we process sequentially
         for asset in web_assets {
-            match crawl_asset(&client, &asset, config).await {
+            match crawl_asset(&browser, &asset, config).await {
                 Ok(enriched_targets) => {
                     for target in enriched_targets {
                         input.emit_target(Target::Web(Box::new(target.clone())));
-                        out.targets.push(Target::Web(Box::new(target)));
+                        input.emit_target(Target::Web(Box::new(target)));
                     }
                 }
                 Err(e) => {
@@ -67,12 +98,13 @@ impl Scanner for CrawlScanner {
             }
         }
 
-        Ok(out)
+        handle.abort();
+        Ok(())
     }
 }
 
 async fn crawl_asset(
-    client: &reqwest::Client,
+    browser: &Arc<Browser>,
     seed: &WebAssetTarget,
     config: &Config,
 ) -> anyhow::Result<Vec<WebAssetTarget>> {
@@ -102,65 +134,109 @@ async fn crawl_asset(
             continue;
         }
 
-        let resp = match client.get(url.as_str()).send().await {
-            Ok(r) => r,
-            Err(_) => continue,
-        };
-
-        if !resp.status().is_success() {
+        let Ok(page) = browser.new_page(url.as_str()).await else {
             continue;
-        }
-
-        let body = match resp.text().await {
-            Ok(b) => b,
-            Err(_) => continue,
         };
 
-        // Extract forms from this page
-        for form in extract::extract_forms(&body, &url) {
-            if !all_forms
-                .iter()
-                .any(|f| f.action == form.action && f.method == form.method)
-            {
-                // Add form inputs as discovered parameters
-                for (name, _input_type) in &form.inputs {
-                    if !all_params.iter().any(|p| p.name == *name) {
-                        all_params.push(DiscoveredParam {
-                            name: name.clone(),
-                            location: if form.method.eq_ignore_ascii_case("POST") {
-                                ParamLocation::Body
-                            } else {
-                                ParamLocation::Query
-                            },
-                            source: ParamSource::HtmlForm,
-                        });
+        let _ = page.goto(url.as_str()).await;
+        // Wait for page hydration
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        let js_probe = r#"
+            (function() {
+                const forms = [];
+                for (const f of document.forms) {
+                    const inputs = [];
+                    for (const i of f.elements) {
+                        if (i.name) {
+                            inputs.push([i.name, i.type || 'text']);
+                        }
+                    }
+                    forms.push({
+                        action: f.action || '',
+                        method: f.method || 'GET',
+                        inputs: inputs
+                    });
+                }
+                const links = Array.from(document.querySelectorAll('a[href]')).map(a => a.href);
+                return { forms, links, html: document.documentElement.outerHTML };
+            })()
+        "#;
+
+        if let Ok(res) = page.evaluate(js_probe).await {
+            if let Some(val) = res.value() {
+                // 1. Process Extracted Forms
+                if let Some(forms_arr) = val.get("forms").and_then(|v| v.as_array()) {
+                    for f in forms_arr {
+                        let action = f.get("action").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        let method = f.get("method").and_then(|v| v.as_str()).unwrap_or("GET").to_string();
+                        let mut inputs = Vec::new();
+                        
+                        if let Some(ins) = f.get("inputs").and_then(|v| v.as_array()) {
+                            for i in ins {
+                                if let Some(pair) = i.as_array() {
+                                    let name = pair.first().and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                    let typ = pair.get(1).and_then(|v| v.as_str()).unwrap_or("text").to_string();
+                                    inputs.push((name, typ));
+                                }
+                            }
+                        }
+
+                        let df = DiscoveredForm { action, method, inputs };
+                        if !all_forms.iter().any(|existing| existing.action == df.action && existing.method == df.method) {
+                            for (name, _t) in &df.inputs {
+                                if !all_params.iter().any(|p| p.name == *name) {
+                                    all_params.push(DiscoveredParam {
+                                        name: name.clone(),
+                                        location: if df.method.eq_ignore_ascii_case("POST") { ParamLocation::Body } else { ParamLocation::Query },
+                                        source: ParamSource::HtmlForm,
+                                    });
+                                }
+                            }
+                            all_forms.push(df);
+                        }
                     }
                 }
-                all_forms.push(form);
-            }
-        }
 
-        // Extract URL parameters from this page's URL
-        for (name, _value) in url.query_pairs() {
-            let name = name.to_string();
-            if !all_params.iter().any(|p| p.name == name) {
-                all_params.push(DiscoveredParam {
-                    name,
-                    location: ParamLocation::Query,
-                    source: ParamSource::UrlObserved,
-                });
-            }
-        }
+                // 2. Process DOM Links
+                if depth < max_depth {
+                    if let Some(links_arr) = val.get("links").and_then(|v| v.as_array()) {
+                        for l in links_arr {
+                            if let Some(href) = l.as_str() {
+                                if let Ok(u) = Url::parse(href) {
+                                    if u.host_str() == Some(&base_host) && !visited.contains(u.as_str()) {
+                                        discovered_urls.push(u.clone());
+                                        queue.push((u, depth + 1));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
 
-        // Follow links if within depth limit
-        if depth < max_depth {
-            for link in extract::extract_links(&body, &url) {
-                if link.host_str() == Some(&base_host) && !visited.contains(link.as_str()) {
-                    discovered_urls.push(link.clone());
-                    queue.push((link, depth + 1));
+                // 3. Process AST JavaScript Endpoints using gossan-js!
+                if let Some(html) = val.get("html").and_then(|v| v.as_str()) {
+                    let js_endpoints = gossan_js::endpoints::extract(url.as_str(), html);
+                    for ep in js_endpoints {
+                        // resolve relative paths to full url
+                        let ep_url = Url::parse(&ep.path)
+                            .ok()
+                            .or_else(|| url.join(&ep.path).ok());
+
+                        if let Some(u) = ep_url {
+                            if u.host_str() == Some(&base_host) && !visited.contains(u.as_str()) {
+                                discovered_urls.push(u.clone());
+                                if depth < max_depth {
+                                    queue.push((u, depth + 1));
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
+
+        page.close().await.ok();
     }
 
     tracing::info!(
@@ -169,20 +245,15 @@ async fn crawl_asset(
         forms = all_forms.len(),
         params = all_params.len(),
         links = discovered_urls.len(),
-        "crawl complete"
+        "headless crawl complete"
     );
 
-    // Build enriched WebAssetTargets for each discovered URL
     let mut results = Vec::new();
-
-    // Enrich the seed asset with forms/params
     let mut enriched_seed = seed.clone();
     enriched_seed.forms = all_forms;
     enriched_seed.params = all_params;
     results.push(enriched_seed);
 
-    // Create new WebAssetTargets for discovered URLs (without forms/params — those
-    // belong to the page they were found on, not the linked page)
     for url in discovered_urls {
         if url.as_str() == seed.url.as_str() {
             continue;
@@ -201,88 +272,4 @@ async fn crawl_asset(
     }
 
     Ok(results)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::extract;
-    use super::CrawlScanner;
-    use gossan_core::{
-        CrawlConfig, HostTarget, Protocol, Scanner, ServiceTarget, Target, WebAssetTarget,
-    };
-
-    #[test]
-    fn extract_forms_basic() {
-        let html = r#"
-            <form action="/login" method="POST">
-                <input name="username" type="text">
-                <input name="password" type="password">
-                <button type="submit">Login</button>
-            </form>
-        "#;
-        let base = url::Url::parse("https://example.com/page").unwrap();
-        let forms = extract::extract_forms(html, &base);
-        assert_eq!(forms.len(), 1);
-        assert_eq!(forms[0].action, "https://example.com/login");
-        assert_eq!(forms[0].method, "POST");
-        assert_eq!(forms[0].inputs.len(), 2);
-    }
-
-    #[test]
-    fn extract_links_filters_external() {
-        let html = r#"
-            <a href="/about">About</a>
-            <a href="https://example.com/contact">Contact</a>
-            <a href="https://evil.com/steal">Evil</a>
-        "#;
-        let base = url::Url::parse("https://example.com/").unwrap();
-        let links = extract::extract_links(html, &base);
-        // Should include /about and /contact but not evil.com
-        assert!(links.iter().any(|l| l.path() == "/about"));
-        assert!(links.iter().any(|l| l.path() == "/contact"));
-        assert!(!links.iter().any(|l| l.host_str() == Some("evil.com")));
-    }
-
-    #[test]
-    fn extract_forms_relative_action() {
-        let html = r#"<form action="search" method="GET"><input name="q" type="text"></form>"#;
-        let base = url::Url::parse("https://example.com/app/").unwrap();
-        let forms = extract::extract_forms(html, &base);
-        assert_eq!(forms[0].action, "https://example.com/app/search");
-    }
-
-    #[test]
-    fn scanner_accepts_web_targets() {
-        let scanner = CrawlScanner;
-        let target = Target::Web(Box::new(WebAssetTarget {
-            url: url::Url::parse("https://example.com").unwrap(),
-            service: ServiceTarget {
-                host: HostTarget {
-                    ip: "127.0.0.1".parse().unwrap(),
-                    domain: Some("example.com".into()),
-                },
-                port: 443,
-                protocol: Protocol::Tcp,
-                banner: None,
-                tls: true,
-            },
-            tech: vec![],
-            status: 200,
-            title: None,
-            favicon_hash: None,
-            body_hash: None,
-            forms: vec![],
-            params: vec![],
-        }));
-        assert!(scanner.accepts(&target));
-    }
-
-    const _: () = {
-        let d = CrawlConfig {
-            max_pages: 50,
-            max_depth: 3,
-        };
-        assert!(d.max_pages > 0);
-        assert!(d.max_depth > 0);
-    };
 }

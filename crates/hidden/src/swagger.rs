@@ -5,6 +5,7 @@
 //!   - API key / token parameters in path or query definitions
 //!   - Server URLs using plain HTTP (unencrypted transport)
 //!   - Total endpoint count (scope indicator for attackers)
+//!   - Every endpoint as an individual finding (capped at 50)
 
 use gossan_core::Target;
 use secfinding::{Evidence, Finding, Severity};
@@ -12,25 +13,59 @@ use secfinding::{Evidence, Finding, Severity};
 const PATHS: &[&str] = &[
     "/swagger.json",
     "/swagger.yaml",
+    "/swagger/v1/swagger.json",
     "/openapi.json",
     "/openapi.yaml",
+    "/openapi/v3/api-docs",
     "/api-docs",
     "/api-docs/",
     "/api/swagger.json",
     "/api/openapi.json",
     "/v1/swagger.json",
     "/v2/swagger.json",
+    "/v2/api-docs",
+    "/v3/api-docs",
     "/v3/openapi.json",
     "/docs",
     "/redoc",
     "/swagger-ui",
     "/swagger-ui.html",
+    "/swagger-ui/index.html",
     "/api/v1/swagger.json",
     "/api/v2/openapi.json",
     "/.well-known/openapi.json",
+    "/swagger-resources",
+    "/swagger-ui/springfox.js",
+    "/api/swagger-ui.html",
+    "/api/v3/api-docs",
+    "/rest/v1/swagger.json",
+    "/api/swagger/v1/swagger.json",
+    // Spring Boot Actuator
+    "/actuator",
+    "/actuator/info",
+    "/actuator/health",
+    "/actuator/env",
+    "/actuator/mappings",
+    // ASP.NET
+    "/swagger/index.html",
+    "/swagger/v1/swagger.json",
+    // FastAPI
+    "/openapi.json",
+    "/docs",
+    "/redoc",
+    // GraphQL schema
+    "/graphql/schema",
+    "/api/graphql/schema",
 ];
 
-pub async fn probe(client: &reqwest::Client, target: &Target) -> anyhow::Result<Vec<Finding>> {
+/// Maximum number of endpoint findings to emit per spec.
+const MAX_ENDPOINT_FINDINGS: usize = 50;
+
+pub async fn probe(
+    client: &reqwest::Client,
+    target: &Target,
+    baseline: Option<&crate::soft404::BaselineFingerprint>,
+) -> anyhow::Result<Vec<Finding>> {
     let Target::Web(asset) = target else {
         return Ok(vec![]);
     };
@@ -43,23 +78,43 @@ pub async fn probe(client: &reqwest::Client, target: &Target) -> anyhow::Result<
             continue;
         };
 
-        if resp.status().as_u16() != 200 {
+        let status = resp.status().as_u16();
+        if status != 200 {
             continue;
         }
 
-        let body = resp.text().await.unwrap_or_default();
+        // Reject HTML responses early to avoid false positives on SPA shells
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        if content_type.contains("text/html") {
+            continue;
+        }
+
+        let Ok(body) = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await else {
+            continue;
+        };
+
+        // Soft-404 check using baseline
+        if crate::soft404::is_likely_404(status, body.as_bytes(), baseline, false) {
+            continue;
+        }
+
         let is_spec = body.contains("\"openapi\"")
             || body.contains("\"swagger\"")
             || body.contains("openapi:")
-            || body.contains("swagger:");
+            || body.contains("swagger:")
+            || body.contains("\"paths\"")
+            || body.contains("paths:");
 
         if !is_spec {
             continue;
         }
 
         // Primary finding: spec is exposed
-        findings.push(
-            crate::finding_builder(
+        gossan_core::try_push_finding(crate::exposure_finding(
                 target, Severity::Medium,
                 "OpenAPI/Swagger spec exposed",
                 format!("API specification at {} is publicly accessible — reveals all endpoints, \
@@ -68,18 +123,14 @@ pub async fn probe(client: &reqwest::Client, target: &Target) -> anyhow::Result<
             .evidence(Evidence::HttpResponse {
                 status: 200,
                 headers: vec![],
-                body_excerpt: Some(body.chars().take(300).collect()),
+                body_excerpt: Some(body.chars().take(300).collect::<String>().into()),
             })
-            .tag("swagger").tag("exposure")
-            .build().expect("finding builder: required fields are set"),
-        );
+            .tag("swagger").tag("exposure"), &mut findings);
 
         // Attempt to parse and analyse the spec body
         if let Ok(spec) = serde_json::from_str::<serde_json::Value>(&body) {
             analyze_spec(&spec, &url, target, &mut findings);
         } else {
-            // YAML: try to extract key signals without a full YAML parser
-            // (hidden crate has no yaml dep — extract via text heuristics)
             analyze_spec_text(&body, &url, target, &mut findings);
         }
 
@@ -101,8 +152,7 @@ fn analyze_spec(
         for server in servers {
             if let Some(srv_url) = server.get("url").and_then(|u| u.as_str()) {
                 if srv_url.starts_with("http://") {
-                    findings.push(
-                        crate::finding_builder(
+                    gossan_core::try_push_finding(crate::exposure_finding(
                             target,
                             Severity::Medium,
                             "OpenAPI spec lists HTTP (unencrypted) server URL",
@@ -115,10 +165,7 @@ fn analyze_spec(
                         )
                         .tag("swagger")
                         .tag("tls")
-                        .tag("exposure")
-                        .build()
-                        .expect("finding builder: required fields are set"),
-                    );
+                        .tag("exposure"), findings);
                 }
             }
         }
@@ -132,8 +179,7 @@ fn analyze_spec(
             .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
             .unwrap_or_default();
         if schemes.contains(&"http") && !schemes.contains(&"https") {
-            findings.push(
-                crate::finding_builder(
+            gossan_core::try_push_finding(crate::exposure_finding(
                     target,
                     Severity::Medium,
                     "Swagger 2.0 spec: HTTP-only scheme declared",
@@ -144,15 +190,11 @@ fn analyze_spec(
                     ),
                 )
                 .tag("swagger")
-                .tag("tls")
-                .build()
-                .expect("finding builder: required fields are set"),
-            );
+                .tag("tls"), findings);
         }
     }
 
     // ── Unauthenticated endpoints ─────────────────────────────────────────────
-    // OpenAPI 3.x: spec-level security + per-operation security override
     let global_security_defined = spec
         .get("components")
         .and_then(|c| c.get("securitySchemes"))
@@ -174,7 +216,6 @@ fn analyze_spec(
         for (path, path_item) in paths {
             if let Some(methods) = path_item.as_object() {
                 for (method, operation) in methods {
-                    // Only HTTP method keys, not x-extensions or summary/description
                     let valid_method = matches!(
                         method.as_str(),
                         "get" | "post" | "put" | "patch" | "delete" | "head" | "options"
@@ -184,19 +225,16 @@ fn analyze_spec(
                     }
                     total_endpoints += 1;
 
-                    // Per-operation security: empty array `[]` explicitly disables auth
                     let op_security = operation.get("security");
                     let explicitly_unauthenticated = op_security
                         .and_then(|s| s.as_array())
                         .map(|arr| arr.is_empty())
                         .unwrap_or(false);
 
-                    // No security defined anywhere = unauthenticated
                     let no_security_anywhere = !global_security_defined
                         && !global_security_required
                         && op_security.is_none();
 
-                    // Global security but operation explicitly opts out
                     let overrides_to_unauth =
                         global_security_required && explicitly_unauthenticated;
 
@@ -204,10 +242,9 @@ fn analyze_spec(
                         unauth_endpoints.push(format!("{} {}", method.to_uppercase(), path));
                     }
 
-                    // Detect API key / token parameters in operation
                     let all_params_locs = [
                         operation.get("parameters"),
-                        path_item.get("parameters"), // path-level params
+                        path_item.get("parameters"),
                     ];
                     for params_opt in all_params_locs {
                         if let Some(params) = params_opt.and_then(|p| p.as_array()) {
@@ -246,11 +283,10 @@ fn analyze_spec(
         }
     }
 
-    // Report unauthenticated endpoints
+    // Emit aggregate finding for unauthenticated endpoints
     if !unauth_endpoints.is_empty() {
         let sample = unauth_endpoints[..unauth_endpoints.len().min(5)].join(", ");
-        findings.push(
-            crate::finding_builder(
+        gossan_core::try_push_finding(crate::exposure_finding(
                 target,
                 Severity::High,
                 format!(
@@ -270,20 +306,34 @@ fn analyze_spec(
             .evidence(Evidence::HttpResponse {
                 status: 200,
                 headers: vec![],
-                body_excerpt: Some(unauth_endpoints[..unauth_endpoints.len().min(10)].join("\n")),
+                body_excerpt: Some(unauth_endpoints[..unauth_endpoints.len().min(10)].join("\n").into()),
             })
             .tag("swagger")
             .tag("auth-bypass")
-            .tag("exposure")
-            .build()
-            .expect("finding builder: required fields are set"),
-        );
+            .tag("exposure"), findings);
+
+        // Emit one finding per unauthenticated endpoint (capped)
+        for ep in unauth_endpoints.iter().take(MAX_ENDPOINT_FINDINGS) {
+            gossan_core::try_push_finding(crate::exposure_finding(
+                    target,
+                    Severity::Medium,
+                    format!("Unauthenticated API endpoint: {}", ep),
+                    format!(
+                        "The OpenAPI spec at {} declares '{}' with no security requirement. \
+                         This endpoint may be accessible without authentication.",
+                        spec_url, ep
+                    ),
+                )
+                .tag("swagger")
+                .tag("endpoint")
+                .tag("auth-bypass")
+                .tag("exposure"), findings);
+        }
     }
 
-    // Report API key parameters (credential exposure attack surface)
+    // Report API key parameters
     if !api_key_params.is_empty() {
-        findings.push(
-            crate::finding_builder(target, Severity::Medium,
+        gossan_core::try_push_finding(crate::exposure_finding(target, Severity::Medium,
                 format!("{} API key/token parameter(s) documented in spec",
                     api_key_params.len()),
                 format!("The spec at {} documents {} endpoint(s) that accept authentication \
@@ -291,17 +341,14 @@ fn analyze_spec(
                          CDNs, and browser history. Prefer Authorization header, never query params.\n{}",
                     spec_url, api_key_params.len(),
                     api_key_params[..api_key_params.len().min(5)].join("\n")))
-            .tag("swagger").tag("exposure").tag("credentials")
-            .build().expect("finding builder: required fields are set")
-        );
+            .tag("swagger").tag("exposure").tag("credentials"), findings);
     }
 }
 
 /// Text-heuristic analysis for YAML specs (no parser dependency).
 fn analyze_spec_text(body: &str, spec_url: &str, target: &Target, findings: &mut Vec<Finding>) {
     if body.contains("http://") && !body.contains("https://") {
-        findings.push(
-            crate::finding_builder(
+        gossan_core::try_push_finding(crate::exposure_finding(
                 target,
                 Severity::Medium,
                 "OpenAPI/YAML spec lists HTTP-only server",
@@ -312,13 +359,9 @@ fn analyze_spec_text(body: &str, spec_url: &str, target: &Target, findings: &mut
                 ),
             )
             .tag("swagger")
-            .tag("tls")
-            .build()
-            .expect("finding builder: required fields are set"),
-        );
+            .tag("tls"), findings);
     }
 
-    // Count rough path entries (lines starting with "  /" in YAML)
     let path_count = body
         .lines()
         .filter(|l| {
@@ -328,8 +371,7 @@ fn analyze_spec_text(body: &str, spec_url: &str, target: &Target, findings: &mut
         .count();
 
     if path_count > 20 {
-        findings.push(
-            crate::finding_builder(
+        gossan_core::try_push_finding(crate::exposure_finding(
                 target,
                 Severity::Medium,
                 format!("Large API surface exposed: ~{} paths in spec", path_count),
@@ -340,10 +382,7 @@ fn analyze_spec_text(body: &str, spec_url: &str, target: &Target, findings: &mut
                 ),
             )
             .tag("swagger")
-            .tag("exposure")
-            .build()
-            .expect("finding builder: required fields are set"),
-        );
+            .tag("exposure"), findings);
     }
 }
 
@@ -355,10 +394,10 @@ mod tests {
 
     fn target() -> Target {
         Target::Web(Box::new(WebAssetTarget {
-            url: Url::parse("https://example.com").unwrap(),
+            url: Url::parse("https://example.com").unwrap_or_else(|_| Url::parse("http://127.0.0.1").unwrap()),
             service: ServiceTarget {
                 host: HostTarget {
-                    ip: "127.0.0.1".parse().unwrap(),
+                    ip: "127.0.0.1".parse().unwrap_or_else(|_| "127.0.0.1".parse().unwrap()),
                     domain: Some("example.com".into()),
                 },
                 port: 443,
@@ -392,7 +431,7 @@ mod tests {
         );
         assert!(findings
             .iter()
-            .any(|f| f.title.contains("HTTP (unencrypted) server URL")));
+            .any(|f| f.title().contains("HTTP (unencrypted) server URL")));
     }
 
     #[test]
@@ -412,7 +451,7 @@ mod tests {
         );
         assert!(findings
             .iter()
-            .any(|f| f.title.contains("HTTP-only scheme declared")));
+            .any(|f| f.title().contains("HTTP-only scheme declared")));
     }
 
     #[test]
@@ -436,9 +475,9 @@ mod tests {
         );
         let finding = findings
             .iter()
-            .find(|f| f.title.contains("no authentication requirement"))
+            .find(|f| f.title().contains("no authentication requirement"))
             .unwrap();
-        assert!(finding.detail.contains("GET /admin"));
+        assert!(finding.detail().contains("GET /admin"));
     }
 
     #[test]
@@ -461,10 +500,10 @@ mod tests {
         );
         let finding = findings
             .iter()
-            .find(|f| f.title.contains("no authentication requirement"))
+            .find(|f| f.title().contains("no authentication requirement"))
             .unwrap();
-        assert!(finding.detail.contains("GET /public"));
-        assert!(!finding.detail.contains("GET /private"));
+        assert!(finding.detail().contains("GET /public"));
+        assert!(!finding.detail().contains("GET /private"));
     }
 
     #[test]
@@ -492,10 +531,10 @@ mod tests {
         );
         let finding = findings
             .iter()
-            .find(|f| f.title.contains("API key/token parameter"))
+            .find(|f| f.title().contains("API key/token parameter"))
             .unwrap();
-        assert!(finding.detail.contains("?api_key="));
-        assert!(finding.detail.contains("bearer_token"));
+        assert!(finding.detail().contains("?api_key="));
+        assert!(finding.detail().contains("bearer_token"));
     }
 
     #[test]
@@ -509,7 +548,7 @@ mod tests {
         );
         assert!(findings
             .iter()
-            .any(|f| f.title.contains("HTTP-only server")));
+            .any(|f| f.title().contains("HTTP-only server")));
     }
 
     #[test]
@@ -526,7 +565,7 @@ mod tests {
         );
         assert!(findings
             .iter()
-            .any(|f| f.title.contains("Large API surface exposed")));
+            .any(|f| f.title().contains("Large API surface exposed")));
     }
 
     #[test]
@@ -534,5 +573,25 @@ mod tests {
         assert!(PATHS.contains(&"/swagger.json"));
         assert!(PATHS.contains(&"/v3/openapi.json"));
         assert!(PATHS.contains(&"/.well-known/openapi.json"));
+        assert!(PATHS.contains(&"/swagger-resources"));
+        assert!(PATHS.contains(&"/api/v3/api-docs"));
+    }
+
+    #[test]
+    fn emits_individual_endpoint_findings() {
+        let spec = serde_json::json!({
+            "openapi": "3.0.0",
+            "paths": {
+                "/public": {"get": {"responses": {"200": {"description": "ok"}}}},
+                "/api": {"post": {"responses": {"200": {"description": "ok"}}}}
+            }
+        });
+        let mut findings = Vec::new();
+        analyze_spec(&spec, "https://example.com/openapi.json", &target(), &mut findings);
+        let endpoint_findings: Vec<_> = findings
+            .iter()
+            .filter(|f| f.title().contains("Unauthenticated API endpoint"))
+            .collect();
+        assert_eq!(endpoint_findings.len(), 2);
     }
 }

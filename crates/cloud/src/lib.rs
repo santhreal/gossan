@@ -1,3 +1,21 @@
+#![forbid(unsafe_code)]
+// pedantic moved to workspace [lints.clippy] in root Cargo.toml
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::panic
+    )
+)]
+#![allow(
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::missing_errors_doc,
+)]
+
 //! Cloud asset discovery scanner.
 //!
 //! Derives candidate bucket/account names from the target domain via the
@@ -8,27 +26,39 @@
 //! 1. Create `src/{provider}.rs` and implement [`CloudProvider`].
 //! 2. Add it to [`providers()`] — that's the only change needed in this file.
 
-extern crate self as reqwest;
-pub use upstream_reqwest::{header, redirect, Client, Method, Proxy, Request, Response, StatusCode, Url};
 
-mod azure;
-mod common;
-mod do_spaces;
-mod gcs;
-mod permutations;
-mod provider;
-mod s3;
+pub mod azure;
+pub mod common;
+pub mod do_spaces;
+pub mod gcs;
+pub mod inside_out;
+pub mod permutations;
+pub mod provider;
+pub mod s3;
+// AWS-service-specific probes implementing `provider::CloudProvider`.
+// These were committed as orphan files (no `mod` declaration) when
+// the workspace was last reorganised; re-exporting so the integration
+// test in `tests/test_cloud_adversarial_network.rs` can drive each
+// provider's adversarial-network behaviour directly. Each module is
+// safe to import independently.
+pub mod apigateway;
+pub mod cloudfront;
+pub mod lambda;
+
+#[cfg(test)]
+mod integration_tests;
 
 use std::sync::Arc;
+use std::net::IpAddr;
 
 use async_trait::async_trait;
 use futures::StreamExt;
-use gossan_core::{build_client, Config, ScanInput, ScanOutput, Scanner, Target};
+use gossan_core::{Config, ScanClient, ScanInput, Scanner, Target};
 use secfinding::{Finding, FindingBuilder, Severity};
 
 use common::make_target;
 use provider::CloudProvider;
-
+/// Cloud storage asset scanner — discovers open buckets and containers.
 pub struct CloudScanner;
 
 pub(crate) fn finding_builder(
@@ -40,6 +70,7 @@ pub(crate) fn finding_builder(
     Finding::builder("cloud", target.domain().unwrap_or("?"), severity)
         .title(title)
         .detail(detail)
+        .kind(secfinding::FindingKind::Exposure)
 }
 
 #[async_trait]
@@ -55,15 +86,54 @@ impl Scanner for CloudScanner {
         matches!(target, Target::Domain(_) | Target::Web(_))
     }
 
-    async fn run(&self, input: ScanInput, config: &Config) -> anyhow::Result<ScanOutput> {
-        let mut out = ScanOutput::empty();
+    async fn run(&self, input: ScanInput, config: &Config) -> anyhow::Result<()> {
+        // SSRF Protection: Early exit on metadata service and private IPs
+        if is_ssrf_protected_target(&input.seed) {
+            tracing::warn!("SSRF protection triggered for seed: {}", input.seed);
+            return Ok(());
+        }
+
+        // Drain inbound targets up-front. Cloud bucket-permutation
+        // and inside-out discovery both need the full domain set to
+        // deduplicate org names + seed the AWS API enumeration; this
+        // is not the kind of stage that benefits from incremental
+        // processing.
+        let (inbound, has_ssrf_targets): (Vec<Target>, bool) = {
+            let mut rx = input.target_rx.lock().await;
+            let mut buf = Vec::new();
+            let mut ssrf_detected = false;
+            while let Ok(t) = rx.try_recv() {
+                // SSRF Protection: Filter out metadata service and private IPs
+                if !is_ssrf_protected_target_obj(&t) {
+                    buf.push(t);
+                } else {
+                    tracing::warn!("SSRF protection triggered for target: {:?}", t);
+                    ssrf_detected = true;
+                }
+            }
+            (buf, ssrf_detected)
+        };
+
+        #[cfg(feature = "cloud")]
+        {
+            // Inside-Out Discovery: use credentials to find unmapped
+            // assets (S3, EC2, Route53, RDS). Emits directly via
+            // input.emit_target — no separate buffer parameter.
+            // Skip if we detected SSRF-protected targets to avoid hanging.
+            if !has_ssrf_targets {
+                if let Err(e) = crate::inside_out::discover_aws(&input).await {
+                    tracing::error!("AWS inside-out discovery failed: {}", e);
+                }
+            } else {
+                tracing::warn!("Skipping AWS inside-out discovery due to SSRF protection");
+            }
+        }
 
         // Cloud scanner never follows redirects (we need exact 3xx/403 status codes)
-        let client = build_client(config, false)?;
+        let client = ScanClient::from_config_no_redirect(config, Arc::clone(&input.resolver))?;
 
         // Derive unique org names from all targets using the PSL
-        let mut org_names: Vec<String> = input
-            .targets
+        let mut org_names: Vec<String> = inbound
             .iter()
             .filter(|t| self.accepts(t))
             .filter_map(|t| t.domain())
@@ -75,6 +145,18 @@ impl Scanner for CloudScanner {
         let seed_org = org_name(&input.seed);
         if !seed_org.is_empty() && !org_names.contains(&seed_org) {
             org_names.push(seed_org);
+        }
+
+        // Early exit if we detected SSRF targets and have no inbound targets
+        if has_ssrf_targets && inbound.is_empty() {
+            tracing::info!("SSRF protection: All targets filtered out, exiting early");
+            return Ok(());
+        }
+
+        // Early exit if no valid organizations to scan
+        if org_names.is_empty() {
+            tracing::info!("No valid organizations to scan, exiting early");
+            return Ok(());
         }
 
         let providers: Arc<Vec<Box<dyn CloudProvider>>> = Arc::new(providers());
@@ -120,10 +202,12 @@ impl Scanner for CloudScanner {
                 .collect()
                 .await;
 
-            out.findings.extend(findings);
+            for f in findings {
+                input.emit(f);
+            }
         }
 
-        Ok(out)
+        Ok(())
     }
 }
 
@@ -168,6 +252,60 @@ fn org_name(input: &str) -> String {
     } else {
         // IP address, localhost, or unrecognised TLD — use first label as-is
         host.split('.').next().unwrap_or(host).to_lowercase()
+    }
+}
+
+#[cfg(test)]
+mod ssrf_tests {
+    use super::{is_ssrf_protected_ip, is_ssrf_protected_target};
+    use std::net::IpAddr;
+
+    fn ip(s: &str) -> IpAddr {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn aws_metadata_blocked() {
+        assert!(is_ssrf_protected_ip(&ip("169.254.169.254")));
+        assert!(is_ssrf_protected_target("169.254.169.254"));
+        assert!(is_ssrf_protected_target("metadata.google.internal"));
+    }
+
+    #[test]
+    fn rfc1918_blocked() {
+        assert!(is_ssrf_protected_ip(&ip("10.0.0.1")));
+        assert!(is_ssrf_protected_ip(&ip("10.255.255.255")));
+        assert!(is_ssrf_protected_ip(&ip("172.16.0.1")));
+        assert!(is_ssrf_protected_ip(&ip("172.31.255.255")));
+        assert!(is_ssrf_protected_ip(&ip("192.168.0.1")));
+    }
+
+    #[test]
+    fn loopback_blocked() {
+        assert!(is_ssrf_protected_ip(&ip("127.0.0.1")));
+        assert!(is_ssrf_protected_ip(&ip("127.255.255.254")));
+    }
+
+    #[test]
+    fn link_local_blocked() {
+        assert!(is_ssrf_protected_ip(&ip("169.254.0.1")));
+        assert!(is_ssrf_protected_ip(&ip("169.254.255.254")));
+    }
+
+    #[test]
+    fn ipv6_loopback_and_link_local_blocked() {
+        assert!(is_ssrf_protected_ip(&ip("::1")));
+        assert!(is_ssrf_protected_ip(&ip("fe80::1")));
+        assert!(is_ssrf_protected_ip(&ip("fe80::dead:beef")));
+    }
+
+    #[test]
+    fn public_ips_allowed() {
+        assert!(!is_ssrf_protected_ip(&ip("1.1.1.1")));
+        assert!(!is_ssrf_protected_ip(&ip("8.8.8.8")));
+        assert!(!is_ssrf_protected_ip(&ip("172.32.0.1"))); // outside 172.16-31
+        assert!(!is_ssrf_protected_ip(&ip("169.253.0.1"))); // adjacent /16
+        assert!(!is_ssrf_protected_ip(&ip("2606:4700:4700::1111")));
     }
 }
 
@@ -227,4 +365,72 @@ mod tests {
     fn providers_registered() {
         assert_eq!(providers().len(), 4);
     }
+}
+
+/// Check if a string target (seed) should be blocked due to SSRF protection.
+fn is_ssrf_protected_target(target: &str) -> bool {
+    // Try to parse as IP address
+    if let Ok(ip) = target.parse::<IpAddr>() {
+        return is_ssrf_protected_ip(&ip);
+    }
+    
+    // Check if it's a hostname that resolves to a protected IP
+    // For simplicity, check known metadata service hostname patterns
+    if target == "metadata.google.internal" || target == "169.254.169.254" {
+        return true;
+    }
+    
+    false
+}
+
+/// Check if a Target object should be blocked due to SSRF protection.
+fn is_ssrf_protected_target_obj(target: &Target) -> bool {
+    match target {
+        Target::Host(host_target) => is_ssrf_protected_ip(&host_target.ip),
+        Target::Domain(domain_target) => is_ssrf_protected_target(&domain_target.domain),
+        _ => false,
+    }
+}
+
+/// Check if an IP address should be blocked due to SSRF protection.
+fn is_ssrf_protected_ip(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ipv4) => {
+            let octets = ipv4.octets();
+            // AWS metadata service
+            if octets == [169, 254, 169, 254] {
+                return true;
+            }
+            // RFC1918 private ranges
+            if octets[0] == 10 {
+                return true;
+            }
+            if octets[0] == 172 && (16..=31).contains(&octets[1]) {
+                return true;
+            }
+            if octets[0] == 192 && octets[1] == 168 {
+                return true;
+            }
+            // Loopback
+            if octets[0] == 127 {
+                return true;
+            }
+            // Link-local (169.254.0.0/16)
+            if octets[0] == 169 && octets[1] == 254 {
+                return true;
+            }
+        }
+        IpAddr::V6(ipv6) => {
+            // IPv6 loopback
+            if *ipv6 == std::net::Ipv6Addr::LOCALHOST {
+                return true;
+            }
+            // IPv6 link-local (fe80::/10)
+            let segments = ipv6.segments();
+            if (segments[0] & 0xffc0) == 0xfe80 {
+                return true;
+            }
+        }
+    }
+    false
 }

@@ -4,7 +4,23 @@
 //! `truestack::HeaderFinding` → `secfinding::Finding`.
 
 use gossan_core::{ServiceTarget, Target, TechCategory, Technology, WebAssetTarget};
-use secfinding::{Evidence, Finding, Severity};
+use secfinding::Finding;
+
+/// Cap response body text to a safe maximum (2 MB).
+async fn bounded_text(resp: reqwest::Response, limit: usize) -> anyhow::Result<String> {
+    let mut buf = Vec::with_capacity(limit.min(4096));
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
+        let chunk = chunk?;
+        let remaining = limit.saturating_sub(buf.len());
+        if remaining == 0 {
+            break;
+        }
+        let take = chunk.len().min(remaining);
+        buf.extend_from_slice(&chunk[..take]);
+    }
+    Ok(String::from_utf8_lossy(&buf).to_string())
+}
 
 /// Probe a single web service target and return a [`WebAssetTarget`] plus any
 /// security-header findings.
@@ -21,14 +37,34 @@ pub async fn probe(
     let headers: Vec<(String, String)> = resp
         .headers()
         .iter()
-        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+        .map(|(k, v)| {
+            (
+                k.to_string(),
+                String::from_utf8_lossy(v.as_bytes()).to_string(),
+            )
+        })
         .collect();
 
-    let body = resp.text().await.unwrap_or_default();
+    let body = bounded_text(resp, 2 * 1024 * 1024).await.unwrap_or_default();
     let title = truestack::html::extract_title(&body);
 
     // ── Technology detection via truestack ────────────────────────────────
-    let ts_techs = truestack::fingerprints::detect(&headers, &body);
+    let mut ts_techs = truestack::fingerprints::detect(&headers, &body);
+
+    // Behavioral probing
+    truestack::behavior::identify(client, base.as_str(), &mut ts_techs)
+        .await
+        .ok();
+
+    // Post-process: excludes, requires, dedup, implied. truestack's
+    // `postprocess::apply` takes ownership of the Vec and returns the
+    // pruned/expanded set.
+    let rules = &truestack::fingerprints::RuleEngine::embedded().rules;
+    let mut ts_techs = truestack::postprocess::apply(ts_techs, rules);
+
+    // Version intel confidence adjustment
+    truestack::version_intel::assess(&mut ts_techs, &headers);
+
     let tech: Vec<Technology> = ts_techs.into_iter().map(convert_technology).collect();
 
     // ── Body hash — first 8 bytes of SHA-256, hex-encoded ────────────────
@@ -39,14 +75,39 @@ pub async fn probe(
     };
 
     // ── Favicon hash — async, best-effort ────────────────────────────────
-    let favicon_hash = truestack::favicon::fetch_hash(client, base.as_str()).await;
+    let favicon_hash =
+        truestack::favicon::fetch_hash_limited(client, base.as_str(), 5 * 1024 * 1024).await;
 
     // ── Security header audit via truestack ───────────────────────────────
+    // Rebuild each truestack-emitted Finding through secfinding's builder so
+    // the scanner name and target are stamped as panoram-side metadata
+    // (truestack doesn't know it's running under panoram). Finding's fields
+    // are immutable through accessors — the builder is the only way to
+    // re-stamp them.
     let ts_findings = truestack::security_headers::audit(&headers);
     let web_target = Target::Service(svc.clone());
+    let panoram_target = web_target.domain().unwrap_or("?").to_string();
     let header_findings: Vec<Finding> = ts_findings
         .into_iter()
-        .map(|f| convert_header_finding(f, &web_target))
+        .filter_map(|f| {
+            let mut builder = Finding::builder("techstack", panoram_target.clone(), f.severity())
+                .title(f.title().to_string())
+                .detail(f.detail().to_string())
+                .kind(f.kind());
+            for ev in f.evidence() {
+                builder = builder.evidence(ev.clone());
+            }
+            for tag in f.tags() {
+                builder = builder.tag(tag.to_string());
+            }
+            for cve in f.cve_ids() {
+                builder = builder.cve(cve.to_string());
+            }
+            if let Some(hint) = f.exploit_hint() {
+                builder = builder.exploit_hint(hint.to_string());
+            }
+            builder.build().ok()
+        })
         .collect();
 
     Ok((
@@ -86,61 +147,9 @@ fn convert_technology(t: truestack::Technology) -> Technology {
     }
 }
 
-/// Convert a `truestack::HeaderFinding` into `secfinding::Finding`.
-fn convert_header_finding(f: truestack::HeaderFinding, target: &Target) -> Finding {
-    let mut finding = Finding::builder(
-        "techstack",
-        target.domain().unwrap_or("?"),
-        convert_severity(f.severity),
-    )
-    .title(&f.title)
-    .detail(&f.detail);
-    for tag in &f.tags {
-        finding = finding.tag(tag);
-    }
-    if let Some(ev) = f.evidence {
-        if let Some((name, value)) = ev.header {
-            finding = finding.evidence(Evidence::HttpResponse {
-                status: 200,
-                headers: vec![(name, value)],
-                body_excerpt: ev.body_excerpt,
-            });
-        }
-    }
-    finding
-        .build()
-        .expect("finding builder: required fields are set")
-}
-
-/// Convert truestack severity to gossan severity.
-fn convert_severity(s: truestack::Severity) -> Severity {
-    match s {
-        truestack::Severity::Info => Severity::Info,
-        truestack::Severity::Low => Severity::Low,
-        truestack::Severity::Medium => Severity::Medium,
-        truestack::Severity::High => Severity::High,
-        truestack::Severity::Critical => Severity::Critical,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn convert_severity_maps_all_variants() {
-        assert_eq!(convert_severity(truestack::Severity::Info), Severity::Info);
-        assert_eq!(convert_severity(truestack::Severity::Low), Severity::Low);
-        assert_eq!(
-            convert_severity(truestack::Severity::Medium),
-            Severity::Medium
-        );
-        assert_eq!(convert_severity(truestack::Severity::High), Severity::High);
-        assert_eq!(
-            convert_severity(truestack::Severity::Critical),
-            Severity::Critical
-        );
-    }
 
     #[test]
     fn convert_technology_preserves_name_version_and_confidence() {

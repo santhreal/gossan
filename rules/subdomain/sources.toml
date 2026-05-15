@@ -1,0 +1,484 @@
+# Subdomain source metadata — community extensible TOML rules.
+# Every source listed here has documented rate limits and key requirements.
+# Rate limits are expressed as "requests per second" (float). Use 0 for very low
+# limits that are handled by per-minute governor quotas in code.
+
+[crtsh]
+name = "crtsh"
+type = "certificate_transparency"
+requires_key = false
+default_rate_limit = 1.0
+
+[certspotter]
+name = "certspotter"
+type = "certificate_transparency"
+requires_key = false
+default_rate_limit = 0.028  # 100/hr
+
+[wayback]
+name = "wayback"
+type = "archive"
+requires_key = false
+default_rate_limit = 1.0
+
+[hackertarget]
+name = "hackertarget"
+type = "passive_dns"
+requires_key = false
+default_rate_limit = 1.0
+
+[rapiddns]
+name = "rapiddns"
+type = "passive_dns"
+requires_key = false
+default_rate_limit = 1.0
+
+[alienvault]
+name = "alienvault"
+type = "passive_dns"
+requires_key = false
+default_rate_limit = 1.0
+
+[urlscan]
+name = "urlscan"
+type = "passive_dns"
+requires_key = false
+default_rate_limit = 2.0
+
+[commoncrawl]
+name = "commoncrawl"
+type = "archive"
+requires_key = false
+default_rate_limit = 1.0
+
+[dnsdumpster]
+name = "dnsdumpster"
+type = "scraping"
+requires_key = false
+default_rate_limit = 1.0
+
+[virustotal]
+name = "virustotal"
+type = "passive_dns"
+requires_key = true
+default_rate_limit = 0.066  # 4/min
+
+[securitytrails]
+name = "securitytrails"
+type = "passive_dns"
+requires_key = true
+default_rate_limit = 1.0
+
+[shodan]
+name = "shodan"
+type = "passive_dns"
+requires_key = true
+default_rate_limit = 1.0
+
+[censys]
+name = "censys"
+type = "certificate_transparency"
+requires_key = true
+default_rate_limit = 0.2
+
+[binaryedge]
+name = "binaryedge"
+type = "passive_dns"
+requires_key = true
+default_rate_limit = 1.0
+
+[fullhunt]
+name = "fullhunt"
+type = "passive_dns"
+requires_key = true
+default_rate_limit = 1.0
+
+[github]
+name = "github"
+type = "scm"
+requires_key = true
+default_rate_limit = 0.167  # 10/min unauth
+
+[chaos]
+name = "chaos"
+type = "passive_dns"
+requires_key = true
+default_rate_limit = 1.0
+
+[bevigil]
+name = "bevigil"
+type = "passive_dns"
+requires_key = true
+default_rate_limit = 1.0
+
+[fofa]
+name = "fofa"
+type = "search_engine"
+requires_key = true
+default_rate_limit = 1.0
+
+[hunter]
+name = "hunter"
+type = "passive_dns"
+requires_key = true
+default_rate_limit = 1.0
+
+[netlas]
+name = "netlas"
+type = "passive_dns"
+requires_key = true
+default_rate_limit = 1.0
+
+[zoomeye]
+name = "zoomeye"
+type = "search_engine"
+requires_key = true
+default_rate_limit = 1.0
+
+[c99]
+name = "c99"
+type = "passive_dns"
+requires_key = true
+default_rate_limit = 0.5
+
+[quake]
+name = "quake"
+type = "search_engine"
+requires_key = true
+default_rate_limit = 0.5
+
+[threatbook]
+name = "threatbook"
+type = "passive_dns"
+requires_key = true
+default_rate_limit = 0.5
+
+[anubis]
+name = "anubis"
+type = "passive_dns"
+requires_key = false
+default_rate_limit = 1.0
+
+[bufferover]
+name = "bufferover"
+type = "passive_dns"
+requires_key = false
+default_rate_limit = 1.0
+
+[dnsrepo]
+name = "dnsrepo"
+type = "passive_dns"
+requires_key = false
+default_rate_limit = 1.0
+
+[intelx]
+name = "intelx"
+type = "intelligence"
+requires_key = true
+default_rate_limit = 0.5
+
+[leakix]
+name = "leakix"
+type = "intelligence"
+requires_key = true
+default_rate_limit = 0.5
+
+[robtex]
+name = "robtex"
+type = "passive_dns"
+requires_key = false
+default_rate_limit = 1.0
+
+[whoisxml]
+name = "whoisxml"
+type = "passive_dns"
+requires_key = true
+default_rate_limit = 1.0
+
+[asn]
+name = "asn"
+type = "network"
+requires_key = false
+default_rate_limit = 1.0
+
+[google_ct]
+name = "google_ct"
+type = "certificate_transparency"
+requires_key = false
+default_rate_limit = 1.0
+
+[facebook_ct]
+name = "facebook_ct"
+type = "certificate_transparency"
+requires_key = false
+default_rate_limit = 1.0
+
+[apple_ct]
+name = "apple_ct"
+type = "certificate_transparency"
+requires_key = false
+default_rate_limit = 1.0
+
+[cloudflare_ct]
+name = "cloudflare_ct"
+type = "certificate_transparency"
+requires_key = false
+default_rate_limit = 1.0
+
+[digicert_ct]
+name = "digicert_ct"
+type = "certificate_transparency"
+requires_key = false
+default_rate_limit = 1.0
+
+[sectigo_ct]
+name = "sectigo_ct"
+type = "certificate_transparency"
+requires_key = false
+default_rate_limit = 1.0
+
+[identrust_ct]
+name = "identrust_ct"
+type = "certificate_transparency"
+requires_key = false
+default_rate_limit = 1.0
+
+[entrust_ct]
+name = "entrust_ct"
+type = "certificate_transparency"
+requires_key = false
+default_rate_limit = 1.0
+
+[godaddy_ct]
+name = "godaddy_ct"
+type = "certificate_transparency"
+requires_key = false
+default_rate_limit = 1.0
+
+[amazon_ct]
+name = "amazon_ct"
+type = "certificate_transparency"
+requires_key = false
+default_rate_limit = 1.0
+
+[passivetotal]
+name = "passivetotal"
+type = "passive_dns"
+requires_key = true
+default_rate_limit = 1.0
+
+[spyse]
+name = "spyse"
+type = "passive_dns"
+requires_key = true
+default_rate_limit = 1.0
+
+[dnslytics]
+name = "dnslytics"
+type = "passive_dns"
+requires_key = false
+default_rate_limit = 1.0
+
+[threatminer]
+name = "threatminer"
+type = "passive_dns"
+requires_key = false
+default_rate_limit = 1.0
+
+[ptrarchive]
+name = "ptrarchive"
+type = "passive_dns"
+requires_key = false
+default_rate_limit = 1.0
+
+[riddler]
+name = "riddler"
+type = "search_engine"
+requires_key = false
+default_rate_limit = 1.0
+
+[sitedossier]
+name = "sitedossier"
+type = "search_engine"
+requires_key = false
+default_rate_limit = 1.0
+
+[sonarsearch]
+name = "sonarsearch"
+type = "passive_dns"
+requires_key = false
+default_rate_limit = 1.0
+
+[circl]
+name = "circl"
+type = "passive_dns"
+requires_key = false
+default_rate_limit = 1.0
+
+[mnemonic]
+name = "mnemonic"
+type = "passive_dns"
+requires_key = false
+default_rate_limit = 1.0
+
+[farsight_dnsdb]
+name = "farsight_dnsdb"
+type = "passive_dns"
+requires_key = true
+default_rate_limit = 1.0
+
+[sublist3r]
+name = "sublist3r"
+type = "passive_dns"
+requires_key = false
+default_rate_limit = 1.0
+
+[omnisint]
+name = "omnisint"
+type = "passive_dns"
+requires_key = false
+default_rate_limit = 1.0
+
+[digitorus]
+name = "digitorus"
+type = "certificate_transparency"
+requires_key = false
+default_rate_limit = 1.0
+
+[columbus]
+name = "columbus"
+type = "passive_dns"
+requires_key = false
+default_rate_limit = 1.0
+
+[crobat]
+name = "crobat"
+type = "passive_dns"
+requires_key = false
+default_rate_limit = 1.0
+
+[threatcrowd]
+name = "threatcrowd"
+type = "passive_dns"
+requires_key = false
+default_rate_limit = 1.0
+
+[rook]
+name = "rook"
+type = "passive_dns"
+requires_key = false
+default_rate_limit = 1.0
+
+[pugrecon]
+name = "pugrecon"
+type = "passive_dns"
+requires_key = false
+default_rate_limit = 1.0
+
+[subdomaincenter]
+name = "subdomaincenter"
+type = "passive_dns"
+requires_key = false
+default_rate_limit = 1.0
+
+[synapsint]
+name = "synapsint"
+type = "passive_dns"
+requires_key = false
+default_rate_limit = 1.0
+
+[jter]
+name = "jter"
+type = "passive_dns"
+requires_key = false
+default_rate_limit = 1.0
+
+[bing]
+name = "bing"
+type = "search_engine"
+requires_key = false
+default_rate_limit = 1.0
+
+[baidu]
+name = "baidu"
+type = "search_engine"
+requires_key = false
+default_rate_limit = 1.0
+
+[duckduckgo]
+name = "duckduckgo"
+type = "search_engine"
+requires_key = false
+default_rate_limit = 1.0
+
+[yahoo]
+name = "yahoo"
+type = "search_engine"
+requires_key = false
+default_rate_limit = 1.0
+
+[exalead]
+name = "exalead"
+type = "search_engine"
+requires_key = false
+default_rate_limit = 1.0
+
+[ask]
+name = "ask"
+type = "search_engine"
+requires_key = false
+default_rate_limit = 1.0
+
+[greynoise]
+name = "greynoise"
+type = "threat_intel"
+requires_key = true
+default_rate_limit = 1.0
+
+[ipinfo]
+name = "ipinfo"
+type = "passive_dns"
+requires_key = true
+default_rate_limit = 1.0
+
+[viewdns]
+name = "viewdns"
+type = "passive_dns"
+requires_key = false
+default_rate_limit = 1.0
+
+[hackertarget_dns]
+name = "hackertarget_dns"
+type = "passive_dns"
+requires_key = false
+default_rate_limit = 1.0
+
+[pastebin]
+name = "pastebin"
+type = "intelligence"
+requires_key = false
+default_rate_limit = 1.0
+
+[yandex]
+name = "yandex"
+type = "search_engine"
+requires_key = false
+default_rate_limit = 1.0
+
+[google]
+name = "google"
+type = "search_engine"
+requires_key = false
+default_rate_limit = 1.0
+
+[zone_walk]
+name = "zone_walk"
+type = "dns"
+requires_key = false
+default_rate_limit = 1.0
+
+[builtwith]
+name = "builtwith"
+type = "tech_intel"
+requires_key = true
+default_rate_limit = 1.0

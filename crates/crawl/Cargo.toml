@@ -2,20 +2,31 @@
 name = "gossan-crawl"
 version.workspace = true
 edition.workspace = true
-authors = ["CORUM COLLECTIVE LLC <contact@santh.io>"]
+authors = ["Santh Project <contact@santh.dev>"]
 license.workspace = true
-homepage = "https://santh.io"
-repository.workspace = true
-description = "Authenticated web crawler — form extraction, parameter discovery, link following — part of the Santh security research ecosystem"
+homepage = "https://santh.dev"
+repository = "https://github.com/santhsecurity/gossan"
+description = "Authenticated web crawler — form extraction, parameter discovery, link following — part of the security research ecosystem"
+readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+
+[package.metadata.santh]
+status = "alpha"
 [dependencies]
-gossan-core = { version = "0.2", path = "../core" }
+gossan-core = { version = "0.3", path = "../core" }
 async-trait = "0.1"
 futures = "0.3"
-upstream_reqwest = { workspace = true }
+reqwest = { workspace = true }
 scraper = "0.22"
 tracing = "0.1"
 url = "2"
 anyhow = "1"
+tokio = { workspace = true }
+chromiumoxide = { version = "0.5", features = ["tokio-runtime"] }
+gossan-js = { path = "../js" }
+secfinding = { workspace = true }
+
+[lints]
+workspace = true

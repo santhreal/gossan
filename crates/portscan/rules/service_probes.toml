@@ -1,0 +1,2160 @@
+# Active service probes for the gossan portscan engine.
+#
+# Each `[[probe]]` defines:
+#   * `name`           — human-readable identifier (also used as
+#                        `fallback_probe` reference target)
+#   * `ports`          — optional list of target ports; `None`/omitted
+#                        means the probe runs on every open port
+#   * `payload`        — bytes to send. If the string starts with `0x`
+#                        the rest is parsed as hex; otherwise it is
+#                        sent verbatim as ASCII (escape sequences in
+#                        TOML strings — `\r`, `\n`, `\t`, `\u00..` —
+#                        are honored by the deserializer)
+#   * `match_regex`    — `regex::bytes::Regex` pattern matched against
+#                        the response. Anchor with `^` to require the
+#                        match at the start of the response (most
+#                        banner protocols emit the version on the
+#                        first line)
+#   * `fallback_probe` — optional `name` of another probe to run after
+#                        this one matches. Used to chain enrichment
+#                        passes (e.g. HTTP_GET → HTTP_OPTIONS for
+#                        verb advertisement)
+#
+# Conventions:
+#   - Probes are ordered roughly by frequency in real-world scans
+#     (HTTP first, then SSH, then mail/db/cache/RPC). The probe engine
+#     runs probes in TOML order, so common services match early.
+#   - `match_regex` patterns avoid pinning specific version numbers
+#     so they don't go stale when vendors release a new minor version.
+#     Service identification is the goal here; version extraction is
+#     left to `gossan-techstack`'s parsing layer downstream.
+#   - Probes that would otherwise mutate state (POST, DELETE, AUTH
+#     attempts) are deliberately excluded. The engine MUST be safe to
+#     run against unconsented hosts as part of recon — readonly
+#     fingerprinting only.
+#
+# Wire-protocol references:
+#   - nmap-service-probes:
+#       https://github.com/nmap/nmap/blob/master/nmap-service-probes
+#   - IANA service-name registry:
+#       https://www.iana.org/assignments/service-names-port-numbers
+#
+# Adding a probe: write the [[probe]] block, run
+# `cargo test -p gossan-portscan probes::tests` to validate the regex
+# compiles + the toml parses, then `cargo run -p gossan-cli -- scan
+# <local-test-host>` to verify it identifies the service end-to-end.
+
+# ── HTTP family ─────────────────────────────────────────────────────────
+# HTTP/1.x is by far the most common open service on internet-exposed
+# hosts. We send a minimal GET / so we don't hit weird vhost-routing or
+# SNI requirements; pure passive servers will respond on first byte.
+
+[[probe]]
+name = "HTTP_GET"
+ports = [80, 81, 88, 443, 591, 593, 832, 981, 1010, 1311, 2480, 3000, 3128, 3333, 4243, 4567, 4711, 4712, 4993, 5000, 5104, 5108, 5800, 6543, 7000, 7396, 7474, 8000, 8001, 8008, 8014, 8042, 8069, 8080, 8081, 8088, 8090, 8091, 8118, 8123, 8172, 8222, 8243, 8280, 8281, 8333, 8443, 8500, 8834, 8880, 8888, 8983, 9000, 9043, 9060, 9080, 9090, 9091, 9200, 9443, 9800, 9981, 12443, 16080, 18091, 18092, 20720, 28017]
+payload = "GET / HTTP/1.0\r\n\r\n"
+match_regex = "^HTTP/[12]\\.[019] [0-9]{3}"
+
+# HTTP/2 prior-knowledge preface. Modern API gateways accept this
+# directly without ALPN. Catches servers that disable HTTP/1.1.
+[[probe]]
+name = "HTTP2_PREFACE"
+ports = [443, 8080, 8443, 9090, 50051]
+payload = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+# Connection preface frame is followed by SETTINGS frame from server;
+# 0x000000 is the frame length prefix nginx/h2c stacks emit first.
+match_regex = "^\\x00\\x00.{0,3}\\x04"
+
+# OPTIONS often discloses Allow: headers + sometimes additional
+# Server: detail not in the GET response. Safe + read-only.
+[[probe]]
+name = "HTTP_OPTIONS"
+payload = "OPTIONS / HTTP/1.0\r\n\r\n"
+match_regex = "^HTTP/[12]\\.[019] [0-9]{3}"
+
+# ── Secure shell ────────────────────────────────────────────────────────
+# SSH banner is sent immediately on TCP accept, so a null probe (zero
+# bytes sent) catches it. The match anchors to `SSH-` which is the
+# RFC 4253 protocol-version exchange prefix.
+
+[[probe]]
+name = "SSH_NULL"
+ports = [22, 222, 2022, 2222, 22222]
+payload = ""
+match_regex = "^SSH-[12]\\."
+
+# ── Mail family ─────────────────────────────────────────────────────────
+# All mail protocols announce themselves on connect. Null probes work.
+# match_regex pins the response code prefix (220 = ready, +OK = pop).
+
+[[probe]]
+name = "SMTP_NULL"
+ports = [25, 465, 587, 2525]
+payload = ""
+match_regex = "^220[ \\-]"
+fallback_probe = "SMTP_EHLO"
+
+# EHLO advertises capabilities (STARTTLS, AUTH PLAIN, SIZE, etc).
+# Use a plausible client name — some MTAs reject obviously-fake greets.
+[[probe]]
+name = "SMTP_EHLO"
+ports = [25, 465, 587, 2525]
+payload = "EHLO scan.example.com\r\n"
+match_regex = "^250[ \\-]"
+
+[[probe]]
+name = "POP3_NULL"
+ports = [110, 995]
+payload = ""
+match_regex = "^\\+OK"
+
+[[probe]]
+name = "IMAP_NULL"
+ports = [143, 993]
+payload = ""
+match_regex = "^\\* OK"
+
+# ── DNS ─────────────────────────────────────────────────────────────────
+# version.bind chaos-class TXT query — RFC 4892. BIND, PowerDNS,
+# Unbound, Knot, NSD all answer this (some redact the version, but the
+# response shape itself is diagnostic). 2-byte length-prefix is required
+# for TCP DNS (RFC 1035 §4.2.2).
+[[probe]]
+name = "DNS_VERSION_BIND"
+ports = [53]
+# 2-byte length (0x001e = 30 bytes) + standard DNS query for
+# version.bind CHAOS TXT. Hex-encoded so the binary stays exact.
+payload = "0x001e0006010000010000000000000776657273696f6e0462696e640000100003"
+# Response begins with the 2-byte length prefix + transaction id 0x0006.
+# A non-empty answer section means the server replied (regardless of
+# whether the version is redacted).
+match_regex = "^.{2}\\x00\\x06[\\x80-\\x87]"
+
+# ── Database family ─────────────────────────────────────────────────────
+# All major database servers banner-leak on accept; a null probe is
+# enough. The match patterns are anchored to wire-protocol magic bytes
+# so they won't false-positive on text protocols listening on the same
+# port.
+
+# MySQL / MariaDB greeting packet starts with a 3-byte length prefix
+# + 1-byte sequence (always 0x00) + protocol version 10.
+[[probe]]
+name = "MYSQL_NULL"
+ports = [3306, 33060]
+payload = ""
+match_regex = "^.{3}\\x00\\x0a[345]\\."
+
+# PostgreSQL needs an explicit StartupMessage to talk; null returns
+# nothing. We send a v3.0 startup with a dummy `user` parameter — this
+# elicits an AuthenticationRequest or ErrorResponse (both diagnostic).
+# Bytes: int32 length=23, int32 protocol=196608 (0x00030000), "user\0scan\0\0".
+[[probe]]
+name = "POSTGRES_STARTUP"
+ports = [5432, 5433]
+payload = "0x00000017000300007573657200736361006e0000"
+# 'R' = AuthenticationRequest, 'E' = ErrorResponse. Either confirms PG.
+match_regex = "^[RE]"
+
+# Redis RESP "INFO" reply starts with a $<length>\r\n bulk string
+# header followed by `redis_version:`.
+[[probe]]
+name = "REDIS_INFO"
+ports = [6379, 6380, 16379]
+payload = "INFO\r\n"
+match_regex = "^\\$\\d+\\r\\nredis_version:"
+
+# Some Redis instances are protected-mode only (refuse INFO from
+# non-loopback). They respond with "-DENIED" or "-NOAUTH" — both
+# confirm Redis without giving us version detail.
+[[probe]]
+name = "REDIS_DENIED"
+ports = [6379, 6380, 16379]
+payload = "INFO\r\n"
+match_regex = "^-(NOAUTH|DENIED|ERR)"
+
+# Memcached "version" gives back "VERSION 1.6.x\r\n".
+[[probe]]
+name = "MEMCACHED_VERSION"
+ports = [11211, 11212]
+payload = "version\r\n"
+match_regex = "^VERSION "
+
+# MongoDB wire protocol — OP_QUERY for the `isMaster` admin command.
+# Modern Mongo returns a 4-byte message length followed by request id
+# matching what we sent. The `2a000000` length here is 42 decimal.
+# Hex was extracted from a captured Mongo handshake.
+[[probe]]
+name = "MONGO_ISMASTER"
+ports = [27017, 27018, 27019, 28017]
+payload = "0x3a00000001000000000000d40700000000000061646d696e2e24636d640000000000ffffffff13000000106973026d6173746572000100000000"
+# Response begins with a 4-byte length and reply opcode 0x000007d1.
+match_regex = "^.{4}.{4}.{4}\\xd1\\x07\\x00\\x00"
+
+# ── Caches / KV / message brokers ───────────────────────────────────────
+
+# AMQP 0.9.1 server greeting. Client opens a TCP connection then waits
+# for the server to send the protocol header — we elicit it by sending
+# the AMQP protocol-version preamble ourselves.
+[[probe]]
+name = "AMQP_PROTO_HEADER"
+ports = [5672, 5671]
+payload = "0x414d515000000901"
+# Server replies with frame type 0x01 (method) + channel 0 + class 10
+# (Connection) + method 10 (Start). The Connection.Start payload begins
+# with the version-major/minor bytes.
+match_regex = "^\\x01\\x00\\x00\\x00.{4}\\x00\\x0a\\x00\\x0a"
+
+# RabbitMQ Management plugin (HTTP API) on 15672 → falls through to
+# HTTP_GET probe naturally; no separate entry needed.
+
+# ── Remote desktop / VNC ────────────────────────────────────────────────
+
+# RFB protocol version handshake — server announces "RFB 003.008\n" or
+# similar on accept. Pure null probe; confirms VNC family.
+[[probe]]
+name = "VNC_RFB"
+ports = [5900, 5901, 5902, 5903, 5904, 5905, 5906, 5907, 5908, 5909]
+payload = ""
+match_regex = "^RFB \\d{3}\\.\\d{3}\\n"
+
+# RDP X.224 connection request. Triggers a connection confirmation
+# from any RDP listener; safe + non-mutating. Hex extracted from
+# Wireshark capture against a Windows Server 2019 host.
+[[probe]]
+name = "RDP_X224"
+ports = [3389]
+payload = "0x030000130ee000000000000100080000000000"
+# Server replies with X.224 connection confirm — TPKT version 03 +
+# reserved 00 + length + COTP TPDU type 0xd0 (CC).
+match_regex = "^\\x03\\x00\\x00.\\x06\\xd0"
+
+# ── Telnet / Rsync / IRC / NNTP ─────────────────────────────────────────
+# All banner-on-connect protocols.
+
+[[probe]]
+name = "TELNET_NULL"
+ports = [23, 992]
+payload = ""
+# IAC sequences (0xff) in the first three bytes are diagnostic of
+# telnet's option-negotiation greeting.
+match_regex = "^\\xff[\\xfb-\\xfe]"
+
+[[probe]]
+name = "RSYNC_NULL"
+ports = [873]
+payload = ""
+match_regex = "^@RSYNCD: "
+
+[[probe]]
+name = "IRC_NULL"
+ports = [6660, 6661, 6662, 6663, 6664, 6665, 6666, 6667, 6668, 6669, 6697, 7000]
+payload = ""
+match_regex = "^(NOTICE|:|ERROR)"
+
+[[probe]]
+name = "NNTP_NULL"
+ports = [119, 433, 563]
+payload = ""
+match_regex = "^200 "
+
+# ── Container / orchestration ───────────────────────────────────────────
+
+# Docker daemon HTTP API on 2375 (cleartext). HTTP_GET probe will
+# match; this entry exists to surface the daemon-specific Docker-API
+# header in the engine's per-port metadata.
+[[probe]]
+name = "DOCKER_API"
+ports = [2375, 2376]
+payload = "GET /version HTTP/1.0\r\n\r\n"
+match_regex = "Docker"
+
+# Kubernetes API server identifies itself in the response body of an
+# unauthenticated /version request.
+[[probe]]
+name = "KUBERNETES_API"
+ports = [6443, 8080, 10250, 10255]
+payload = "GET /version HTTP/1.0\r\n\r\n"
+match_regex = "(kubernetes|gitVersion|gitCommit)"
+
+# Etcd v2 + v3 versions endpoint.
+[[probe]]
+name = "ETCD_VERSION"
+ports = [2379, 2380, 4001, 7001]
+payload = "GET /version HTTP/1.0\r\n\r\n"
+match_regex = "(etcdserver|etcdcluster)"
+
+# ── LDAP ────────────────────────────────────────────────────────────────
+# AnonymousBindRequest, BER-encoded. Triggers a bind response from any
+# LDAP listener regardless of whether anon binds are permitted.
+[[probe]]
+name = "LDAP_ANON_BIND"
+ports = [389, 636, 3268, 3269]
+payload = "0x300c020101600702010304008000"
+# Response is a SEQUENCE (0x30) containing a BindResponse (0x61).
+match_regex = "^\\x30.{1,3}\\x02\\x01\\x01\\x61"
+
+# ── Generic TLS — last-resort probe ─────────────────────────────────────
+# A minimal TLS 1.0 ClientHello. Most modern TLS servers respond with
+# either a ServerHello (0x16) or an Alert (0x15) — both confirm TLS
+# even without exposing the certificate (which the gossan-portscan TLS
+# inspector handles separately downstream).
+[[probe]]
+name = "TLS_CLIENT_HELLO"
+payload = "0x160301002e010000"
+# 0x16 = handshake content type, 0x15 = alert content type. Followed by
+# the protocol version (0x03 0x0..0x04 for TLS 1.0..1.3).
+match_regex = "^[\\x15\\x16]\\x03[\\x00-\\x04]"
+
+# ── HTTP method/header variants ─────────────────────────────────────────
+# Most middleware/WAFs treat these methods differently and the
+# response (or rejection) is itself a fingerprint signal.
+
+[[probe]]
+name = "HTTP_HEAD"
+payload = "HEAD / HTTP/1.0\r\n\r\n"
+match_regex = "^HTTP/[12]\\.[019] [0-9]{3}"
+
+[[probe]]
+name = "HTTP_TRACE"
+payload = "TRACE / HTTP/1.0\r\n\r\n"
+match_regex = "^HTTP/[12]\\.[019] (200|405|501)"
+
+[[probe]]
+name = "HTTP_PROPFIND"
+ports = [80, 443, 8080, 8443]
+payload = "PROPFIND / HTTP/1.0\r\nDepth: 0\r\n\r\n"
+match_regex = "(HTTP/[12]\\.[019] (207|405|501)|<[Dd]:multistatus)"
+
+[[probe]]
+name = "HTTP_CONNECT_PROBE"
+payload = "CONNECT example.com:443 HTTP/1.0\r\n\r\n"
+match_regex = "^HTTP/[12]\\.[019] (200|403|405|407|502)"
+
+[[probe]]
+name = "HTTP_INVALID_METHOD"
+payload = "FOOBAR / HTTP/1.0\r\n\r\n"
+match_regex = "^HTTP/[12]\\.[019] (400|405|501)"
+
+# ── Common HTTP path fingerprints ───────────────────────────────────────
+# These probe well-known endpoints whose presence or response shape
+# uniquely identifies a framework or admin surface.
+
+[[probe]]
+name = "HTTP_ROBOTS_TXT"
+payload = "GET /robots.txt HTTP/1.0\r\n\r\n"
+match_regex = "(User-[Aa]gent:|Disallow:)"
+
+[[probe]]
+name = "HTTP_FAVICON"
+payload = "GET /favicon.ico HTTP/1.0\r\n\r\n"
+match_regex = "(image/(x-icon|vnd\\.microsoft\\.icon|png)|^HTTP/[12]\\.[019] 200)"
+
+[[probe]]
+name = "HTTP_SERVER_STATUS"
+ports = [80, 443, 8080, 8443]
+payload = "GET /server-status HTTP/1.0\r\n\r\n"
+match_regex = "(Apache Server Status|<title>Apache Status</title>)"
+
+[[probe]]
+name = "HTTP_SERVER_INFO"
+ports = [80, 443, 8080, 8443]
+payload = "GET /server-info HTTP/1.0\r\n\r\n"
+match_regex = "(Apache Server Information|Server Settings|MPM Information)"
+
+[[probe]]
+name = "HTTP_NGINX_STATUS"
+ports = [80, 443, 8080, 8443]
+payload = "GET /nginx_status HTTP/1.0\r\n\r\n"
+match_regex = "(Active connections:|server accepts handled requests)"
+
+[[probe]]
+name = "HTTP_PHPINFO"
+ports = [80, 443, 8080, 8443]
+payload = "GET /phpinfo.php HTTP/1.0\r\n\r\n"
+match_regex = "(PHP Version|<title>phpinfo\\(\\)</title>)"
+
+[[probe]]
+name = "HTTP_WORDPRESS_LOGIN"
+payload = "GET /wp-login.php HTTP/1.0\r\n\r\n"
+match_regex = "(WordPress|wp-login|<form name=\"loginform\")"
+
+[[probe]]
+name = "HTTP_PHPMYADMIN"
+payload = "GET /phpmyadmin/ HTTP/1.0\r\n\r\n"
+match_regex = "(phpMyAdmin|pma_)"
+
+[[probe]]
+name = "HTTP_GIT_HEAD"
+payload = "GET /.git/HEAD HTTP/1.0\r\n\r\n"
+match_regex = "^ref: refs/"
+
+[[probe]]
+name = "HTTP_DOTENV_LEAK"
+payload = "GET /.env HTTP/1.0\r\n\r\n"
+match_regex = "(APP_KEY=|DB_PASSWORD=|AWS_ACCESS_KEY_ID=|SECRET_KEY=)"
+
+[[probe]]
+name = "HTTP_ACTUATOR_HEALTH"
+ports = [8080, 8081, 8443, 9090, 9091]
+payload = "GET /actuator/health HTTP/1.0\r\n\r\n"
+match_regex = "(\"status\":\\s*\"UP\"|\"status\":\\s*\"DOWN\")"
+
+[[probe]]
+name = "HTTP_ACTUATOR_ENV"
+ports = [8080, 8081, 8443, 9090, 9091]
+payload = "GET /actuator/env HTTP/1.0\r\n\r\n"
+match_regex = "(\"activeProfiles\"|propertySources)"
+
+[[probe]]
+name = "HTTP_METRICS"
+ports = [9090, 9100, 9091, 9093, 9100, 9115, 9100]
+payload = "GET /metrics HTTP/1.0\r\n\r\n"
+match_regex = "(# HELP|# TYPE)"
+
+[[probe]]
+name = "HTTP_PROMETHEUS"
+ports = [9090]
+payload = "GET /api/v1/status/buildinfo HTTP/1.0\r\n\r\n"
+match_regex = "(\"version\"|prometheus)"
+
+[[probe]]
+name = "HTTP_GRAFANA"
+ports = [3000, 8000, 8080, 8443]
+payload = "GET /api/health HTTP/1.0\r\n\r\n"
+match_regex = "(\"database\":\\s*\"ok\"|grafana)"
+
+# ── Cloud metadata services ─────────────────────────────────────────────
+# 169.254.169.254 etc — surfacing one of these on a non-cloud host is
+# an SSRF-honeypot/mimic indicator; on a cloud host, normal.
+
+[[probe]]
+name = "HTTP_AWS_METADATA"
+payload = "GET /latest/meta-data/ HTTP/1.0\r\nHost: 169.254.169.254\r\n\r\n"
+match_regex = "(ami-id|instance-id|hostname|^HTTP/[12]\\.[019] 401)"
+
+[[probe]]
+name = "HTTP_GCP_METADATA"
+payload = "GET /computeMetadata/v1/ HTTP/1.0\r\nHost: metadata.google.internal\r\nMetadata-Flavor: Google\r\n\r\n"
+match_regex = "(computeMetadata|^HTTP/[12]\\.[019] (200|403))"
+
+# ── Mail family expansion ───────────────────────────────────────────────
+
+[[probe]]
+name = "SMTPS_NULL"
+ports = [465]
+payload = ""
+match_regex = "^[\\x15\\x16]\\x03[\\x00-\\x04]"
+
+[[probe]]
+name = "SUBMISSION_EHLO"
+ports = [587]
+payload = "EHLO scan.example.com\r\n"
+match_regex = "^220 .*(SMTP|ESMTP|Postfix|Sendmail|Exim|Microsoft|MailEnable)"
+
+[[probe]]
+name = "POP3S_NULL"
+ports = [995]
+payload = ""
+match_regex = "^[\\x15\\x16]\\x03[\\x00-\\x04]"
+
+[[probe]]
+name = "IMAPS_NULL"
+ports = [993]
+payload = ""
+match_regex = "^[\\x15\\x16]\\x03[\\x00-\\x04]"
+
+[[probe]]
+name = "IMAP_CAPABILITY"
+ports = [143, 993]
+payload = "a001 CAPABILITY\r\n"
+match_regex = "(\\* CAPABILITY|IMAP4rev[12])"
+
+[[probe]]
+name = "POP3_CAPA"
+ports = [110, 995]
+payload = "CAPA\r\n"
+match_regex = "(\\+OK|UIDL|TOP\\b)"
+
+[[probe]]
+name = "MANAGESIEVE"
+ports = [4190]
+payload = ""
+match_regex = "(IMPLEMENTATION|SIEVE|MANAGESIEVE)"
+
+[[probe]]
+name = "EXCHANGE_OWA"
+ports = [443, 80, 8080, 8443]
+payload = "GET /owa/ HTTP/1.0\r\n\r\n"
+match_regex = "(Microsoft\\-IIS|/owa/auth|X-OWA-Version)"
+
+[[probe]]
+name = "EXCHANGE_AUTODISCOVER"
+ports = [443]
+payload = "GET /Autodiscover/Autodiscover.xml HTTP/1.0\r\n\r\n"
+match_regex = "(Autodiscover|Microsoft\\-IIS)"
+
+[[probe]]
+name = "EXCHANGE_EWS"
+ports = [443]
+payload = "GET /EWS/Exchange.asmx HTTP/1.0\r\n\r\n"
+match_regex = "(EWS|Microsoft\\-IIS|ExchangeServer)"
+
+# ── Database family expansion ───────────────────────────────────────────
+
+[[probe]]
+name = "CASSANDRA_OPTIONS"
+ports = [9042, 9142]
+# CQL frame v4 OPTIONS opcode
+payload = "0x0400000005000000000000"
+match_regex = "(^\\x84\\x00|CQL_VERSION|COMPRESSION)"
+
+[[probe]]
+name = "COUCHDB_ROOT"
+ports = [5984, 6984]
+payload = "GET / HTTP/1.0\r\n\r\n"
+match_regex = "(\"couchdb\":\\s*\"Welcome\"|\"version\":\\s*\")"
+
+[[probe]]
+name = "INFLUXDB_PING"
+ports = [8086, 8088, 8089]
+payload = "GET /ping HTTP/1.0\r\n\r\n"
+match_regex = "(X-Influxdb-Version|^HTTP/[12]\\.[019] 204)"
+
+[[probe]]
+name = "INFLUXDB_HEALTH"
+ports = [8086, 8088]
+payload = "GET /health HTTP/1.0\r\n\r\n"
+match_regex = "(\"name\":\\s*\"influxdb\"|\"status\":\\s*\"pass\")"
+
+[[probe]]
+name = "CLICKHOUSE_PING"
+ports = [8123, 8443, 9000]
+payload = "GET /ping HTTP/1.0\r\n\r\n"
+match_regex = "^Ok\\.|X-ClickHouse"
+
+[[probe]]
+name = "CLICKHOUSE_REPLICAS"
+ports = [8123]
+payload = "GET /replicas_status HTTP/1.0\r\n\r\n"
+match_regex = "(Ok\\.|delay)"
+
+[[probe]]
+name = "ELASTICSEARCH_ROOT"
+ports = [9200, 9300]
+payload = "GET / HTTP/1.0\r\n\r\n"
+match_regex = "(\"cluster_name\"|\"tagline\"\\s*:\\s*\"You Know, for Search\"|elasticsearch)"
+
+[[probe]]
+name = "ELASTICSEARCH_NODES"
+ports = [9200]
+payload = "GET /_nodes HTTP/1.0\r\n\r\n"
+match_regex = "(\"nodes\"|\"cluster_name\")"
+
+[[probe]]
+name = "OPENSEARCH_ROOT"
+ports = [9200, 9201]
+payload = "GET / HTTP/1.0\r\n\r\n"
+match_regex = "(opensearch|distribution)"
+
+[[probe]]
+name = "SOLR_ADMIN"
+ports = [8983, 8984]
+payload = "GET /solr/admin/info/system HTTP/1.0\r\n\r\n"
+match_regex = "(Solr|solr-spec-version)"
+
+[[probe]]
+name = "RETHINKDB_HTTP"
+ports = [8080, 28015]
+payload = "GET / HTTP/1.0\r\n\r\n"
+match_regex = "(RethinkDB|rethinkdb-)"
+
+[[probe]]
+name = "ARANGODB_VERSION"
+ports = [8529]
+payload = "GET /_api/version HTTP/1.0\r\n\r\n"
+match_regex = "(\"server\":\\s*\"arango\"|arangodb)"
+
+[[probe]]
+name = "NEO4J_HTTP"
+ports = [7474, 7473, 7687]
+payload = "GET / HTTP/1.0\r\n\r\n"
+match_regex = "(\"neo4j_version\"|management|browser)"
+
+[[probe]]
+name = "RIAK_PING"
+ports = [8087, 8098]
+payload = "GET /ping HTTP/1.0\r\n\r\n"
+match_regex = "^OK"
+
+[[probe]]
+name = "AEROSPIKE_INFO"
+ports = [3000, 3001, 3002, 3003]
+# Aerospike 'INFO' message header + 'version\n' command
+payload = "0x02010000000000000876657273696f6e0a"
+match_regex = "(version|build|edition)"
+
+[[probe]]
+name = "HAZELCAST_REST"
+ports = [5701, 5702, 5703]
+payload = "GET /hazelcast/rest/management/cluster/version HTTP/1.0\r\n\r\n"
+match_regex = "(hazelcast|clusterVersion)"
+
+[[probe]]
+name = "MARIADB_NULL"
+ports = [3306, 3307]
+payload = ""
+match_regex = "(MariaDB|mysql_native|caching_sha2)"
+
+[[probe]]
+name = "TIDB_NULL"
+ports = [4000]
+payload = ""
+match_regex = "(TiDB|MySQL|mysql_native)"
+
+[[probe]]
+name = "MSSQL_PRELOGIN"
+ports = [1433, 1434]
+# TDS prelogin: type=0x12, length=0x0027 minimal
+payload = "0x12010002700000000000150006010019000100200001000300210000040022"
+match_regex = "(^\\x04\\x01|TDS|SQL Server|Microsoft)"
+
+[[probe]]
+name = "ORACLE_TNS"
+ports = [1521, 1522, 1523, 1524, 1525, 1526]
+# TNS connect packet (truncated header that triggers a NACK with version)
+payload = "0x000d000000010000040004000000"
+match_regex = "(TNS|ORA\\-|Oracle)"
+
+# ── Container, orchestration, secrets ──────────────────────────────────
+
+[[probe]]
+name = "CONSUL_AGENT_SELF"
+ports = [8500, 8501]
+payload = "GET /v1/agent/self HTTP/1.0\r\n\r\n"
+match_regex = "(\"Config\":|\"Datacenter\"|\"NodeName\")"
+
+[[probe]]
+name = "CONSUL_STATUS_LEADER"
+ports = [8500, 8501]
+payload = "GET /v1/status/leader HTTP/1.0\r\n\r\n"
+match_regex = "(\"[0-9]{1,3}(\\.[0-9]{1,3}){3}:[0-9]+\"|consul)"
+
+[[probe]]
+name = "VAULT_HEALTH"
+ports = [8200, 8201]
+payload = "GET /v1/sys/health HTTP/1.0\r\n\r\n"
+match_regex = "(\"version\":|\"sealed\":|\"initialized\":)"
+
+[[probe]]
+name = "NOMAD_AGENT"
+ports = [4646, 4647, 4648]
+payload = "GET /v1/agent/self HTTP/1.0\r\n\r\n"
+match_regex = "(\"Nomad\":|\"member\":|\"Server\":\\s*true)"
+
+[[probe]]
+name = "RANCHER_PING"
+ports = [80, 443, 8080]
+payload = "GET /ping HTTP/1.0\r\n\r\n"
+match_regex = "(pong|rancher)"
+
+[[probe]]
+name = "PORTAINER_API"
+ports = [9000, 9443]
+payload = "GET /api/system/version HTTP/1.0\r\n\r\n"
+match_regex = "(portainer|ServerVersion)"
+
+[[probe]]
+name = "K8S_OPENAPI"
+ports = [6443, 8001, 8443]
+payload = "GET /openapi/v2 HTTP/1.0\r\n\r\n"
+match_regex = "(swagger|kubernetes|openAPIV3Schema)"
+
+[[probe]]
+name = "K8S_HEALTHZ"
+ports = [6443, 8080, 10250, 10255, 10256]
+payload = "GET /healthz HTTP/1.0\r\n\r\n"
+match_regex = "^ok"
+
+[[probe]]
+name = "KUBELET_PODS"
+ports = [10250, 10255]
+payload = "GET /pods HTTP/1.0\r\n\r\n"
+match_regex = "(PodList|kubernetes\\.io)"
+
+# ── CI/CD ───────────────────────────────────────────────────────────────
+
+[[probe]]
+name = "JENKINS_LOGIN"
+ports = [8080, 8443, 80, 443]
+payload = "GET /login HTTP/1.0\r\n\r\n"
+match_regex = "(Jenkins|X-Jenkins|jenkins-session)"
+
+[[probe]]
+name = "JENKINS_API"
+ports = [8080, 8443]
+payload = "GET /api/json HTTP/1.0\r\n\r\n"
+match_regex = "(\"hudsonVersion\"|\"jenkinsVersion\"|\"useCrumbs\")"
+
+[[probe]]
+name = "GITLAB_VERSION"
+ports = [80, 443, 8080, 8443]
+payload = "GET /api/v4/version HTTP/1.0\r\n\r\n"
+match_regex = "(\"version\":|\"revision\":|gitlab)"
+
+[[probe]]
+name = "GITEA_API"
+ports = [3000, 80, 443]
+payload = "GET /api/v1/version HTTP/1.0\r\n\r\n"
+match_regex = "(\"version\":\\s*\"[0-9]|gitea)"
+
+[[probe]]
+name = "DRONE_API"
+ports = [80, 443, 8080]
+payload = "GET /api/info HTTP/1.0\r\n\r\n"
+match_regex = "(drone|version)"
+
+[[probe]]
+name = "TEAMCITY_LOGIN"
+ports = [8111, 80, 443]
+payload = "GET /login.html HTTP/1.0\r\n\r\n"
+match_regex = "(TeamCity|JetBrains|tc_login)"
+
+[[probe]]
+name = "ARGOCD_API"
+ports = [8080, 443, 80]
+payload = "GET /api/version HTTP/1.0\r\n\r\n"
+match_regex = "(\"Version\":|argocd|\"BuildDate\":)"
+
+[[probe]]
+name = "HARBOR_API"
+ports = [80, 443]
+payload = "GET /api/v2.0/systeminfo HTTP/1.0\r\n\r\n"
+match_regex = "(harbor_version|\"registry_url\":)"
+
+[[probe]]
+name = "NEXUS_REPO"
+ports = [8081, 8443]
+payload = "GET /service/rest/v1/status HTTP/1.0\r\n\r\n"
+match_regex = "(Nexus|Sonatype|^HTTP/[12]\\.[019] 200)"
+
+[[probe]]
+name = "ARTIFACTORY_PING"
+ports = [8081, 8082]
+payload = "GET /artifactory/api/system/ping HTTP/1.0\r\n\r\n"
+match_regex = "^OK|Artifactory"
+
+# ── Source repos ────────────────────────────────────────────────────────
+
+[[probe]]
+name = "SVN_PROBE"
+ports = [3690]
+payload = "( 2 ( edit-pipeline svndiff1 ) 30:svn://test/repo )"
+match_regex = "(svnserve|^\\( success)"
+
+# ── Discovery / RPC / file shares ───────────────────────────────────────
+
+[[probe]]
+name = "PORTMAP_NULL"
+ports = [111]
+# RPC NULL call: xid=1, msg_type=0 (CALL), rpc_vers=2, prog=100000, vers=2, proc=0
+payload = "0x80000028000000010000000000000002000186a000000002000000000000000000000000000000000000000000000000"
+match_regex = "^\\x80\\x00\\x00..\\x00\\x00\\x00\\x01\\x00\\x00\\x00\\x01"
+
+[[probe]]
+name = "NETBIOS_NAME"
+ports = [137]
+payload = "0x82280000000100000000000020434b414141414141414141414141414141414141414141414141414141414141410000210001"
+match_regex = "^\\x82\\x28"
+
+[[probe]]
+name = "SMB1_NEGOTIATE"
+ports = [139, 445]
+# NetBIOS session header + SMB1 negotiate protocol (PC NETWORK PROGRAM 1.0, LANMAN1.0, NT LM 0.12)
+payload = "0x000000a4ff534d4272000000001853c800000000000000000000000000fffe00000000008100025043204e4554574f524b2050524f4752414d20312e30000244463330002344566c574f4d324d04020003200200034e54204c4d20302e313200"
+match_regex = "(^\\x00\\x00\\x00.\\xffSMB|SMB|\\xfeSMB)"
+
+[[probe]]
+name = "SMB2_NEGOTIATE"
+ports = [139, 445]
+# NetBIOS session header + SMB2 negotiate (dialect 0x0202 = SMB 2.0.2)
+payload = "0x000000a4fe534d4240000000000000000000010000000000000000000000000000000000fffe000000000000000000000000000000000000000000000000000024000800010000007f00000000000000000000000000000000000000007800000002000000020210020202220224020003020310030311036000000010000000020000000000000000000000010020000100000000000000000000000000000000"
+match_regex = "(\\xfeSMB|^\\x00\\x00\\x00)"
+
+[[probe]]
+name = "RPC_BIND_GETPORT"
+ports = [111]
+# Portmap GETPORT call asking for nfs port
+payload = "0x80000038000000020000000000000002000186a00000000200000003000000000000000000000000000000000000000000000000000186a300000003000000060000000000"
+match_regex = "(^\\x80\\x00|^\\x80)"
+
+# ── Remote access / desktop ─────────────────────────────────────────────
+
+[[probe]]
+name = "X11_BAD_AUTH"
+ports = [6000, 6001, 6002, 6003, 6004, 6005, 6006, 6007]
+# X11 connection setup with empty auth — server replies with version + reason
+payload = "0x6c000b00000000000000000000000000"
+match_regex = "(^\\x00|^\\x01.....\\x0b\\x00|X11)"
+
+[[probe]]
+name = "VNC_RFB_004_001"
+ports = [5900, 5901, 5902, 5903, 5904, 5905]
+payload = "RFB 004.001\n"
+match_regex = "^RFB 00[3-9]\\.00[0-9]"
+
+[[probe]]
+name = "RDP_COOKIE"
+ports = [3389, 13389]
+# X.224 connection request with cookie hint that some EDR setups dump
+payload = "0x030000130ee000000000000300080003000000"
+match_regex = "(^\\x03\\x00|RDPNeg|TPKT)"
+
+[[probe]]
+name = "MOSH_NULL"
+ports = [60001, 60002, 60003, 60004, 60005, 60006, 60007, 60008, 60009, 60010]
+payload = ""
+match_regex = "(MOSH|moshb)"
+
+# ── DNS / SNMP / LDAP variants ─────────────────────────────────────────
+
+[[probe]]
+name = "DNS_TCP_VERSION"
+ports = [53]
+# Length prefix 0x001e + DNS query for version.bind CH TXT
+payload = "0x001e00000100000100000000000007076572736696f6e0462696e640000100003"
+match_regex = "(^\\x00.\\x00|version|bind)"
+
+[[probe]]
+name = "DOH_GET"
+ports = [443, 8443, 853]
+payload = "GET /dns-query?name=example.com&type=A HTTP/1.0\r\nAccept: application/dns-message\r\n\r\n"
+match_regex = "(application/dns|dns-message)"
+
+[[probe]]
+name = "SNMP_GET_SYSDESCR"
+ports = [161, 162, 199, 391, 705, 1993, 4444]
+# SNMPv2c GetRequest for sysDescr.0 with community 'public'
+payload = "0x302a020100040670756275626c6963a01d020401020304020100020100300f300d06082b060102010101000500"
+match_regex = "(^\\x30|public|sysDescr)"
+
+[[probe]]
+name = "LDAP_ROOTDSE"
+ports = [389, 636, 3268, 3269]
+# LDAP search baseObject="" filter=(objectClass=*) returning supportedLDAPVersion
+payload = "0x303d020101633802010104000a0100020a00ff020100ff010100870b6f626a656374436c61737330180416737570706f727465644c44415056657273696f6e"
+match_regex = "(^\\x30.{1,3}\\x02\\x01\\x01\\x64|supportedLDAPVersion)"
+
+# ── Streaming / VoIP ───────────────────────────────────────────────────
+
+[[probe]]
+name = "RTSP_OPTIONS"
+ports = [554, 8554, 5554]
+payload = "OPTIONS * RTSP/1.0\r\nCSeq: 1\r\nUser-Agent: gossan-recon\r\n\r\n"
+match_regex = "^RTSP/1\\.0 [0-9]{3}"
+
+[[probe]]
+name = "RTMP_HANDSHAKE"
+ports = [1935, 1936, 1937, 1938, 1940]
+payload = "0x03"
+match_regex = "(^\\x03|FMS/|RTMP)"
+
+[[probe]]
+name = "ONVIF_GETDEVICEINFO"
+ports = [80, 443, 8080, 8000, 8443]
+payload = "POST /onvif/device_service HTTP/1.0\r\nContent-Type: application/soap+xml\r\nContent-Length: 0\r\n\r\n"
+match_regex = "(onvif|GetDeviceInformation|^HTTP/[12]\\.[019] (200|400|500))"
+
+[[probe]]
+name = "SIP_OPTIONS"
+ports = [5060, 5061]
+payload = "OPTIONS sip:scan@example.com SIP/2.0\r\nVia: SIP/2.0/TCP scan.local;branch=z9hG4bK\r\nFrom: <sip:scan@local>;tag=1\r\nTo: <sip:scan@example.com>\r\nCall-ID: gossan-recon\r\nCSeq: 1 OPTIONS\r\nMax-Forwards: 70\r\nContent-Length: 0\r\n\r\n"
+match_regex = "^SIP/2\\.0 [0-9]{3}"
+
+[[probe]]
+name = "ASTERISK_AMI"
+ports = [5038, 5039]
+payload = ""
+match_regex = "(Asterisk Call Manager|AMI/)"
+
+[[probe]]
+name = "FREESWITCH_ESL"
+ports = [8021]
+payload = ""
+match_regex = "(Content-Type: auth/request|FreeSWITCH)"
+
+# ── Monitoring / observability ─────────────────────────────────────────
+
+[[probe]]
+name = "ZIPKIN_API"
+ports = [9411]
+payload = "GET /api/v2/services HTTP/1.0\r\n\r\n"
+match_regex = "(^\\[|zipkin|^HTTP/[12]\\.[019] 200)"
+
+[[probe]]
+name = "JAEGER_QUERY"
+ports = [16686, 16687]
+payload = "GET /api/services HTTP/1.0\r\n\r\n"
+match_regex = "(\"data\":|jaeger)"
+
+[[probe]]
+name = "LOKI_READY"
+ports = [3100]
+payload = "GET /ready HTTP/1.0\r\n\r\n"
+match_regex = "^ready"
+
+[[probe]]
+name = "TEMPO_READY"
+ports = [3200]
+payload = "GET /ready HTTP/1.0\r\n\r\n"
+match_regex = "^ready"
+
+[[probe]]
+name = "GRAYLOG_API"
+ports = [9000, 12900]
+payload = "GET /api/system HTTP/1.0\r\n\r\n"
+match_regex = "(graylog|cluster_id|node_id)"
+
+[[probe]]
+name = "STATSD_HTTP_DEBUG"
+ports = [8126]
+payload = "GET /counters HTTP/1.0\r\n\r\n"
+match_regex = "(^\\{|statsd)"
+
+[[probe]]
+name = "FLUENTD_MONITOR"
+ports = [24220, 24230]
+payload = "GET /api/plugins.json HTTP/1.0\r\n\r\n"
+match_regex = "(plugins|fluentd)"
+
+[[probe]]
+name = "LOGSTASH_NODE"
+ports = [9600, 9601]
+payload = "GET /_node/stats HTTP/1.0\r\n\r\n"
+match_regex = "(\"logstash\"|\"jvm\"|\"version\")"
+
+# ── Logging / SIEM ─────────────────────────────────────────────────────
+
+[[probe]]
+name = "SPLUNKD_INFO"
+ports = [8089, 8000, 8088]
+payload = "GET /services/server/info HTTP/1.0\r\n\r\n"
+match_regex = "(Splunkd|cpu_arch|version)"
+
+# ── AI/ML local services ───────────────────────────────────────────────
+
+[[probe]]
+name = "OLLAMA_API"
+ports = [11434, 11435]
+payload = "GET /api/version HTTP/1.0\r\n\r\n"
+match_regex = "(\"version\":|ollama)"
+
+[[probe]]
+name = "OLLAMA_TAGS"
+ports = [11434]
+payload = "GET /api/tags HTTP/1.0\r\n\r\n"
+match_regex = "(\"models\":|ollama)"
+
+[[probe]]
+name = "VLLM_HEALTH"
+ports = [8000, 8001, 8002, 8080]
+payload = "GET /health HTTP/1.0\r\n\r\n"
+match_regex = "(^HTTP/[12]\\.[019] 200|vllm)"
+
+[[probe]]
+name = "OPENAI_COMPAT_MODELS"
+ports = [8000, 8001, 8080, 11434, 5000]
+payload = "GET /v1/models HTTP/1.0\r\n\r\n"
+match_regex = "(\"object\":\\s*\"list\"|\"data\":|\"model\")"
+
+[[probe]]
+name = "TRITON_HEALTH"
+ports = [8000, 8001, 8002]
+payload = "GET /v2/health/ready HTTP/1.0\r\n\r\n"
+match_regex = "^HTTP/[12]\\.[019] 200"
+
+[[probe]]
+name = "JUPYTER_API"
+ports = [8888, 8889, 8890, 8000]
+payload = "GET /api HTTP/1.0\r\n\r\n"
+match_regex = "(\"version\":|jupyter|notebook)"
+
+[[probe]]
+name = "TENSORBOARD_DATA"
+ports = [6006, 6007, 6008]
+payload = "GET /data/runs HTTP/1.0\r\n\r\n"
+match_regex = "(^\\[|tensorboard)"
+
+[[probe]]
+name = "MLFLOW_HEALTH"
+ports = [5000, 5001, 5002]
+payload = "GET /health HTTP/1.0\r\n\r\n"
+match_regex = "^OK|mlflow"
+
+[[probe]]
+name = "RAY_DASHBOARD"
+ports = [8265, 8266]
+payload = "GET /api/version HTTP/1.0\r\n\r\n"
+match_regex = "(ray|version|python_version)"
+
+# ── Crypto / blockchain ────────────────────────────────────────────────
+
+[[probe]]
+name = "BITCOIN_RPC_PROBE"
+ports = [8332, 18332, 38332, 8333]
+payload = "POST / HTTP/1.0\r\nContent-Type: text/plain\r\nContent-Length: 56\r\n\r\n{\"jsonrpc\":\"1.0\",\"id\":\"g\",\"method\":\"getnetworkinfo\"}"
+match_regex = "(bitcoin|^HTTP/[12]\\.[019] (200|401|403))"
+
+[[probe]]
+name = "ETHEREUM_JSONRPC"
+ports = [8545, 8546, 8547, 9933, 9944]
+payload = "POST / HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: 64\r\n\r\n{\"jsonrpc\":\"2.0\",\"method\":\"web3_clientVersion\",\"params\":[],\"id\":1}"
+match_regex = "(\"jsonrpc\":\\s*\"2\\.0\"|\"result\":|geth|nethermind|erigon|besu|reth)"
+
+[[probe]]
+name = "IPFS_API"
+ports = [5001, 8080]
+payload = "POST /api/v0/version HTTP/1.0\r\n\r\n"
+match_regex = "(\"Version\":|kubo|go-ipfs)"
+
+[[probe]]
+name = "IPFS_GATEWAY"
+ports = [8080, 8081]
+payload = "GET /version HTTP/1.0\r\n\r\n"
+match_regex = "(ipfs|kubo)"
+
+# ── Storage ────────────────────────────────────────────────────────────
+
+[[probe]]
+name = "MINIO_HEALTH"
+ports = [9000, 9001, 9090]
+payload = "GET /minio/health/live HTTP/1.0\r\n\r\n"
+match_regex = "(^HTTP/[12]\\.[019] 200|MinIO)"
+
+[[probe]]
+name = "MINIO_LOGIN"
+ports = [9001, 9000]
+payload = "GET /api/v1/login HTTP/1.0\r\n\r\n"
+match_regex = "(MinIO|minio|^HTTP/[12]\\.[019])"
+
+[[probe]]
+name = "GARAGE_HEALTH"
+ports = [3902, 3903]
+payload = "GET /health HTTP/1.0\r\n\r\n"
+match_regex = "(garage|^HTTP/[12]\\.[019] 200)"
+
+[[probe]]
+name = "SEAWEEDFS_STATUS"
+ports = [9333, 8888, 9533]
+payload = "GET /cluster/status HTTP/1.0\r\n\r\n"
+match_regex = "(seaweed|IsLeader)"
+
+# ── Identity / SSO ─────────────────────────────────────────────────────
+
+[[probe]]
+name = "OIDC_DISCOVERY"
+ports = [443, 80, 8080, 8443]
+payload = "GET /.well-known/openid-configuration HTTP/1.0\r\n\r\n"
+match_regex = "(\"issuer\":|\"authorization_endpoint\":|\"jwks_uri\":)"
+
+[[probe]]
+name = "KEYCLOAK_HEALTH"
+ports = [8080, 8443, 9000]
+payload = "GET /health HTTP/1.0\r\n\r\n"
+match_regex = "(\"status\":\\s*\"UP\"|keycloak)"
+
+[[probe]]
+name = "KEYCLOAK_REALM_MASTER"
+ports = [8080, 8443]
+payload = "GET /auth/realms/master HTTP/1.0\r\n\r\n"
+match_regex = "(realm|public_key|keycloak)"
+
+[[probe]]
+name = "AUTHENTIK_API"
+ports = [9000, 9443]
+payload = "GET /api/v3/root/config/ HTTP/1.0\r\n\r\n"
+match_regex = "(authentik|capabilities|version)"
+
+# ── ICS / SCADA ────────────────────────────────────────────────────────
+
+[[probe]]
+name = "MODBUS_TCP"
+ports = [502, 802, 5020]
+# Function 0x2b sub 0x0e read device id
+payload = "0x000000000006002b0e0100"
+match_regex = "(^\\x00\\x00\\x00\\x00|Modbus|^\\x00\\x00.\\x00.\\x00)"
+
+[[probe]]
+name = "BACNET_TCP"
+ports = [47808, 47809]
+payload = "0x810a000c0120ffff00ff1008"
+match_regex = "(^\\x81|BACnet)"
+
+[[probe]]
+name = "S7COMM_PROBE"
+ports = [102]
+# COTP CR + S7 setup
+payload = "0x03000016110d00000400c1020100c2020102c0010a"
+match_regex = "(^\\x03\\x00|S7|Siemens)"
+
+[[probe]]
+name = "DNP3_PROBE"
+ports = [20000, 20001]
+payload = "0x0564050064000800ad0e"
+match_regex = "(^\\x05\\x64|DNP)"
+
+[[probe]]
+name = "ETHERNETIP_LIST_IDENTITY"
+ports = [44818]
+payload = "0x6300000000000000000000000000000000000000000000000000"
+match_regex = "(^\\x63|EtherNet/IP)"
+
+# ── IoT / message brokers ──────────────────────────────────────────────
+
+[[probe]]
+name = "MQTT_CONNECT"
+ports = [1883, 8883, 8083, 8084]
+# MQTT 3.1.1 CONNECT, ClientId 'gossan'
+payload = "0x101200044d51545404020000000667737361"
+match_regex = "(^\\x20|MQTT|^\\x10)"
+
+[[probe]]
+name = "COAP_GET_WELLKNOWN"
+ports = [5683, 5684]
+# CoAP GET /.well-known/core
+payload = "0x4001000178bb2e77656c6c2d6b6e6f776e04636f7265"
+match_regex = "(^\\x60|^\\x61|coap|.well-known)"
+
+[[probe]]
+name = "STOMP_CONNECT"
+ports = [61613, 61614]
+payload = "CONNECT\naccept-version:1.2\nhost:scan\n\n\u0000"
+match_regex = "(CONNECTED|STOMP|^\\x10)"
+
+[[probe]]
+name = "ACTIVEMQ_OPENWIRE"
+ports = [61616]
+payload = ""
+match_regex = "(ActiveMQ|OpenWire)"
+
+[[probe]]
+name = "KAFKA_API_VERSIONS"
+ports = [9092, 9093, 9094]
+# ApiVersions request (key=18 v0): size + key + version + correlationId + clientIdLen=-1
+payload = "0x000000130012000000000001000c676f7373616e2d72"
+match_regex = "(^\\x00\\x00\\x00|kafka)"
+
+# ── Time / sync ────────────────────────────────────────────────────────
+
+[[probe]]
+name = "CHRONY_CMD"
+ports = [323]
+payload = ""
+match_regex = "(chrony|chronyc)"
+
+# ── Backup / agents ────────────────────────────────────────────────────
+
+[[probe]]
+name = "BACULA_DIR"
+ports = [9101, 9102, 9103]
+payload = ""
+match_regex = "(Bacula|FileDaemon)"
+
+[[probe]]
+name = "RESTIC_REST"
+ports = [8000]
+payload = "GET / HTTP/1.0\r\nAccept: application/vnd.x.restic.rest.v2\r\n\r\n"
+match_regex = "(restic|^HTTP/[12]\\.[019])"
+
+# ── Monitoring agents ─────────────────────────────────────────────────
+
+[[probe]]
+name = "NRPE_PROBE"
+ports = [5666]
+payload = ""
+match_regex = "(NRPE|nagios)"
+
+[[probe]]
+name = "ZABBIX_AGENT"
+ports = [10050, 10051]
+payload = "0x5a425844010800000000000000006167656e742e70696e67"
+match_regex = "^ZBXD"
+
+[[probe]]
+name = "MUNIN_NODE"
+ports = [4949]
+payload = ""
+match_regex = "(# munin node|cap multigraph)"
+
+[[probe]]
+name = "WAZUH_AGENT"
+ports = [1514, 1515, 55000]
+payload = ""
+match_regex = "(wazuh|ossec)"
+
+# ── CUPS / printers ────────────────────────────────────────────────────
+
+[[probe]]
+name = "CUPS_GET_PRINTERS"
+ports = [631]
+payload = "GET / HTTP/1.0\r\n\r\n"
+match_regex = "(CUPS|IPP|cups-version)"
+
+[[probe]]
+name = "IPP_PROBE"
+ports = [631, 80, 443, 8080, 8443]
+payload = "GET /printers HTTP/1.0\r\n\r\n"
+match_regex = "(IPP|printer|cups)"
+
+# ── Tor / anonymity ────────────────────────────────────────────────────
+
+[[probe]]
+name = "TOR_DIRECTORY"
+ports = [9001, 9030, 9050, 9051, 9150]
+payload = "GET /tor/server/authority HTTP/1.0\r\n\r\n"
+match_regex = "(tor|router-authority|signing-key)"
+
+[[probe]]
+name = "TOR_CONTROL"
+ports = [9051, 9151]
+payload = "PROTOCOLINFO\r\n"
+match_regex = "(^250-PROTOCOLINFO|TOR)"
+
+# ── Misc admin / auth ─────────────────────────────────────────────────
+
+[[probe]]
+name = "WEBMIN_LOGIN"
+ports = [10000, 20000]
+payload = "GET /session_login.cgi HTTP/1.0\r\n\r\n"
+match_regex = "(Webmin|miniserv|Usermin)"
+
+[[probe]]
+name = "COCKPIT_LOGIN"
+ports = [9090, 9091]
+payload = "GET /cockpit/login HTTP/1.0\r\n\r\n"
+match_regex = "(Cockpit|cockpit-login|^HTTP/[12]\\.[019] (200|401))"
+
+[[probe]]
+name = "PROXMOX_API"
+ports = [8006, 8007]
+payload = "GET /api2/json/version HTTP/1.0\r\n\r\n"
+match_regex = "(\"version\":|pve|Proxmox)"
+
+[[probe]]
+name = "ESXI_API"
+ports = [443, 902, 903]
+payload = "GET /sdk HTTP/1.0\r\n\r\n"
+match_regex = "(VMware|vSphere|esxi)"
+
+[[probe]]
+name = "XENSERVER_RPC"
+ports = [80, 443]
+payload = "POST / HTTP/1.0\r\nContent-Type: text/xml\r\nContent-Length: 100\r\n\r\n<?xml version=\"1.0\"?><methodCall><methodName>system.listMethods</methodName></methodCall>"
+match_regex = "(xen|xapi|methodResponse)"
+
+# ── ChatOps / collaboration ───────────────────────────────────────────
+
+[[probe]]
+name = "MATRIX_VERSIONS"
+ports = [8008, 8448, 80, 443]
+payload = "GET /_matrix/client/versions HTTP/1.0\r\n\r\n"
+match_regex = "(matrix|r0\\.|v1\\.|unstable_features)"
+
+[[probe]]
+name = "MASTODON_INSTANCE"
+ports = [80, 443, 3000]
+payload = "GET /api/v1/instance HTTP/1.0\r\n\r\n"
+match_regex = "(mastodon|\"version\":\\s*\"4|fediverse)"
+
+[[probe]]
+name = "ROCKETCHAT_INFO"
+ports = [3000, 80, 443]
+payload = "GET /api/info HTTP/1.0\r\n\r\n"
+match_regex = "(rocket\\.chat|\"version\":|Meteor)"
+
+[[probe]]
+name = "MATTERMOST_PING"
+ports = [8065, 80, 443]
+payload = "GET /api/v4/system/ping HTTP/1.0\r\n\r\n"
+match_regex = "(\"status\":\\s*\"OK\"|mattermost)"
+
+# ── Game / niche ──────────────────────────────────────────────────────
+
+[[probe]]
+name = "MINECRAFT_HANDSHAKE"
+ports = [25565, 25566, 25567]
+# Server List Ping (legacy 0xFE)
+payload = "0xfe01"
+match_regex = "(^\\xff|MC\\|PE|minecraft)"
+
+[[probe]]
+name = "FACTORIO_HEARTBEAT"
+ports = [34197]
+payload = ""
+match_regex = "(factorio|^\\x01)"
+
+[[probe]]
+name = "TEAMSPEAK_PROBE"
+ports = [9987, 10011, 30033, 41144]
+payload = ""
+match_regex = "(TS3|TeamSpeak|^TS)"
+
+# ── BitTorrent ────────────────────────────────────────────────────────
+
+[[probe]]
+name = "BITTORRENT_HANDSHAKE"
+ports = [6881, 6882, 6883, 6889]
+# 0x13 + "BitTorrent protocol" + 8 reserved + 20-byte info_hash + 20-byte peer_id (zeros)
+payload = "0x13426974546f7272656e742070726f746f636f6c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+match_regex = "(^\\x13BitTorrent|BitTorrent protocol)"
+
+# ── DevOps daemons ────────────────────────────────────────────────────
+
+[[probe]]
+name = "BUILDBOT_HOME"
+ports = [8010, 8011]
+payload = "GET / HTTP/1.0\r\n\r\n"
+match_regex = "(buildbot|Buildbot)"
+
+[[probe]]
+name = "CONCOURSE_INFO"
+ports = [8080, 80, 443]
+payload = "GET /api/v1/info HTTP/1.0\r\n\r\n"
+match_regex = "(concourse|\"version\":|worker_version)"
+
+[[probe]]
+name = "WOODPECKER_VERSION"
+ports = [8000, 80, 443]
+payload = "GET /version HTTP/1.0\r\n\r\n"
+match_regex = "(woodpecker|version|source)"
+
+# ── PROXY / WAF / API gateways ────────────────────────────────────────
+
+[[probe]]
+name = "ENVOY_ADMIN"
+ports = [9901, 15000]
+payload = "GET /server_info HTTP/1.0\r\n\r\n"
+match_regex = "(envoy|version|hot_restart_version)"
+
+[[probe]]
+name = "TRAEFIK_API"
+ports = [8080, 8081]
+payload = "GET /api/version HTTP/1.0\r\n\r\n"
+match_regex = "(\"Version\":|traefik|codename)"
+
+[[probe]]
+name = "KONG_ADMIN"
+ports = [8001, 8444]
+payload = "GET / HTTP/1.0\r\n\r\n"
+match_regex = "(kong|tagline|\"hostname\":)"
+
+[[probe]]
+name = "HAPROXY_STATS"
+ports = [80, 443, 8080, 8443, 9000]
+payload = "GET /stats HTTP/1.0\r\n\r\n"
+match_regex = "(HAProxy|haproxy|^# pxname)"
+
+[[probe]]
+name = "PIHOLE_ADMIN"
+ports = [80, 443, 8080]
+payload = "GET /admin/api.php?status HTTP/1.0\r\n\r\n"
+match_regex = "(pi\\-hole|\"status\":|enabled)"
+
+# ── Final fallback / ALPN sniff ───────────────────────────────────────
+
+[[probe]]
+name = "GENERIC_NULL_BANNER"
+payload = ""
+# Many text-banner protocols emit something printable in the first 64
+# bytes. Run last so port-specific probes win first.
+match_regex = "[\\x20-\\x7e]{4,}"
+
+# ── Top-up: a final tier of less-common but real services ──────────────
+
+[[probe]]
+name = "FTP_NULL"
+ports = [21, 990, 2121]
+payload = ""
+match_regex = "^220[\\- ].*(FTP|FileZilla|vsftpd|ProFTPD|Pure-FTPd)"
+
+[[probe]]
+name = "FTPS_AUTH_TLS"
+ports = [21]
+payload = "AUTH TLS\r\n"
+match_regex = "^234"
+
+[[probe]]
+name = "TFTP_RRQ_DENIED"
+ports = [69]
+# Read request for nonexistent file; server replies error (5)
+payload = "0x00016e6f6e652e747874006e657461736369690000"
+match_regex = "(^\\x00\\x05|tftp)"
+
+[[probe]]
+name = "GOPHER_NULL"
+ports = [70]
+payload = "\r\n"
+match_regex = "^[ifg.0-9]"
+
+[[probe]]
+name = "FINGER_NULL"
+ports = [79]
+payload = "\r\n"
+match_regex = "(Login|Welcome|finger)"
+
+[[probe]]
+name = "SOCKS5_NEGOTIATE"
+ports = [1080, 1081, 1085, 9050, 9150]
+# VER=5, NMETHODS=1, METHOD=0 (no-auth)
+payload = "0x050100"
+match_regex = "(^\\x05[\\x00\\xff]|SOCKS)"
+
+[[probe]]
+name = "QUASSEL_CORE"
+ports = [4242, 4243]
+# 4-byte feature/init; servers reply with version handshake
+payload = "0x00000020"
+match_regex = "(quassel|Quassel)"
+
+[[probe]]
+name = "PUPPET_CA"
+ports = [8140, 8141]
+payload = "GET /production/status/test HTTP/1.0\r\n\r\n"
+match_regex = "(puppet|^HTTP/[12]\\.[019] (200|401|403))"
+
+[[probe]]
+name = "SALTSTACK_API"
+ports = [8000, 8080]
+payload = "GET / HTTP/1.0\r\n\r\n"
+match_regex = "(saltstack|salt-api|return)"
+
+[[probe]]
+name = "PYTHON_HTTPSERVER"
+payload = "GET / HTTP/1.0\r\n\r\n"
+match_regex = "(SimpleHTTP/|BaseHTTP/|Server: SimpleHTTP)"
+
+[[probe]]
+name = "WERKZEUG_DEBUGGER"
+ports = [5000, 8000, 8080, 5001]
+payload = "GET /console HTTP/1.0\r\n\r\n"
+match_regex = "(werkzeug|Werkzeug Debugger|console)"
+
+[[probe]]
+name = "FLASK_DEBUG_PIN"
+ports = [5000, 8000, 8080]
+payload = "GET / HTTP/1.0\r\n\r\n"
+match_regex = "(Werkzeug|Flask|^HTTP/[12]\\.[019] 200)"
+
+
+# ── Top-up tier 2 (overnight, 2026-05-14): cloud / IoT / DB /
+# container / CI-CD / monitoring / AI-ML / blockchain. All readonly.
+
+# ── Cloud metadata services ─────────────────────────────────────────────
+[[probe]]
+name = "AWS_IMDS_V1"
+ports = [80]
+payload = "GET /latest/meta-data/ HTTP/1.0\r\nHost: 169.254.169.254\r\n\r\n"
+match_regex = "(ami-id|hostname|instance-id|public-keys/)"
+
+[[probe]]
+name = "AWS_IMDS_V2_TOKEN"
+ports = [80]
+payload = "PUT /latest/api/token HTTP/1.0\r\nX-aws-ec2-metadata-token-ttl-seconds: 60\r\nHost: 169.254.169.254\r\n\r\n"
+match_regex = "(^HTTP/1\\.[01] 200|aws-ec2-metadata)"
+
+[[probe]]
+name = "GCP_METADATA"
+ports = [80]
+payload = "GET /computeMetadata/v1/instance/ HTTP/1.0\r\nHost: metadata.google.internal\r\nMetadata-Flavor: Google\r\n\r\n"
+match_regex = "(Metadata-Flavor|computeMetadata|attributes/)"
+
+[[probe]]
+name = "AZURE_IMDS"
+ports = [80]
+payload = "GET /metadata/instance?api-version=2021-02-01 HTTP/1.0\r\nHost: 169.254.169.254\r\nMetadata: true\r\n\r\n"
+match_regex = "(\"compute\"|azureEnvironment|vmId)"
+
+[[probe]]
+name = "ALIYUN_METADATA"
+ports = [80]
+payload = "GET /latest/meta-data/ HTTP/1.0\r\nHost: 100.100.100.200\r\n\r\n"
+match_regex = "(image-id|instance-id|region-id)"
+
+[[probe]]
+name = "DO_METADATA"
+ports = [80]
+payload = "GET /metadata/v1/ HTTP/1.0\r\nHost: 169.254.169.254\r\n\r\n"
+match_regex = "(droplet_id|hostname|region/)"
+
+# ── IoT / industrial ────────────────────────────────────────────────────
+[[probe]]
+name = "MQTT_CONNECT_V2"
+ports = [1883, 8883]
+payload = "0x101000044d51545404020000000474657374"
+match_regex = "(\\x20\\x02|MQTT)"
+
+[[probe]]
+name = "MQTT_WS"
+ports = [9001, 8083]
+payload = "GET / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Protocol: mqtt\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
+match_regex = "(101 Switching|mqtt|Sec-WebSocket-Accept)"
+
+[[probe]]
+name = "COAP_GET_WELL_KNOWN"
+ports = [5683, 5684]
+payload = "0x4001abcdb22e2bb05957656c6c2d4b6e6f776e0463006f7265"
+match_regex = "(\\.well-known|application/link-format)"
+
+[[probe]]
+name = "STOMP_CONNECT_V2"
+ports = [61613, 61614]
+payload = "CONNECT\naccept-version:1.2\nhost:gossan\n\n \n"
+match_regex = "(CONNECTED|version:|server:)"
+
+[[probe]]
+name = "MODBUS_TCP_DEVICE_ID"
+ports = [502]
+payload = "0x000100000006012b0e0100"
+match_regex = "(\\x2b\\x0e|Modbus|^\\x00\\x01)"
+
+[[probe]]
+name = "BACNET_WHO_IS"
+ports = [47808]
+payload = "0x810b0008010820ffff00ff1008"
+match_regex = "(^\\x81|\\x10\\x00)"
+
+[[probe]]
+name = "S7COMM_COTP"
+ports = [102]
+payload = "0x0300001611e00000000100c0010ac1020100c2020102"
+match_regex = "(^\\x03\\x00|\\xd0\\x00)"
+
+[[probe]]
+name = "DNP3_LINK"
+ports = [20000]
+payload = "0x056405c40100000000c2c2"
+match_regex = "(^\\x05\\x64|DNP)"
+
+[[probe]]
+name = "ETHERNETIP"
+ports = [44818]
+payload = "0x6500040000000000000000000000000000000000000000000000"
+match_regex = "(^\\x65\\x00|EtherNet/IP)"
+
+# ── Databases (NoSQL / columnar / time-series / search) ─────────────────
+[[probe]]
+name = "CASSANDRA_CQL_V4"
+ports = [9042, 9142]
+payload = "0x040000000500000000"
+match_regex = "(CQL_VERSION|SUPPORTED|COMPRESSION)"
+
+[[probe]]
+name = "COUCHDB_ROOT_V2"
+ports = [5984, 6984]
+payload = "GET / HTTP/1.0\r\n\r\n"
+match_regex = "(\"couchdb\":|Welcome|version)"
+
+[[probe]]
+name = "INFLUXDB_PING_V2"
+ports = [8086]
+payload = "GET /ping HTTP/1.0\r\n\r\n"
+match_regex = "(X-Influxdb-Version|^HTTP/[12]\\.[019] 204)"
+
+[[probe]]
+name = "INFLUXDB_HEALTH_V2"
+ports = [8086]
+payload = "GET /health HTTP/1.0\r\n\r\n"
+match_regex = "(\"name\":\"influxdb\"|InfluxDB|status)"
+
+[[probe]]
+name = "CLICKHOUSE_HTTP"
+ports = [8123, 8124]
+payload = "GET /?query=SELECT+version()+FORMAT+TabSeparated HTTP/1.0\r\n\r\n"
+match_regex = "(X-ClickHouse|^[0-9]+\\.[0-9]+\\.[0-9]+)"
+
+[[probe]]
+name = "ELASTIC_INFO"
+ports = [9200]
+payload = "GET /_cluster/health HTTP/1.0\r\n\r\n"
+match_regex = "(\"cluster_name\"|elasticsearch|status)"
+
+[[probe]]
+name = "OPENSEARCH_INFO"
+ports = [9200]
+payload = "GET / HTTP/1.0\r\n\r\n"
+match_regex = "(opensearch|distribution|tagline)"
+
+[[probe]]
+name = "SOLR_ADMIN_PING"
+ports = [8983]
+payload = "GET /solr/admin/info/system HTTP/1.0\r\n\r\n"
+match_regex = "(solr|lucene|java\\.version)"
+
+[[probe]]
+name = "NEO4J_HTTP_V2"
+ports = [7474]
+payload = "GET / HTTP/1.0\r\n\r\n"
+match_regex = "(neo4j|bolt|browser)"
+
+[[probe]]
+name = "ARANGODB_VERSION_V2"
+ports = [8529]
+payload = "GET /_api/version HTTP/1.0\r\n\r\n"
+match_regex = "(\"server\":|arangodb|\"version\":)"
+
+[[probe]]
+name = "RETHINKDB_HTTP_V2"
+ports = [8080]
+payload = "GET / HTTP/1.0\r\n\r\n"
+match_regex = "(rethinkdb|RethinkDB|driver)"
+
+[[probe]]
+name = "DRUID_BROKER"
+ports = [8082, 8888]
+payload = "GET /status HTTP/1.0\r\n\r\n"
+match_regex = "(druid|version|buildTime)"
+
+[[probe]]
+name = "PINOT_CONTROLLER"
+ports = [9000]
+payload = "GET /tables HTTP/1.0\r\n\r\n"
+match_regex = "(pinot|tables|^HTTP/[12]\\.[019] (200|401))"
+
+[[probe]]
+name = "QUESTDB_INFO"
+ports = [9000, 9009]
+payload = "GET / HTTP/1.0\r\n\r\n"
+match_regex = "(questdb|QuestDB)"
+
+# ── Container / orchestration ───────────────────────────────────────────
+[[probe]]
+name = "DOCKER_DAEMON"
+ports = [2375, 2376]
+payload = "GET /version HTTP/1.0\r\n\r\n"
+match_regex = "(\"ApiVersion\"|docker|Docker)"
+
+[[probe]]
+name = "DOCKER_REGISTRY"
+ports = [5000, 443]
+payload = "GET /v2/ HTTP/1.0\r\n\r\n"
+match_regex = "(Docker-Distribution|registry|^HTTP/[12]\\.[019] (200|401))"
+
+[[probe]]
+name = "K8S_API"
+ports = [6443, 8443, 10250]
+payload = "GET /api HTTP/1.0\r\n\r\n"
+match_regex = "(\"kind\"|kubernetes|api/v1)"
+
+[[probe]]
+name = "K8S_KUBELET"
+ports = [10250, 10255, 10256]
+payload = "GET /pods HTTP/1.0\r\n\r\n"
+match_regex = "(kubelet|PodList|kind)"
+
+[[probe]]
+name = "K8S_KUBELET_RO"
+ports = [10255]
+payload = "GET /metrics HTTP/1.0\r\n\r\n"
+match_regex = "(kubelet|^# HELP|container_)"
+
+[[probe]]
+name = "ETCD_VERSION_V2"
+ports = [2379, 2380, 4001]
+payload = "GET /version HTTP/1.0\r\n\r\n"
+match_regex = "(etcdserver|etcdcluster|\"etcdserver\")"
+
+[[probe]]
+name = "CONSUL_AGENT"
+ports = [8500, 8501]
+payload = "GET /v1/agent/self HTTP/1.0\r\n\r\n"
+match_regex = "(\"Config\":|Consul|consul)"
+
+[[probe]]
+name = "VAULT_HEALTH_V2"
+ports = [8200, 8201]
+payload = "GET /v1/sys/health HTTP/1.0\r\n\r\n"
+match_regex = "(\"version\":|vault|sealed)"
+
+[[probe]]
+name = "NOMAD_AGENT_V2"
+ports = [4646, 4647, 4648]
+payload = "GET /v1/agent/self HTTP/1.0\r\n\r\n"
+match_regex = "(nomad|Nomad|version)"
+
+[[probe]]
+name = "TRAEFIK_API_V2"
+ports = [8080]
+payload = "GET /api/version HTTP/1.0\r\n\r\n"
+match_regex = "(\"Version\":|traefik|Codename)"
+
+[[probe]]
+name = "PORTAINER"
+ports = [9000, 9443]
+payload = "GET /api/system/version HTTP/1.0\r\n\r\n"
+match_regex = "(portainer|Portainer|ServerEdition)"
+
+[[probe]]
+name = "RANCHER"
+ports = [80, 443]
+payload = "GET /v3/settings HTTP/1.0\r\n\r\n"
+match_regex = "(rancher|Rancher|cluster-)"
+
+[[probe]]
+name = "OPENSHIFT_OAUTH"
+ports = [8443]
+payload = "GET /.well-known/oauth-authorization-server HTTP/1.0\r\n\r\n"
+match_regex = "(openshift|oauth|issuer)"
+
+# ── CI/CD ───────────────────────────────────────────────────────────────
+[[probe]]
+name = "JENKINS_LOGIN_V2"
+ports = [8080, 8443, 50000]
+payload = "GET /login HTTP/1.0\r\n\r\n"
+match_regex = "(Jenkins|X-Jenkins|jenkins)"
+
+[[probe]]
+name = "JENKINS_API_V2"
+ports = [8080, 8443]
+payload = "GET /api/json HTTP/1.0\r\n\r\n"
+match_regex = "(\"jobs\":|jenkins|hudson)"
+
+[[probe]]
+name = "GITLAB_API"
+ports = [80, 443]
+payload = "GET /api/v4/version HTTP/1.0\r\n\r\n"
+match_regex = "(gitlab|GitLab|\"version\":)"
+
+[[probe]]
+name = "GITEA_API_V2"
+ports = [3000, 80, 443]
+payload = "GET /api/v1/version HTTP/1.0\r\n\r\n"
+match_regex = "(gitea|Gitea|\"version\":)"
+
+[[probe]]
+name = "DRONE_CI"
+ports = [80, 443]
+payload = "GET /healthz HTTP/1.0\r\n\r\n"
+match_regex = "(drone|Drone|^OK)"
+
+[[probe]]
+name = "WOODPECKER_CI"
+ports = [80, 443, 8000]
+payload = "GET /api/info HTTP/1.0\r\n\r\n"
+match_regex = "(woodpecker|Woodpecker|version)"
+
+[[probe]]
+name = "CONCOURSE_CI"
+ports = [8080, 443]
+payload = "GET /api/v1/info HTTP/1.0\r\n\r\n"
+match_regex = "(concourse|Concourse|version)"
+
+[[probe]]
+name = "TEAMCITY"
+ports = [8111, 80, 443]
+payload = "GET /app/rest/server HTTP/1.0\r\nAccept: application/json\r\n\r\n"
+match_regex = "(TeamCity|teamcity|<server)"
+
+[[probe]]
+name = "BAMBOO"
+ports = [8085, 80, 443]
+payload = "GET /rest/api/latest/info HTTP/1.0\r\nAccept: application/json\r\n\r\n"
+match_regex = "(bamboo|Bamboo|version)"
+
+[[probe]]
+name = "ARGOCD"
+ports = [80, 443, 8080]
+payload = "GET /api/version HTTP/1.0\r\n\r\n"
+match_regex = "(argo|ArgoCD|Version)"
+
+[[probe]]
+name = "TEKTON_DASHBOARD"
+ports = [9097]
+payload = "GET / HTTP/1.0\r\n\r\n"
+match_regex = "(tekton|Tekton|Dashboard)"
+
+[[probe]]
+name = "SPINNAKER_GATE"
+ports = [8084]
+payload = "GET /health HTTP/1.0\r\n\r\n"
+match_regex = "(spinnaker|Spinnaker|status)"
+
+[[probe]]
+name = "BUILDKITE_AGENT"
+ports = [80, 443]
+payload = "GET /v3 HTTP/1.0\r\n\r\n"
+match_regex = "(buildkite|Buildkite|agent)"
+
+# ── Monitoring / observability ──────────────────────────────────────────
+[[probe]]
+name = "PROMETHEUS_MAIN"
+ports = [9090]
+payload = "GET /api/v1/status/buildinfo HTTP/1.0\r\n\r\n"
+match_regex = "(prometheus|Prometheus|\"version\":)"
+
+[[probe]]
+name = "PROMETHEUS_NODE_EXPORTER"
+ports = [9100]
+payload = "GET /metrics HTTP/1.0\r\n\r\n"
+match_regex = "(node_exporter|^# HELP node_|node_cpu_)"
+
+[[probe]]
+name = "PROMETHEUS_BLACKBOX"
+ports = [9115]
+payload = "GET / HTTP/1.0\r\n\r\n"
+match_regex = "(Blackbox Exporter|blackbox_|probes)"
+
+[[probe]]
+name = "PROMETHEUS_PUSHGATEWAY"
+ports = [9091]
+payload = "GET /-/healthy HTTP/1.0\r\n\r\n"
+match_regex = "(pushgateway|Pushgateway|^OK)"
+
+[[probe]]
+name = "GRAFANA_LOGIN"
+ports = [3000, 80, 443]
+payload = "GET /login HTTP/1.0\r\n\r\n"
+match_regex = "(grafana|Grafana)"
+
+[[probe]]
+name = "GRAFANA_API_HEALTH"
+ports = [3000]
+payload = "GET /api/health HTTP/1.0\r\n\r\n"
+match_regex = "(\"version\":|database|grafana)"
+
+[[probe]]
+name = "ALERTMANAGER"
+ports = [9093, 9094]
+payload = "GET /-/healthy HTTP/1.0\r\n\r\n"
+match_regex = "(alertmanager|Alertmanager|^OK)"
+
+[[probe]]
+name = "LOKI"
+ports = [3100]
+payload = "GET /ready HTTP/1.0\r\n\r\n"
+match_regex = "(loki|Loki|^ready)"
+
+[[probe]]
+name = "TEMPO"
+ports = [3200]
+payload = "GET /ready HTTP/1.0\r\n\r\n"
+match_regex = "(tempo|Tempo|^ready)"
+
+[[probe]]
+name = "JAEGER_QUERY_V2"
+ports = [16686]
+payload = "GET /search HTTP/1.0\r\n\r\n"
+match_regex = "(jaeger|Jaeger|tracing)"
+
+[[probe]]
+name = "ZIPKIN"
+ports = [9411]
+payload = "GET /health HTTP/1.0\r\n\r\n"
+match_regex = "(zipkin|Zipkin|status)"
+
+[[probe]]
+name = "KIBANA_STATUS"
+ports = [5601]
+payload = "GET /api/status HTTP/1.0\r\n\r\n"
+match_regex = "(kibana|Kibana|version)"
+
+[[probe]]
+name = "FLUENTD_HTTP"
+ports = [9880, 24224]
+payload = "GET / HTTP/1.0\r\n\r\n"
+match_regex = "(fluentd|Fluent|404 Not Found)"
+
+[[probe]]
+name = "FLUENTBIT_API"
+ports = [2020]
+payload = "GET /api/v1/health HTTP/1.0\r\n\r\n"
+match_regex = "(fluent-bit|Fluent Bit|^ok)"
+
+[[probe]]
+name = "TELEGRAF"
+ports = [9273, 8125]
+payload = "GET /metrics HTTP/1.0\r\n\r\n"
+match_regex = "(telegraf|Telegraf|^# HELP)"
+
+[[probe]]
+name = "VICTORIAMETRICS"
+ports = [8428]
+payload = "GET /metrics HTTP/1.0\r\n\r\n"
+match_regex = "(vm_app_version|VictoriaMetrics|victoriametrics)"
+
+[[probe]]
+name = "NETDATA"
+ports = [19999]
+payload = "GET /api/v1/info HTTP/1.0\r\n\r\n"
+match_regex = "(netdata|Netdata|version)"
+
+[[probe]]
+name = "STATSD_ADMIN"
+ports = [8126]
+payload = "stats\r\n"
+match_regex = "(uptime|messages|gauges)"
+
+[[probe]]
+name = "CADVISOR"
+ports = [8080, 4194]
+payload = "GET /api/v1.3/machine HTTP/1.0\r\n\r\n"
+match_regex = "(cadvisor|num_cores|machine_id)"
+
+# ── AI / ML serving ─────────────────────────────────────────────────────
+[[probe]]
+name = "OLLAMA_TAGS_V2"
+ports = [11434]
+payload = "GET /api/tags HTTP/1.0\r\n\r\n"
+match_regex = "(\"models\":|ollama|Ollama)"
+
+[[probe]]
+name = "OLLAMA_VERSION"
+ports = [11434]
+payload = "GET /api/version HTTP/1.0\r\n\r\n"
+match_regex = "(\"version\":|ollama|Ollama)"
+
+[[probe]]
+name = "VLLM_API"
+ports = [8000, 8001]
+payload = "GET /v1/models HTTP/1.0\r\n\r\n"
+match_regex = "(\"object\":\"list\"|vllm|model)"
+
+[[probe]]
+name = "TRITON_HEALTH_V2"
+ports = [8000, 8001, 8002]
+payload = "GET /v2/health/ready HTTP/1.0\r\n\r\n"
+match_regex = "(triton|^HTTP/[12]\\.[019] 200|tritonserver)"
+
+[[probe]]
+name = "TENSORFLOW_SERVING"
+ports = [8500, 8501]
+payload = "GET /v1/models/ HTTP/1.0\r\n\r\n"
+match_regex = "(tensorflow|model_version_status|^\\{)"
+
+[[probe]]
+name = "TORCHSERVE_INFERENCE"
+ports = [8080, 8081]
+payload = "GET /ping HTTP/1.0\r\n\r\n"
+match_regex = "(torchserve|TorchServe|status)"
+
+[[probe]]
+name = "JUPYTER_LAB"
+ports = [8888, 8889]
+payload = "GET / HTTP/1.0\r\n\r\n"
+match_regex = "(jupyter|Jupyter|notebook|JupyterLab)"
+
+[[probe]]
+name = "JUPYTER_API_V2"
+ports = [8888]
+payload = "GET /api HTTP/1.0\r\n\r\n"
+match_regex = "(jupyter|version|kernels)"
+
+[[probe]]
+name = "MLFLOW_TRACKING"
+ports = [5000, 5001]
+payload = "GET /api/2.0/mlflow/experiments/search HTTP/1.0\r\n\r\n"
+match_regex = "(mlflow|experiments|^\\{)"
+
+[[probe]]
+name = "RAY_DASHBOARD_V2"
+ports = [8265, 6379]
+payload = "GET / HTTP/1.0\r\n\r\n"
+match_regex = "(ray|Ray|Dashboard)"
+
+[[probe]]
+name = "KSERVE_PREDICT"
+ports = [8080]
+payload = "GET /v1/models HTTP/1.0\r\n\r\n"
+match_regex = "(kserve|model|predict)"
+
+[[probe]]
+name = "BENTOML"
+ports = [3000, 5000]
+payload = "GET /healthz HTTP/1.0\r\n\r\n"
+match_regex = "(bentoml|BentoML|^\\{|^OK)"
+
+[[probe]]
+name = "STABLE_DIFFUSION_WEBUI"
+ports = [7860, 7861]
+payload = "GET /sdapi/v1/options HTTP/1.0\r\n\r\n"
+match_regex = "(stable|automatic|sd_model)"
+
+[[probe]]
+name = "TEXT_GENERATION_INFERENCE"
+ports = [3000, 8080]
+payload = "GET /info HTTP/1.0\r\n\r\n"
+match_regex = "(model_id|text-generation|tgi)"
+
+# ── Crypto / blockchain ─────────────────────────────────────────────────
+[[probe]]
+name = "ETH_JSONRPC"
+ports = [8545, 8546]
+payload = "POST / HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: 64\r\n\r\n{\"jsonrpc\":\"2.0\",\"method\":\"eth_chainId\",\"params\":[],\"id\":1}"
+match_regex = "(\"jsonrpc\":\"2.0\"|chainId|geth|nethermind)"
+
+[[probe]]
+name = "BTC_JSONRPC"
+ports = [8332, 18332]
+payload = "POST / HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: 50\r\n\r\n{\"jsonrpc\":\"1.0\",\"id\":1,\"method\":\"getblockcount\"}"
+match_regex = "(bitcoin|getblockcount|^HTTP/[12]\\.[019] (200|401))"
+
+[[probe]]
+name = "MONERO_JSONRPC"
+ports = [18081, 18089]
+payload = "POST /json_rpc HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: 71\r\n\r\n{\"jsonrpc\":\"2.0\",\"id\":\"0\",\"method\":\"get_info\",\"params\":{}}"
+match_regex = "(monero|height|mainnet)"
+
+[[probe]]
+name = "PARITY_OPENETHEREUM"
+ports = [8545]
+payload = "POST / HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: 56\r\n\r\n{\"jsonrpc\":\"2.0\",\"method\":\"web3_clientVersion\",\"id\":1}"
+match_regex = "(Parity|OpenEthereum|Geth)"
+
+[[probe]]
+name = "STRATUM_MINING"
+ports = [3333, 4444, 5555, 14444]
+payload = "{\"id\":1,\"method\":\"mining.subscribe\",\"params\":[\"gossan/0.1\"]}\n"
+match_regex = "(mining\\.|subscribe|\"id\":1)"
+
+# ── Misc commonly-exposed ───────────────────────────────────────────────
+[[probe]]
+name = "MINIO_HEALTH_V2"
+ports = [9000, 9001]
+payload = "GET /minio/health/live HTTP/1.0\r\n\r\n"
+match_regex = "(MinIO|^HTTP/[12]\\.[019] 200|minio)"
+
+[[probe]]
+name = "MINIO_CONSOLE"
+ports = [9001]
+payload = "GET / HTTP/1.0\r\n\r\n"
+match_regex = "(MinIO|minio|Console)"
+
+[[probe]]
+name = "SEAWEEDFS_MASTER"
+ports = [9333]
+payload = "GET /cluster/status HTTP/1.0\r\n\r\n"
+match_regex = "(seaweedfs|SeaweedFS|leader)"
+
+[[probe]]
+name = "PROXMOX_API_V2"
+ports = [8006]
+payload = "GET /api2/json/version HTTP/1.0\r\n\r\n"
+match_regex = "(proxmox|pve|version)"
+
+[[probe]]
+name = "ESXI_HOSTD"
+ports = [443]
+payload = "GET / HTTP/1.0\r\n\r\n"
+match_regex = "(VMware|ESXi|vSphere)"
+
+[[probe]]
+name = "VCENTER_SDK"
+ports = [443]
+payload = "GET /sdk HTTP/1.0\r\n\r\n"
+match_regex = "(VMware|vCenter|^HTTP/[12]\\.[019] (200|400))"
+
+[[probe]]
+name = "NEXUS_REPO_V2"
+ports = [8081]
+payload = "GET /service/rest/v1/status HTTP/1.0\r\n\r\n"
+match_regex = "(Nexus|nexus|^HTTP/[12]\\.[019] (200|401))"
+
+[[probe]]
+name = "ARTIFACTORY"
+ports = [8081, 8082]
+payload = "GET /api/system/ping HTTP/1.0\r\n\r\n"
+match_regex = "(OK|artifactory|jfrog)"
+
+[[probe]]
+name = "HARBOR_REGISTRY"
+ports = [80, 443]
+payload = "GET /api/v2.0/health HTTP/1.0\r\n\r\n"
+match_regex = "(harbor|Harbor|\"status\":\"healthy\")"
+
+[[probe]]
+name = "OPENVAS_GSAD"
+ports = [9392, 443]
+payload = "GET / HTTP/1.0\r\n\r\n"
+match_regex = "(GSAD|Greenbone|OpenVAS)"
+
+[[probe]]
+name = "NESSUS_SCANNER"
+ports = [8834]
+payload = "GET /server/properties HTTP/1.0\r\n\r\n"
+match_regex = "(Nessus|nessus|server_uuid)"
+
+[[probe]]
+name = "BURP_API"
+ports = [1337, 8080]
+payload = "GET / HTTP/1.0\r\n\r\n"
+match_regex = "(burp|Burp|PortSwigger)"
+
+[[probe]]
+name = "ZAP_API"
+ports = [8080, 8090]
+payload = "GET /JSON/core/view/version HTTP/1.0\r\n\r\n"
+match_regex = "(\"version\"|OWASP ZAP|ZAP)"
+
+[[probe]]
+name = "IPFS_API_V2"
+ports = [5001, 8080]
+payload = "POST /api/v0/version HTTP/1.0\r\n\r\n"
+match_regex = "(\"Version\"|ipfs|kubo)"
+
+[[probe]]
+name = "KAFKA_REST"
+ports = [8082]
+payload = "GET / HTTP/1.0\r\n\r\n"
+match_regex = "(kafka|Kafka|^HTTP/[12]\\.[019] (200|404))"
+
+[[probe]]
+name = "SCHEMA_REGISTRY"
+ports = [8081]
+payload = "GET /subjects HTTP/1.0\r\n\r\n"
+match_regex = "(\\[|schema-registry|kafka)"
+
+[[probe]]
+name = "ZOOKEEPER_FOURLW_RUOK"
+ports = [2181, 2182]
+payload = "ruok"
+match_regex = "(imok|^[a-zA-Z])"
+
+[[probe]]
+name = "ZOOKEEPER_FOURLW_STAT"
+ports = [2181]
+payload = "stat"
+match_regex = "(Zookeeper|Mode:|Connections:)"
+
+[[probe]]
+name = "RABBITMQ_MGMT"
+ports = [15672]
+payload = "GET /api/overview HTTP/1.0\r\nAuthorization: Basic Z3Vlc3Q6Z3Vlc3Q=\r\n\r\n"
+match_regex = "(\"rabbitmq_version\"|RabbitMQ|^HTTP/[12]\\.[019] (200|401))"
+
+[[probe]]
+name = "ACTIVEMQ_ADMIN"
+ports = [8161]
+payload = "GET / HTTP/1.0\r\n\r\n"
+match_regex = "(ActiveMQ|admin|^HTTP/[12]\\.[019] (200|401))"
+
+[[probe]]
+name = "NATS_INFO"
+ports = [4222, 8222]
+payload = "GET / HTTP/1.0\r\n\r\n"
+match_regex = "(NATS|nats|^INFO)"
+
+[[probe]]
+name = "PULSAR_ADMIN"
+ports = [8080, 6650]
+payload = "GET /admin/v2/clusters HTTP/1.0\r\n\r\n"
+match_regex = "(pulsar|Pulsar|cluster)"
+
+[[probe]]
+name = "MIKROTIK_WEBFIG"
+ports = [80, 443, 8728, 8729]
+payload = "GET / HTTP/1.0\r\n\r\n"
+match_regex = "(MikroTik|RouterOS|webfig)"
+
+[[probe]]
+name = "UBIQUITI_UNIFI"
+ports = [8443, 8843, 8880]
+payload = "GET / HTTP/1.0\r\n\r\n"
+match_regex = "(unifi|UBNT|Ubiquiti)"

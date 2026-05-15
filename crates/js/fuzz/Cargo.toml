@@ -1,0 +1,25 @@
+[package]
+name = "gossan-js-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+repository = "https://github.com/santhsecurity/gossan"
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+
+[package.metadata.santh]
+status = "alpha"
+[dependencies]
+libfuzzer-sys = "0.4"
+gossan-js = { path = ".." }
+gossan-core = { path = "../../core" }
+
+[[bin]]
+name = "fuzz_js_analyzer"
+path = "fuzz_targets/fuzz_js_analyzer.rs"
+test = false
+doc = false

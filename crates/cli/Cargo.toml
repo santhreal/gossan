@@ -2,14 +2,18 @@
 name = "gossan"
 version.workspace = true
 edition.workspace = true
-authors = ["CORUM COLLECTIVE LLC <contact@santh.io>"]
+authors = ["Santh Project <contact@santh.dev>"]
 license.workspace = true
 homepage.workspace = true
-repository.workspace = true
-description = "Fast, modular attack surface discovery — subdomains, ports, tech stack, secrets, hidden endpoints, cloud assets — part of the Santh security research ecosystem"
+repository = "https://github.com/santhsecurity/gossan"
+description = "Fast, modular attack surface discovery — subdomains, ports, tech stack, secrets, hidden endpoints, cloud assets — part of the security research ecosystem"
+readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+
+[package.metadata.santh]
+status = "alpha"
 [[bin]]
 name = "gossan"
 path = "src/main.rs"
@@ -25,9 +29,10 @@ path = "src/main.rs"
 
 [features]
 default = [
-    "subdomain", "portscan", "techstack", "dns",
-    "js", "hidden", "cloud", "correlation", "checkpoint",
-    "synscan", "headless", "crawl",
+    "subdomain", "portscan", "dns", "js", "crawl", "scm",
+    "cloud", "correlation", "checkpoint",
+    "headless", "origin", "horizontal", "graph", "intel", "fleet",
+    "engine", "techstack", "hidden",
 ]
 subdomain   = ["dep:gossan-subdomain"]
 portscan    = ["dep:gossan-portscan"]
@@ -35,34 +40,50 @@ techstack   = ["dep:gossan-techstack"]
 dns         = ["dep:gossan-dns"]
 js          = ["dep:gossan-js"]
 hidden      = ["dep:gossan-hidden"]
-cloud       = ["dep:gossan-cloud"]
+cloud       = ["dep:gossan-cloud", "gossan-cloud/cloud"]
 correlation = ["dep:gossan-correlation"]
 checkpoint  = ["dep:gossan-checkpoint"]
-synscan     = ["dep:gossan-synscan"]
 headless    = ["dep:gossan-headless"]
 crawl       = ["dep:gossan-crawl"]
+origin      = ["dep:gossan-origin"]
+horizontal  = ["dep:gossan-horizontal"]
+graph       = ["dep:gossan-graph", "gossan-graph/graph"]
+scm         = ["dep:gossan-scm"]
+intel       = ["dep:gossan-intel"]
+fleet       = ["dep:gossan-fleet"]
+engine      = ["dep:gossan-engine"]
 
 [dependencies]
-gossan-core = { version = "0.2", path = "../core" }
-gossan-subdomain   = { version = "0.2", path = "../subdomain",   optional = true }
-gossan-portscan    = { version = "0.2", path = "../portscan",    optional = true }
-gossan-techstack   = { version = "0.2", path = "../techstack",   optional = true }
-gossan-dns         = { version = "0.2", path = "../dns",         optional = true }
-gossan-js          = { version = "0.2", path = "../js",          optional = true }
-gossan-hidden      = { version = "0.2", path = "../hidden",      optional = true }
-gossan-cloud       = { version = "0.2", path = "../cloud",       optional = true }
-gossan-correlation = { version = "0.2", path = "../correlation", optional = true }
-gossan-checkpoint  = { version = "0.2", path = "../checkpoint",  optional = true }
-gossan-synscan     = { version = "0.2", path = "../synscan",     optional = true }
-gossan-headless    = { version = "0.2", path = "../headless",    optional = true }
-gossan-crawl       = { version = "0.2", path = "../crawl",       optional = true }
+gossan-core = { version = "0.3", path = "../core" }
+gossan-subdomain   = { version = "0.3", path = "../subdomain",   optional = true }
+gossan-portscan    = { version = "0.3", path = "../portscan",    optional = true }
+gossan-techstack   = { version = "0.3", path = "../techstack",   optional = true }
+gossan-dns         = { version = "0.3", path = "../dns",         optional = true }
+gossan-js          = { version = "0.3", path = "../js",          optional = true }
+gossan-hidden      = { version = "0.3", path = "../hidden",      optional = true }
+gossan-cloud       = { version = "0.3", path = "../cloud",       optional = true }
+gossan-correlation = { version = "0.3", path = "../correlation", optional = true }
+gossan-checkpoint  = { version = "0.3", path = "../checkpoint",  optional = true }
+gossan-headless    = { version = "0.3", path = "../headless",    optional = true }
+gossan-crawl       = { version = "0.3", path = "../crawl",       optional = true }
+gossan-origin      = { version = "0.3", path = "../origin",      optional = true }
+gossan-horizontal  = { version = "0.3", path = "../horizontal",  optional = true }
+gossan-graph       = { version = "0.3", path = "../graph",       optional = true }
+gossan-scm         = { version = "0.3", path = "../scm",         optional = true }
+gossan-intel       = { version = "0.3", path = "../intel",       optional = true }
+gossan-fleet       = { version = "0.3", path = "../fleet",       optional = true }
+gossan-engine      = { version = "0.3", path = "../engine",      optional = true }
+
+# Used at runtime to detect root (geteuid) so we can pick the
+# masscan-class engine path automatically when privileges allow.
+libc               = "0.2"
 
 async-trait        = { workspace = true }
 serde              = { workspace = true }
 serde_json         = { workspace = true }
 anyhow             = { workspace = true }
 tracing            = { workspace = true }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tokio              = { workspace = true }
 clap               = { workspace = true }
 indicatif          = { workspace = true }
@@ -73,3 +94,16 @@ santh-output       = { workspace = true }
 secfinding         = { workspace = true }
 scantarget         = { workspace = true }
 scanclient         = { workspace = true }
+hashkit            = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+# Used only in #[cfg(test)] fixtures that construct WebAssetTarget URLs;
+# kept in dev-deps rather than promoting it to a regular dep.
+url       = { workspace = true }
+tempfile  = "3"
+santh-output = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

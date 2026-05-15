@@ -30,6 +30,8 @@ use x509_cert::Certificate;
 ///     sans: vec!["example.com".into(), "www.example.com".into()],
 ///     not_after_unix: 1893456000, // Unix timestamp
 ///     is_self_signed: false,
+///     cipher_suite: "TLS13_AES_256_GCM_SHA384".into(),
+///     protocol_version: "TLS1.3".into(),
 /// };
 ///
 /// println!("Certificate for: {}", info.subject);
@@ -46,14 +48,27 @@ pub struct TlsCertInfo {
     pub not_after_unix: i64,
     /// Whether the certificate is self-signed (subject == issuer)
     pub is_self_signed: bool,
+    /// Negotiated cipher suite name from the rustls handshake
+    /// (e.g., `TLS13_AES_256_GCM_SHA384`). Empty when probing failed
+    /// before the handshake completed or when rustls didn't surface a
+    /// suite name.
+    pub cipher_suite: String,
+    /// TLS protocol version negotiated (e.g., `TLS1.3`, `TLS1.2`).
+    pub protocol_version: String,
 }
 
 impl fmt::Display for TlsCertInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "TlsCertInfo(subject: {}, issuer: {}, sans: {:?}, expires: {}, self-signed: {})",
-            self.subject, self.issuer, self.sans, self.not_after_unix, self.is_self_signed
+            "TlsCertInfo(subject: {}, issuer: {}, sans: {:?}, expires: {}, self-signed: {}, cipher: {}, version: {})",
+            self.subject,
+            self.issuer,
+            self.sans,
+            self.not_after_unix,
+            self.is_self_signed,
+            self.cipher_suite,
+            self.protocol_version,
         )
     }
 }
@@ -168,9 +183,23 @@ pub async fn probe_tls(
         .ok()?;
 
     let (_, server_conn) = tls_stream.get_ref();
+    // Snapshot cipher + version BEFORE we consume `server_conn` for
+    // the cert chain. rustls exposes both via Connection::* methods
+    // immediately after handshake.
+    let cipher_suite = server_conn
+        .negotiated_cipher_suite()
+        .map(|s| format!("{:?}", s.suite()))
+        .unwrap_or_default();
+    let protocol_version = server_conn
+        .protocol_version()
+        .map(|v| format!("{v:?}"))
+        .unwrap_or_default();
     let certs = server_conn.peer_certificates()?;
     let der = certs.first()?;
-    parse_cert(der)
+    let mut info = parse_cert(der)?;
+    info.cipher_suite = cipher_suite;
+    info.protocol_version = protocol_version;
+    Some(info)
 }
 
 fn parse_cert(der: &CertificateDer<'_>) -> Option<TlsCertInfo> {
@@ -225,6 +254,8 @@ fn parse_cert(der: &CertificateDer<'_>) -> Option<TlsCertInfo> {
         sans,
         not_after_unix,
         is_self_signed,
+        cipher_suite: String::new(),
+        protocol_version: String::new(),
     })
 }
 

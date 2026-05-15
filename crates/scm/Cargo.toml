@@ -1,0 +1,43 @@
+[package]
+name = "gossan-scm"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "SCM Mapping (Source Control Mapping) for Gossan"
+repository = "https://github.com/santhsecurity/gossan"
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+
+[package.metadata.santh]
+status = "alpha"
+[dependencies]
+gossan-core = { version = "0.3", path = "../core" }
+async-trait  = { workspace = true }
+anyhow       = { workspace = true }
+tracing      = { workspace = true }
+tokio       = { workspace = true }
+reqwest = { workspace = true }
+futures     = { workspace = true }
+url         = { workspace = true }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+octocrab    = { workspace = true }
+gitlab      = { workspace = true }
+gix         = { workspace = true, features = ["blocking-network-client"] }
+gossan-keyhog-lite = { path = "../keyhog-lite" }
+secfinding  = { workspace = true }
+tempfile    = "3"
+regex       = { workspace = true }
+governor    = { workspace = true }
+nonzero_ext = { workspace = true }
+
+[dev-dependencies]
+mockito = "1.4"
+proptest = "1.2"
+hickory-resolver = { workspace = true }
+
+[lints]
+workspace = true

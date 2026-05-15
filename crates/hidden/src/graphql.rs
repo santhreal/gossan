@@ -1,10 +1,13 @@
 //! GraphQL security probes.
 //!
 //! 1. Introspection enabled — full schema disclosure
-//! 2. Batching attack — DoS / rate-limit bypass via array of operations
-//! 3. Field suggestion leakage — "did you mean password?" exposes schema fragments
-//! 4. Verbose error mode — stack traces / internal paths in error responses
-//! 5. Alias amplification — single request fans out to N resolver calls
+//! 2. Introspection bypass via alias wrapping
+//! 3. Introspection bypass via fragment spreading
+//! 4. Introspection via __type(name:...)
+//! 5. Batching attack — DoS / rate-limit bypass via array of operations
+//! 6. Field suggestion leakage — "did you mean password?" exposes schema fragments
+//! 7. Verbose error mode — stack traces / internal paths in error responses
+//! 8. Alias amplification — single request fans out to N resolver calls
 
 use gossan_core::Target;
 use reqwest::Client;
@@ -27,9 +30,17 @@ const PATHS: &[&str] = &[
 const INTROSPECTION: &str =
     r#"{"query":"{ __schema { queryType { name } types { name kind fields { name } } } }"}"#;
 
-const FIELD_PROBE: &str = r#"{"query":"{ __typenme }"}"#; // intentional typo — triggers "did you mean __typename?"
+const INTROSPECTION_ALIAS: &str =
+    r#"{"query":"{ introspection: __schema { queryType { name } types { name kind fields { name } } } }"}"#;
 
-// Batch: 10 identical introspection queries in one HTTP request
+const INTROSPECTION_FRAGMENT: &str =
+    r#"{"query":"query { ... on __Schema { queryType { name } types { name kind } } }"}"#;
+
+const INTROSPECTION_TYPE: &str =
+    r#"{"query":"query { __type(name: \"Query\") { name fields { name } } }"}"#;
+
+const FIELD_PROBE: &str = r#"{"query":"{ __typenme }"}"#;
+
 const BATCH: &str = r#"[
   {"query":"{ __typename }"},
   {"query":"{ __typename }"},
@@ -43,7 +54,6 @@ const BATCH: &str = r#"[
   {"query":"{ __typename }"}
 ]"#;
 
-// Alias amplification: 20 aliases resolving the same field in one query
 const ALIAS_AMP: &str = r#"{"query":"{
   a1:__typename a2:__typename a3:__typename a4:__typename a5:__typename
   a6:__typename a7:__typename a8:__typename a9:__typename a10:__typename
@@ -51,7 +61,11 @@ const ALIAS_AMP: &str = r#"{"query":"{
   a16:__typename a17:__typename a18:__typename a19:__typename a20:__typename
 }"}"#;
 
-pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Finding>> {
+pub async fn probe(
+    client: &Client,
+    target: &Target,
+    baseline: Option<&crate::soft404::BaselineFingerprint>,
+) -> anyhow::Result<Vec<Finding>> {
     let Target::Web(asset) = target else {
         return Ok(vec![]);
     };
@@ -70,10 +84,13 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
             .await
         {
             if r.status().as_u16() == 200 {
-                let body = r.text().await.unwrap_or_default();
-                if body.contains("__typename") || body.contains("data") {
-                    endpoint = Some(url);
-                    break;
+                let body = capped_text(r, crate::MAX_BODY_BYTES).await.unwrap_or_default();
+                // Validate it's real GraphQL, not a catch-all SPA
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                    if json.get("data").and_then(|d| d.get("__typename")).is_some() {
+                        endpoint = Some(url);
+                        break;
+                    }
                 }
             }
         }
@@ -92,30 +109,105 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
         .await
     {
         if r.status().as_u16() == 200 {
-            let body = r.text().await.unwrap_or_default();
+            let body = capped_text(r, crate::MAX_BODY_BYTES).await.unwrap_or_default();
             if body.contains("__schema") || body.contains("queryType") {
-                findings.push(
-                    crate::finding_builder(target, Severity::High,
+                gossan_core::try_push_finding(crate::vulnerability_finding(target, Severity::High,
                         "GraphQL introspection enabled — full schema exposed",
                         format!("{} allows introspection. Attackers can enumerate every query, \
                                  mutation, type, and field name — full attack surface in one request.", ep))
                     .evidence(Evidence::HttpResponse {
                         status: 200, headers: vec![],
-                        body_excerpt: Some(body.chars().take(400).collect()),
+                        body_excerpt: Some(body.chars().take(400).collect::<String>().into()),
                     })
                     .tag("graphql").tag("exposure")
                     .exploit_hint(format!(
                         "# Dump full schema:\n\
                          npx get-graphql-schema {}\n\
                          # Or with graphql-cop:\n\
-                         python3 graphql-cop.py -t {}", ep, ep))
-                    .build().expect("finding builder: required fields are set")
-                );
+                         python3 graphql-cop.py -t {}", ep, ep)), &mut findings);
             }
         }
     }
 
-    // ── 2. Field suggestion leakage ──────────────────────────────────────────
+    // ── 2. Alias bypass ──────────────────────────────────────────────────────
+    if findings.iter().any(|f| f.title().contains("introspection enabled")) {
+        // Already found introspection, skip bypass probes
+    } else if let Ok(r) = client
+        .post(&ep)
+        .header("content-type", "application/json")
+        .body(INTROSPECTION_ALIAS)
+        .send()
+        .await
+    {
+        if r.status().as_u16() == 200 {
+            let body = capped_text(r, crate::MAX_BODY_BYTES).await.unwrap_or_default();
+            if body.contains("__schema") || body.contains("queryType") {
+                gossan_core::try_push_finding(crate::vulnerability_finding(target, Severity::High,
+                        "GraphQL introspection bypassed via alias wrapping",
+                        format!("{} blocked direct introspection but allowed the same query wrapped in an alias. \
+                                 Simple regex WAF filters are insufficient.", ep))
+                    .evidence(Evidence::HttpResponse {
+                        status: 200, headers: vec![],
+                        body_excerpt: Some(body.chars().take(400).collect::<String>().into()),
+                    })
+                    .tag("graphql").tag("exposure").tag("waf-bypass"), &mut findings);
+            }
+        }
+    }
+
+    // ── 3. Fragment bypass ───────────────────────────────────────────────────
+    if findings.iter().any(|f| f.title().contains("introspection")) {
+        // skip
+    } else if let Ok(r) = client
+        .post(&ep)
+        .header("content-type", "application/json")
+        .body(INTROSPECTION_FRAGMENT)
+        .send()
+        .await
+    {
+        if r.status().as_u16() == 200 {
+            let body = capped_text(r, crate::MAX_BODY_BYTES).await.unwrap_or_default();
+            if body.contains("__schema") || body.contains("queryType") {
+                gossan_core::try_push_finding(crate::vulnerability_finding(target, Severity::High,
+                        "GraphQL introspection bypassed via fragment spreading",
+                        format!("{} blocked field-name blacklists but accepted introspection via inline fragment. \
+                                 Fragments evade naive string-matching defences.", ep))
+                    .evidence(Evidence::HttpResponse {
+                        status: 200, headers: vec![],
+                        body_excerpt: Some(body.chars().take(400).collect::<String>().into()),
+                    })
+                    .tag("graphql").tag("exposure").tag("waf-bypass"), &mut findings);
+            }
+        }
+    }
+
+    // ── 4. __type targeted introspection ─────────────────────────────────────
+    if findings.iter().any(|f| f.title().contains("introspection")) {
+        // skip
+    } else if let Ok(r) = client
+        .post(&ep)
+        .header("content-type", "application/json")
+        .body(INTROSPECTION_TYPE)
+        .send()
+        .await
+    {
+        if r.status().as_u16() == 200 {
+            let body = capped_text(r, crate::MAX_BODY_BYTES).await.unwrap_or_default();
+            if body.contains("__type") && body.contains("fields") {
+                gossan_core::try_push_finding(crate::vulnerability_finding(target, Severity::Medium,
+                        "GraphQL __type introspection enabled — partial schema disclosure",
+                        format!("{} allows __type(name:) queries even when full __schema introspection is disabled. \
+                                 Attackers can still enumerate the schema field-by-field.", ep))
+                    .evidence(Evidence::HttpResponse {
+                        status: 200, headers: vec![],
+                        body_excerpt: Some(body.chars().take(400).collect::<String>().into()),
+                    })
+                    .tag("graphql").tag("exposure"), &mut findings);
+            }
+        }
+    }
+
+    // ── 5. Field suggestion leakage ──────────────────────────────────────────
     if let Ok(r) = client
         .post(&ep)
         .header("content-type", "application/json")
@@ -123,36 +215,31 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
         .send()
         .await
     {
-        let body = r.text().await.unwrap_or_default();
-        // "Did you mean" in error messages leaks field names even when introspection is off
+        let body = capped_text(r, crate::MAX_BODY_BYTES).await.unwrap_or_default();
         if body.contains("Did you mean") || body.contains("did you mean") {
-            // Extract the suggestion
             let suggestion = body
                 .lines()
                 .find(|l| l.contains("Did you mean") || l.contains("did you mean"))
                 .map(|l| l.trim().to_string())
                 .unwrap_or_default();
 
-            findings.push(
-                crate::finding_builder(target, Severity::Medium,
+            gossan_core::try_push_finding(crate::vulnerability_finding(target, Severity::Medium,
                     "GraphQL field suggestion leakage (introspection bypass)",
                     format!("{} leaks field names via error suggestions even with introspection disabled. \
                              Attackers can enumerate all field names by fuzzing typos. Suggestion: \"{}\"",
                              ep, suggestion))
                 .evidence(Evidence::HttpResponse {
                     status: 200, headers: vec![],
-                    body_excerpt: Some(body.chars().take(300).collect()),
+                    body_excerpt: Some(body.chars().take(300).collect::<String>().into()),
                 })
                 .tag("graphql").tag("exposure")
                 .exploit_hint(format!(
                     "# Enumerate fields via suggestions (clairvoyance):\n\
-                     python3 -m clairvoyance {} -o schema.json", ep))
-                .build().expect("finding builder: required fields are set")
-            );
+                     python3 -m clairvoyance {} -o schema.json", ep)), &mut findings);
         }
     }
 
-    // ── 3. Batch / rate-limit bypass ─────────────────────────────────────────
+    // ── 6. Batch / rate-limit bypass ─────────────────────────────────────────
     if let Ok(r) = client
         .post(&ep)
         .header("content-type", "application/json")
@@ -161,11 +248,9 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
         .await
     {
         if r.status().as_u16() == 200 {
-            let body = r.text().await.unwrap_or_default();
-            // Array response = batching accepted
+            let body = capped_text(r, crate::MAX_BODY_BYTES).await.unwrap_or_default();
             if body.trim_start().starts_with('[') {
-                findings.push(
-                    crate::finding_builder(
+                gossan_core::try_push_finding(crate::vulnerability_finding(
                         target,
                         Severity::Medium,
                         "GraphQL query batching enabled — rate-limit bypass",
@@ -179,7 +264,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                     .evidence(Evidence::HttpResponse {
                         status: 200,
                         headers: vec![],
-                        body_excerpt: Some(body.chars().take(200).collect()),
+                        body_excerpt: Some(body.chars().take(200).collect::<String>().into()),
                     })
                     .tag("graphql")
                     .tag("rate-limit-bypass")
@@ -188,15 +273,12 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                         "# Batch 100 login mutations in one request:\n\
                          python3 graphql-cop.py -t {} --test BATCH_LIMIT",
                         ep
-                    ))
-                    .build()
-                    .expect("finding builder: required fields are set"),
-                );
+                    )), &mut findings);
             }
         }
     }
 
-    // ── 4. Alias amplification ────────────────────────────────────────────────
+    // ── 7. Alias amplification ────────────────────────────────────────────────
     if let Ok(r) = client
         .post(&ep)
         .header("content-type", "application/json")
@@ -205,25 +287,64 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
         .await
     {
         if r.status().as_u16() == 200 {
-            let body = r.text().await.unwrap_or_default();
-            // Count alias responses — if we get 20 fields back, amplification works
+            let body = capped_text(r, crate::MAX_BODY_BYTES).await.unwrap_or_default();
             let hits = body.matches("__typename").count();
             if hits >= 15 {
-                findings.push(
-                    crate::finding_builder(target, Severity::Low,
+                gossan_core::try_push_finding(crate::vulnerability_finding(target, Severity::Low,
                         "GraphQL alias amplification — no query cost limit",
                         format!("{} responded to 20 aliased resolvers without query cost analysis. \
                                  Deeply nested aliases can amplify server load exponentially (ReDoS-like).", ep))
                     .evidence(Evidence::HttpResponse {
                         status: 200, headers: vec![],
-                        body_excerpt: Some(format!("Received {} resolver responses for 20 aliased fields", hits)),
+                        body_excerpt: Some(format!("Received {} resolver responses for 20 aliased fields", hits).into()),
                     })
-                    .tag("graphql").tag("dos")
-                    .build().expect("finding builder: required fields are set")
-                );
+                    .tag("graphql").tag("dos"), &mut findings);
             }
         }
     }
 
     Ok(findings)
+}
+
+async fn capped_text(resp: reqwest::Response, limit: usize) -> Option<String> {
+    if let Some(cl) = resp.content_length() {
+        if cl > limit as u64 {
+            return None;
+        }
+    }
+    match gossan_core::net::bounded_text(resp, limit).await {
+        Ok(t) => {
+            if t.len() > limit {
+                None
+            } else {
+                Some(t)
+            }
+        }
+        Err(_) => Some(String::new()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn introspection_payloads_are_valid_json() {
+        assert!(serde_json::from_str::<serde_json::Value>(INTROSPECTION).is_ok());
+        assert!(serde_json::from_str::<serde_json::Value>(INTROSPECTION_ALIAS).is_ok());
+        assert!(serde_json::from_str::<serde_json::Value>(INTROSPECTION_FRAGMENT).is_ok());
+        assert!(serde_json::from_str::<serde_json::Value>(INTROSPECTION_TYPE).is_ok());
+    }
+
+    #[test]
+    fn batch_payload_is_json_array() {
+        let v: serde_json::Value = serde_json::from_str(BATCH).unwrap();
+        assert!(v.is_array());
+        assert_eq!(v.as_array().unwrap().len(), 10);
+    }
+
+    #[test]
+    fn alias_amp_contains_twenty_aliases() {
+        assert!(ALIAS_AMP.matches("__typename").count() >= 20);
+    }
 }

@@ -66,7 +66,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
             };
 
             findings.push(
-                crate::finding_builder(target, severity, title, detail)
+                crate::misconfig_finding(target, severity, title, detail)
                     .evidence(Evidence::HttpResponse {
                         status,
                         headers: build_cors_evidence(&acao, &acac),
@@ -90,7 +90,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
         if acao.as_deref() == Some("null") {
             let credentials = acac.as_deref() == Some("true");
             findings.push(
-                crate::finding_builder(
+                crate::misconfig_finding(
                     target,
                     if credentials {
                         Severity::Critical
@@ -130,7 +130,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
 
             if acao.as_deref() == Some(prefix_evil.as_str()) {
                 findings.push(
-                    crate::finding_builder(
+                    crate::misconfig_finding(
                         target,
                         Severity::High,
                         "CORS: prefix/suffix origin bypass",
@@ -157,7 +157,43 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
         }
     }
 
-    // ── Test 4: HTTP origin trusted on HTTPS site ────────────────────────
+    // ── Test 4: suffix origin bypass (regex wildcard) ───────────────────
+    if let Some(domain) = target.domain() {
+        let suffix_evil = format!("https://{}.evil.com", domain);
+        if let Ok(resp) = client.get(base).header("Origin", &suffix_evil).send().await {
+            let acao = header_value(&resp, "access-control-allow-origin");
+            let status = resp.status().as_u16();
+            if acao.as_deref() == Some(suffix_evil.as_str()) {
+                findings.push(
+                    crate::misconfig_finding(
+                        target,
+                        Severity::High,
+                        "CORS: suffix origin bypass",
+                        format!(
+                            "The server accepted '{}' as a trusted origin. \
+                             This means the CORS validation uses a naive contains/endsWith \
+                             check instead of exact matching. An attacker can register a \
+                             lookalike domain to bypass CORS restrictions. \
+                             Fix: use exact origin comparison, not substring matching.",
+                            suffix_evil
+                        ),
+                    )
+                    .evidence(Evidence::HttpResponse {
+                        status,
+                        headers: build_cors_evidence(&acao, &None),
+                        body_excerpt: None,
+                    })
+                    .tag("cors")
+                    .tag("web")
+                    .tag("misconfiguration")
+                    .build()
+                    .map_err(|e| anyhow::anyhow!(e))?,
+                );
+            }
+        }
+    }
+
+    // ── Test 5: HTTP origin trusted on HTTPS site ────────────────────────
     if base.starts_with("https://") {
         if let Some(domain) = target.domain() {
             let http_origin = format!("http://{domain}");
@@ -167,7 +203,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
 
                 if acao.as_deref() == Some(http_origin.as_str()) {
                     findings.push(
-                        crate::finding_builder(
+                        crate::misconfig_finding(
                             target,
                             Severity::Medium,
                             "CORS: HTTP origin trusted on HTTPS endpoint",
@@ -195,6 +231,52 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
         }
     }
 
+
+
+    // ── Test 5: overly permissive methods ───────────────────────────────
+    if let Ok(resp) = client
+        .request(reqwest::Method::OPTIONS, base)
+        .header("Origin", EVIL_ORIGIN)
+        .header("Access-Control-Request-Method", "DELETE")
+        .send()
+        .await
+    {
+        let acam = header_value(&resp, "access-control-allow-methods");
+        let status = resp.status().as_u16();
+
+        if let Some(ref methods) = acam {
+            let methods_upper = methods.to_uppercase();
+            let dangerous_methods: Vec<&str> = ["DELETE", "PUT", "PATCH"]
+                .iter()
+                .filter(|m| methods_upper.contains(**m))
+                .copied()
+                .collect();
+            if !dangerous_methods.is_empty() && methods_upper.contains("*") || dangerous_methods.len() >= 2 {
+                findings.push(
+                    crate::misconfig_finding(
+                        target,
+                        Severity::Medium,
+                        "CORS: dangerous methods allowed cross-origin",
+                        format!(
+                            "The server allows dangerous HTTP methods ({}) cross-origin.                              This may enable cross-origin data modification if credentials are also allowed.                              Fix: restrict Access-Control-Allow-Methods to only required methods.",
+                            dangerous_methods.join(", ")
+                        ),
+                    )
+                    .evidence(Evidence::HttpResponse {
+                        status,
+                        headers: vec![("access-control-allow-methods".into(), methods.clone().into())],
+                        body_excerpt: None,
+                    })
+                    .tag("cors")
+                    .tag("web")
+                    .tag("misconfiguration")
+                    .build()
+                    .map_err(|e| anyhow::anyhow!(e))?,
+                );
+            }
+        }
+    }
+
     Ok(findings)
 }
 
@@ -207,13 +289,22 @@ fn header_value(resp: &reqwest::Response, name: &str) -> Option<String> {
 }
 
 /// Build evidence headers for CORS-related findings.
-fn build_cors_evidence(acao: &Option<String>, acac: &Option<String>) -> Vec<(String, String)> {
+fn build_cors_evidence(
+    acao: &Option<String>,
+    acac: &Option<String>,
+) -> Vec<(std::sync::Arc<str>, std::sync::Arc<str>)> {
     let mut headers = Vec::new();
     if let Some(val) = acao {
-        headers.push(("access-control-allow-origin".into(), val.clone()));
+        headers.push((
+            "access-control-allow-origin".into(),
+            std::sync::Arc::<str>::from(val.as_str()),
+        ));
     }
     if let Some(val) = acac {
-        headers.push(("access-control-allow-credentials".into(), val.clone()));
+        headers.push((
+            "access-control-allow-credentials".into(),
+            std::sync::Arc::<str>::from(val.as_str()),
+        ));
     }
     headers
 }
@@ -227,8 +318,8 @@ mod tests {
         // Test with a mock — just verify the helper doesn't panic on empty
         let evidence = build_cors_evidence(&Some("https://evil.com".into()), &Some("true".into()));
         assert_eq!(evidence.len(), 2);
-        assert_eq!(evidence[0].0, "access-control-allow-origin");
-        assert_eq!(evidence[1].0, "access-control-allow-credentials");
+        assert_eq!(&*evidence[0].0, "access-control-allow-origin");
+        assert_eq!(&*evidence[1].0, "access-control-allow-credentials");
     }
 
     #[test]

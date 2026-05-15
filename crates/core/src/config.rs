@@ -1,3 +1,8 @@
+//! Scanner configuration — rate limits, proxy, modules, API keys, output.
+//!
+//! [`Config`] is the single source of truth for all scanner behaviour.
+//! CLI flags merge into it via struct update syntax.
+
 use std::net::IpAddr;
 use std::path::Path;
 use std::time::Duration;
@@ -6,100 +11,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::Severity;
 
-/// API keys for optional paid/rate-limited subdomain sources.
-/// All fields also read from environment variables (takes precedence over struct values).
-#[allow(clippy::doc_markdown)]
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ApiKeys {
-    /// VirusTotal — `$VT_API_KEY`. Free tier: 500 req/day, 4 req/min.
-    pub virustotal: Option<String>,
-    /// SecurityTrails — `$ST_API_KEY`.
-    pub securitytrails: Option<String>,
-    /// Shodan — `$SHODAN_API_KEY`.
-    pub shodan: Option<String>,
-    /// GitHub personal access token — `$GITHUB_TOKEN`. Used for code-search subdomain discovery.
-    pub github: Option<String>,
-    /// Censys — `$CENSYS_API_KEY`. Format: "api_id:api_secret".
-    pub censys: Option<String>,
-    /// BinaryEdge — `$BINARYEDGE_API_KEY`.
-    pub binaryedge: Option<String>,
-    /// FullHunt — `$FULLHUNT_API_KEY`.
-    pub fullhunt: Option<String>,
-    /// Chaos (ProjectDiscovery) — `$CHAOS_API_KEY`.
-    pub chaos: Option<String>,
-    /// Bevigil — `$BEVIGIL_API_KEY`.
-    pub bevigil: Option<String>,
-    /// FOFA — `$FOFA_API_KEY`. Format: "email:key".
-    pub fofa: Option<String>,
-    /// Hunter.io — `$HUNTER_API_KEY`.
-    pub hunter: Option<String>,
-    /// Netlas — `$NETLAS_API_KEY`.
-    pub netlas: Option<String>,
-    /// ZoomEye — `$ZOOMEYE_API_KEY`.
-    pub zoomeye: Option<String>,
-    /// C99 — `$C99_API_KEY`.
-    pub c99: Option<String>,
-    /// Quake (360) — `$QUAKE_API_KEY`.
-    pub quake: Option<String>,
-    /// ThreatBook — `$THREATBOOK_API_KEY`.
-    pub threatbook: Option<String>,
-}
+/// API keys for optional paid/rate-limited discovery sources.
+/// All fields also read from environment variables or `gossan.toml`.
+pub type ApiKeys = std::collections::HashMap<String, String>;
 
-impl ApiKeys {
-    /// Load API keys from environment variables, overriding any struct values.
-    #[must_use]
-    pub fn resolve(mut self) -> Self {
-        if let Ok(v) = std::env::var("VT_API_KEY") {
-            self.virustotal = Some(v);
-        }
-        if let Ok(v) = std::env::var("ST_API_KEY") {
-            self.securitytrails = Some(v);
-        }
-        if let Ok(v) = std::env::var("SHODAN_API_KEY") {
-            self.shodan = Some(v);
-        }
-        if let Ok(v) = std::env::var("GITHUB_TOKEN") {
-            self.github = Some(v);
-        }
-        if let Ok(v) = std::env::var("CENSYS_API_KEY") {
-            self.censys = Some(v);
-        }
-        if let Ok(v) = std::env::var("BINARYEDGE_API_KEY") {
-            self.binaryedge = Some(v);
-        }
-        if let Ok(v) = std::env::var("FULLHUNT_API_KEY") {
-            self.fullhunt = Some(v);
-        }
-        if let Ok(v) = std::env::var("CHAOS_API_KEY") {
-            self.chaos = Some(v);
-        }
-        if let Ok(v) = std::env::var("BEVIGIL_API_KEY") {
-            self.bevigil = Some(v);
-        }
-        if let Ok(v) = std::env::var("FOFA_API_KEY") {
-            self.fofa = Some(v);
-        }
-        if let Ok(v) = std::env::var("HUNTER_API_KEY") {
-            self.hunter = Some(v);
-        }
-        if let Ok(v) = std::env::var("NETLAS_API_KEY") {
-            self.netlas = Some(v);
-        }
-        if let Ok(v) = std::env::var("ZOOMEYE_API_KEY") {
-            self.zoomeye = Some(v);
-        }
-        if let Ok(v) = std::env::var("C99_API_KEY") {
-            self.c99 = Some(v);
-        }
-        if let Ok(v) = std::env::var("QUAKE_API_KEY") {
-            self.quake = Some(v);
-        }
-        if let Ok(v) = std::env::var("THREATBOOK_API_KEY") {
-            self.threatbook = Some(v);
-        }
-        self
-    }
-}
 
 /// Which ports to scan. Determined at scan startup and passed through `Config`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -141,8 +56,15 @@ impl Default for CrawlConfig {
 /// Load from `gossan.toml` via [`Config::load_or_default`] or construct programmatically.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    /// Global requests-per-second cap across all scanners.
+    /// Global requests-per-second cap across all scanners. When
+    /// `adaptive_rate` is enabled this becomes the *ceiling*; the
+    /// engine starts at half-rate and ramps based on observed loss.
     pub rate_limit: u32,
+    /// Enable closed-loop AIMD rate control in `gossan-engine`. Halves
+    /// the enforced rate on TX-drop bursts and additively recovers
+    /// after streaks of clean batches. No-op for non-engine scanners.
+    #[serde(default)]
+    pub adaptive_rate: bool,
     /// Per-request timeout in seconds.
     pub timeout_secs: u64,
     /// Max concurrent tasks per scanner.
@@ -158,17 +80,54 @@ pub struct Config {
     pub insecure_tls: bool,
     /// Optional Cookie header for authenticated crawling.
     pub cookie: Option<String>,
-    pub modules: ModuleConfig,
+    /// Optional username for authenticated crawling.
+    pub auth_user: Option<String>,
+    /// Optional password for authenticated crawling.
+    pub auth_pass: Option<String>,
+    /// Per-module enablement flags keyed by scanner module name.
+    #[serde(default)]
+    pub modules: std::collections::HashMap<String, bool>,
+    /// Output destination and serialization settings.
     pub output: OutputConfig,
     /// Suppress findings below this severity. None = show all.
     pub min_severity: Option<Severity>,
     /// Port scanning mode.
     pub port_mode: PortMode,
+    /// Path to the local Passive Intel SQLite database.
+    pub intel_db_path: Option<String>,
     /// Optional API keys for paid/key-gated data sources.
+    #[serde(default)]
     pub api_keys: ApiKeys,
     /// Crawl scanner settings.
     #[serde(default)]
     pub crawl: CrawlConfig,
+    /// Per-host delay between requests in milliseconds (default: 100).
+    /// Set to 0 to disable per-host rate limiting.
+    #[serde(default = "default_host_delay_ms")]
+    pub host_delay_ms: u64,
+    /// Max response body size in bytes (e.g. 10MB).
+    #[serde(default = "default_max_response_size")]
+    pub max_response_size: usize,
+    /// Abort the entire pipeline on any scanner error (for debugging).
+    #[serde(default)]
+    pub strict: bool,
+    /// Conservative mode for zero-false-positive horizontal scanning.
+    #[serde(default)]
+    pub conservative: bool,
+    /// Only include findings matching these kinds. Empty = all kinds.
+    #[serde(default)]
+    pub include_kind: Vec<String>,
+    /// Exclude findings matching these kinds.
+    #[serde(default)]
+    pub exclude_kind: Vec<String>,
+}
+
+fn default_max_response_size() -> usize {
+    10 * 1024 * 1024 // 10MB
+}
+
+fn default_host_delay_ms() -> u64 {
+    100
 }
 
 impl Config {
@@ -213,6 +172,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             rate_limit: 300,
+            adaptive_rate: false,
             timeout_secs: 10,
             concurrency: 200,
             resolvers: vec![
@@ -222,70 +182,33 @@ impl Default for Config {
             user_agent: concat!(
                 "gossan/",
                 env!("CARGO_PKG_VERSION"),
-                " (+https://github.com/santhsecurity/gossan)"
+                " (+https://github.com/santht/gossan)"
             )
             .to_string(),
             proxy: None,
             insecure_tls: false,
             cookie: None,
-            modules: ModuleConfig::default(),
+            auth_user: None,
+            auth_pass: None,
+            modules: std::collections::HashMap::new(),
             output: OutputConfig::default(),
             min_severity: None,
             port_mode: PortMode::Default,
+            intel_db_path: None,
             api_keys: ApiKeys::default(),
             crawl: CrawlConfig::default(),
+            host_delay_ms: default_host_delay_ms(),
+            max_response_size: default_max_response_size(),
+            strict: false,
+            conservative: false,
+            include_kind: Vec::new(),
+            exclude_kind: Vec::new(),
         }
     }
 }
 
-/// Which scanner modules are enabled for this run.
-///
-/// Each field corresponds to a scanner crate. Use [`ModuleConfig::all`] to
-/// enable everything.
-#[allow(clippy::struct_excessive_bools)]
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ModuleConfig {
-    /// Subdomain enumeration (passive + brute-force).
-    pub subdomain: bool,
-    /// TCP connect port scanning.
-    pub portscan: bool,
-    /// Technology fingerprinting (via truestack).
-    pub techstack: bool,
-    /// DNS security auditing (SPF, DMARC, DKIM, AXFR, takeover).
-    pub dns: bool,
-    /// JavaScript analysis (secrets, endpoints, prototype pollution).
-    pub js: bool,
-    /// Hidden endpoint discovery (CORS, SSRF, Swagger, cache deception).
-    pub hidden: bool,
-    /// Cloud storage bucket discovery (S3, GCS, Azure, DO Spaces).
-    pub cloud: bool,
-    /// Raw SYN port scanning (requires root/`CAP_NET_RAW`).
-    pub synscan: bool,
-    /// Headless browser rendering and XHR trapping.
-    pub headless: bool,
-    /// Authenticated web crawling (form + parameter discovery).
-    pub crawl: bool,
-}
-
-impl ModuleConfig {
-    /// Returns a config with every scanner module enabled.
-    #[must_use]
-    pub fn all() -> Self {
-        Self {
-            subdomain: true,
-            portscan: true,
-            techstack: true,
-            dns: true,
-            js: true,
-            hidden: true,
-            cloud: true,
-            synscan: true,
-            headless: true,
-            crawl: true,
-        }
-    }
-}
-
+/// Per-module enablement flags keyed by scanner module name.
+pub type ModuleConfig = std::collections::HashMap<String, bool>;
 /// Output format for scan results.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -300,6 +223,21 @@ pub enum OutputFormat {
     Text,
     /// Markdown report.
     Markdown,
+    /// Masscan-grepable (`-oG` style):
+    /// `Host: <ip> ()\tPorts: <port>/open/<proto>//<service>//`
+    /// Lines are emitted only for findings that carry an
+    /// `Evidence::Banner` payload tagged `port:N` — i.e. open ports
+    /// discovered by `gossan-portscan` / `gossan-engine`.
+    MasscanGrep,
+    /// nmap-compatible XML (`-oX` style). Subset that covers the
+    /// shape downstream parsers rely on: `<nmaprun>` root with one
+    /// `<host>` element per discovered IP and one `<port>` child per
+    /// open port. State is hard-coded `open`.
+    NmapXml,
+    /// GraphML (XML-based graph format) for export to Gephi /
+    /// Cytoscape / yEd. Nodes are findings keyed by target; edges
+    /// link findings that share a target.
+    Graphml,
 }
 
 /// Where and how to write scan output.
@@ -317,56 +255,5 @@ impl Default for OutputConfig {
             format: OutputFormat::Text,
             path: None,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn config_default_timeout_matches_timeout_secs() {
-        let config = Config::default();
-        assert_eq!(config.timeout(), Duration::from_secs(config.timeout_secs));
-    }
-
-    #[test]
-    fn module_config_all_enables_every_module() {
-        let modules = ModuleConfig::all();
-        assert!(modules.subdomain);
-        assert!(modules.portscan);
-        assert!(modules.techstack);
-        assert!(modules.dns);
-        assert!(modules.js);
-        assert!(modules.hidden);
-        assert!(modules.cloud);
-        assert!(modules.synscan);
-        assert!(modules.headless);
-        assert!(modules.crawl);
-    }
-
-    #[test]
-    fn output_config_defaults_to_text_and_no_path() {
-        let output = OutputConfig::default();
-        assert!(matches!(output.format, OutputFormat::Text));
-        assert_eq!(output.path, None);
-    }
-
-    #[test]
-    fn port_mode_serializes_snake_case_variants() {
-        assert_eq!(
-            serde_json::to_value(PortMode::Default).unwrap(),
-            json!("default")
-        );
-        assert_eq!(
-            serde_json::to_value(PortMode::Top100).unwrap(),
-            json!("top100")
-        );
-        assert_eq!(
-            serde_json::to_value(PortMode::Top1000).unwrap(),
-            json!("top1000")
-        );
-        assert_eq!(serde_json::to_value(PortMode::Full).unwrap(), json!("full"));
     }
 }

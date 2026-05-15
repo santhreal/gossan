@@ -15,7 +15,7 @@ use secfinding::{Evidence, Finding, Severity};
 
 use crate::common::is_xml_listing;
 use crate::provider::CloudProvider;
-
+/// AWS S3 bucket discovery and permission enumeration.
 pub struct S3Provider;
 
 #[async_trait]
@@ -24,14 +24,20 @@ impl CloudProvider for S3Provider {
         "s3"
     }
 
+    fn endpoint(&self, name: &str) -> String {
+        let encoded_name = urlencoding::encode(name);
+        format!("https://{}.s3.amazonaws.com/", encoded_name)
+    }
+
     async fn probe(
         &self,
         client: &reqwest::Client,
         name: &str,
         target: &Target,
     ) -> anyhow::Result<Vec<Finding>> {
-        let vhost = format!("https://{}.s3.amazonaws.com/", name);
-        let path = format!("https://s3.amazonaws.com/{}/", name);
+        let vhost = self.endpoint(name);
+        let encoded_name = urlencoding::encode(name);
+        let path = format!("https://s3.amazonaws.com/{}/", encoded_name);
         let mut findings = Vec::new();
 
         // Stage 1: directory listing probe
@@ -42,13 +48,13 @@ impl CloudProvider for S3Provider {
 
             if let Ok(resp) = client.get(&vhost).send().await {
                 status = resp.status().as_u16();
-                body = resp.text().await.unwrap_or_default();
+                body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
             }
-            // Retry path-style if vhost returned nothing useful
-            if status == 0 || status == 301 {
+            // Retry path-style ONLY if we are using the real AWS endpoint
+            if (status == 0 || status == 301) && vhost.contains("amazonaws.com") {
                 if let Ok(resp) = client.get(&path).send().await {
                     status = resp.status().as_u16();
-                    body = resp.text().await.unwrap_or_default();
+                    body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
                     eff = path.clone();
                 }
             }
@@ -57,8 +63,7 @@ impl CloudProvider for S3Provider {
 
         match status {
             200 => {
-                findings.push(
-                    crate::finding_builder(target, Severity::Critical,
+                gossan_core::try_push_finding(crate::finding_builder(target, Severity::Critical,
                         format!("S3 bucket publicly listed: {}", name),
                         format!(
                             "s3://{} is publicly accessible and allows directory listing. \
@@ -68,9 +73,9 @@ impl CloudProvider for S3Provider {
                         ))
                     .evidence(Evidence::HttpResponse {
                         status,
-                        headers: vec![("url".into(), effective_url.clone())],
+                        headers: vec![("url".into(), effective_url.clone().into())],
                         body_excerpt: if is_xml_listing(&body) {
-                            Some(body.chars().take(400).collect())
+                            Some(body.chars().take(400).collect::<String>().into())
                         } else {
                             None
                         },
@@ -80,15 +85,12 @@ impl CloudProvider for S3Provider {
                         "# List all objects:\naws s3 ls s3://{} --no-sign-request\n\
                          # Download everything:\naws s3 sync s3://{} . --no-sign-request",
                         name, name
-                    ))
-                    .build().expect("finding builder: required fields are set"),
-                );
+                    )), &mut findings);
                 // Stage 2: write-access check
                 try_write(client, name, &effective_url, target, &mut findings).await;
             }
             403 => {
-                findings.push(
-                    crate::finding_builder(
+                gossan_core::try_push_finding(crate::finding_builder(
                         target,
                         Severity::Low,
                         format!("S3 bucket exists (access denied): {}", name),
@@ -100,14 +102,11 @@ impl CloudProvider for S3Provider {
                     )
                     .evidence(Evidence::HttpResponse {
                         status,
-                        headers: vec![("url".into(), effective_url.clone())],
+                        headers: vec![("url".into(), effective_url.clone().into())],
                         body_excerpt: None,
                     })
                     .tag("s3")
-                    .tag("cloud")
-                    .build()
-                    .expect("finding builder: required fields are set"),
-                );
+                    .tag("cloud"), &mut findings);
                 // A 403 on GET / doesn't mean PUT is blocked — common misconfiguration
                 try_write(client, name, &effective_url, target, &mut findings).await;
             }
@@ -127,10 +126,11 @@ async fn try_write(
     findings: &mut Vec<Finding>,
 ) {
     const PROBE_KEY: &str = "gossan-write-probe-delete-me.txt";
+    let encoded_bucket = urlencoding::encode(bucket);
     let put_url = if base_url.contains(".s3.amazonaws.com") {
-        format!("https://{}.s3.amazonaws.com/{}", bucket, PROBE_KEY)
+        format!("https://{}.s3.amazonaws.com/{}", encoded_bucket, PROBE_KEY)
     } else {
-        format!("https://s3.amazonaws.com/{}/{}", bucket, PROBE_KEY)
+        format!("https://s3.amazonaws.com/{}/{}", encoded_bucket, PROBE_KEY)
     };
 
     let Ok(resp) = client
@@ -146,8 +146,7 @@ async fn try_write(
     let status = resp.status().as_u16();
     if matches!(status, 200 | 204) {
         let _ = client.delete(&put_url).send().await; // best-effort cleanup
-        findings.push(
-            crate::finding_builder(target, Severity::Critical,
+        gossan_core::try_push_finding(crate::finding_builder(target, Severity::Critical,
                 format!("S3 bucket writable without authentication: {}", bucket),
                 format!(
                     "An unauthenticated PUT to s3://{}/{} succeeded (HTTP {}). \
@@ -157,7 +156,7 @@ async fn try_write(
                 ))
             .evidence(Evidence::HttpResponse {
                 status,
-                headers: vec![("url".into(), put_url.clone())],
+                headers: vec![("url".into(), put_url.clone().into())],
                 body_excerpt: None,
             })
             .tag("s3").tag("cloud").tag("file-upload").tag("exposure")
@@ -166,8 +165,6 @@ async fn try_write(
                  # Via curl:\ncurl -s -X PUT '{}' --upload-file payload.bin",
                 bucket,
                 put_url.replace(PROBE_KEY, "payload.bin")
-            ))
-            .build().expect("finding builder: required fields are set"),
-        );
+            )), findings);
     }
 }

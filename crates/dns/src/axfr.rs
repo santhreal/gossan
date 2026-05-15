@@ -18,7 +18,7 @@
 
 use gossan_core::Target;
 use hickory_resolver::{proto::rr::RecordType, TokioAsyncResolver};
-use secfinding::{Evidence, Finding, Severity};
+use secfinding::{Evidence, Finding, Severity, FindingKind};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// Check all authoritative nameservers for AXFR vulnerability.
@@ -38,8 +38,7 @@ pub async fn check(
 
     for ns in &nameservers {
         if let Some(axfr_result) = attempt(ns, domain, timeout, proxy).await {
-            findings.push(
-                Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Critical)
+            gossan_core::try_push_finding(Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Critical)
                     .title(format!("DNS zone transfer (AXFR) succeeds on {ns}"))
                     .detail(format!(
                         "Nameserver {ns} allows unauthenticated AXFR for {domain}. \
@@ -47,16 +46,14 @@ pub async fn check(
                          internal hostnames, and mail topology disclosed.",
                         record_count = axfr_result.record_count
                     ))
+                    .kind(FindingKind::Vulnerability)
                     .evidence(Evidence::DnsRecord {
                         record_type: "AXFR".into(),
-                        value: axfr_result.excerpt,
+                        value: axfr_result.excerpt.into(),
                     })
                     .tag("zone-transfer")
                     .tag("critical")
-                    .tag("dns")
-                    .build()
-                    .expect("finding builder: required fields are set"),
-            );
+                    .tag("dns"), &mut findings);
             break; // one successful transfer is sufficient evidence
         }
     }

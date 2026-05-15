@@ -2,38 +2,61 @@
 
 ## Reporting a Vulnerability
 
-Please report security vulnerabilities **privately** through GitHub's
-built-in **Private Vulnerability Reporting**:
+If you discover a security vulnerability in **gossan**, please report
+it privately. **Do not** open a public GitHub issue for vulnerabilities.
 
-1. Go to the repository's **Security** tab.
-2. Click **Report a vulnerability** and fill out the advisory form.
+### How to report
 
-If private reporting is unavailable for some reason, email
-**security@santh.dev** with:
+1. Email **security@santhsecurity.com** with subject
+   `gossan: <one-line description>`.
+2. Or open a private GitHub Security Advisory at
+   https://github.com/santhsecurity/gossan/security/advisories/new.
 
-- Affected version / commit SHA
-- Reproduction steps and proof-of-concept (where safe to share)
-- Impact assessment
+Please include:
 
-You will receive an acknowledgement within **5 business days**.
-Coordinated-disclosure timeline is up to **90 days** from
-acknowledgement; we will notify you before the patch ships.
+- Affected version (`gossan --version`)
+- Steps to reproduce, with a minimal repro (URL / config / inputs)
+- Impact assessment (confidentiality / integrity / availability)
+- Any suggested mitigations
 
-## Supported Versions
+We aim to acknowledge within 72 hours and to ship a fix or detailed
+status update within 14 days.
 
-Only the `main` branch (and the latest published crate / package
-release) receives security fixes. Vendored snapshots and forks are
-responsible for backporting.
+## What we consider in-scope
 
-## Out of Scope
+- **Code execution / sandbox escape** in any gossan subcommand.
+- **Memory safety** issues in the engine TX/RX hot path or in any
+  parser (banner, TLS cert, source map, JS, etc.).
+- **Credential / PII leakage** through findings, logs, output files,
+  or telemetry. (Telemetry is not a thing in gossan; we mention it
+  defensively.)
+- **Supply-chain compromise** of any directly vendored crate
+  (`crates/keyhog-lite/` is the only one currently vendored).
+- **Path traversal / arbitrary file write** via output paths,
+  checkpoint paths, or rule-file paths *when the gossan process is
+  running with elevated privileges* (engine SYN scan needs CAP_NET_RAW).
+- **DoS amplification** in any scanner stage that takes user input.
 
-- Findings against archived branches or deprecated tags.
-- Self-XSS or social-engineering attacks against maintainers.
-- Reports that depend on a compromised upstream package without a
-  reproducible downstream impact.
+## What we consider out-of-scope
 
-## Coordinated Disclosure
+- Findings against the **target** of a scan — gossan is the tool;
+  vulnerabilities the tool finds in scanned hosts belong to those
+  hosts' security teams, not gossan's.
+- "It scans noisy / it triggers WAF / it gets blocked" — gossan is
+  an authorized-target scanner. Throttling / blocking is the
+  defender's job.
+- Paths the user supplies via `--out` / `--checkpoint` / `--wordlist`:
+  the user is the authoritative actor on their own filesystem.
 
-GHSA advisories are filed under the **santhsecurity** GitHub
-organization. We coordinate CVE assignment via GitHub's CNA when a
-fix ships.
+## Embargo
+
+For high-severity issues (RCE, sandbox escape, mass credential
+disclosure) we coordinate disclosure with the reporter and request
+a 90-day embargo from initial report. For lower-severity issues
+we typically publish the fix and advisory together.
+
+## Hall of fame
+
+Reported and acknowledged vulnerabilities are credited in
+[`CHANGELOG.md`](CHANGELOG.md) under the release that contains the
+fix.

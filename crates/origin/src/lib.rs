@@ -1,3 +1,21 @@
+#![forbid(unsafe_code)]
+// pedantic moved to workspace [lints.clippy] in root Cargo.toml
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::panic
+    )
+)]
+#![allow(
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::missing_errors_doc,
+)]
+
 //! Origin IP Discovery Engine.
 //!
 //! Breaks through CDNs/WAFs using heuristic scanners (DNS, SSL, HTTP headers,
@@ -11,32 +29,39 @@
 //!
 //! | Scanner | Feature | API Key? | Confidence |
 //! |---------|---------|----------|------------|
-//! | DNS misconfig (MX, SPF, bypass subs) | `dns_misconfig` | No | 60-85 |
+//! | DNS misconfig (MX, SPF, DMARC, bypass subs) | `dns_misconfig` | No | 60-85 |
 //! | SSL certificate transparency (crt.sh) | `ssl_cert` | No | 70 |
 //! | HTTP header leaks | `http_header` | No | 50-90 |
-//! | Favicon hash (Shodan) | `favicon` | Optional | 80 |
+//! | Favicon hash (Shodan + Censys) | `favicon` | Optional | 80 |
 //! | DNS history (SecurityTrails/ViewDNS) | `dns_history` | Optional | 85-90 |
-
-extern crate self as reqwest;
-pub use upstream_reqwest::{header, redirect, Client, Method, Proxy, Request, Response, StatusCode, Url};
+//! | Historical DNS (Censys, DNSDB, CIRCL, PassiveTotal) | — | Optional | 70-85 |
 
 pub mod scanners;
+pub mod sources;
 pub mod types;
+pub mod util;
+pub mod validator;
 
-use gossan_core::Config;
-pub use types::OriginCandidate;
+use gossan_core::{Config, ScanClient};
+pub use types::{OriginCandidate, ValidationState};
 
 /// Discover the origin IP of a given domain behind a CDN/WAF.
 ///
-/// Invokes all activated heuristic scanners in parallel and aggregates
-/// the results, sorted by confidence (highest first).
+/// Invokes all activated heuristic scanners and external sources in parallel,
+/// aggregates the results, runs active validation, and returns candidates
+/// sorted by validation state and confidence (highest first).
 pub async fn discover_origin(
     domain: &str,
-    _config: &Config,
+    config: &Config,
 ) -> anyhow::Result<Vec<OriginCandidate>> {
+    // ── Single shared transport ──────────────────────────────────────
+    let resolver = std::sync::Arc::new(gossan_core::net::build_resolver(config)?);
+    let client = std::sync::Arc::new(ScanClient::from_config(config, resolver)?);
+
     let mut tasks: Vec<tokio::task::JoinHandle<anyhow::Result<Vec<OriginCandidate>>>> = Vec::new();
 
     let d = domain.to_string();
+    let cfg = config.clone();
 
     #[cfg(feature = "dns_misconfig")]
     {
@@ -49,34 +74,73 @@ pub async fn discover_origin(
     #[cfg(feature = "ssl_cert")]
     {
         let domain_clone = d.clone();
+        let c = std::sync::Arc::clone(&client);
         tasks.push(tokio::spawn(async move {
-            scanners::ssl_cert::scan(domain_clone).await
+            scanners::ssl_cert::scan(domain_clone, &c).await
         }));
     }
 
     #[cfg(feature = "http_header")]
     {
         let domain_clone = d.clone();
+        let config_clone = cfg.clone();
+        let c = std::sync::Arc::clone(&client);
         tasks.push(tokio::spawn(async move {
-            scanners::http_header::scan(domain_clone).await
+            scanners::http_header::scan(domain_clone, &config_clone, &c).await
         }));
     }
 
     #[cfg(feature = "favicon")]
     {
         let domain_clone = d.clone();
-        // Shodan API key would come from config in a real integration.
+        let config_clone = cfg.clone();
+        let c = std::sync::Arc::clone(&client);
         tasks.push(tokio::spawn(async move {
-            scanners::favicon::scan(domain_clone, None).await
+            scanners::favicon::scan(domain_clone, &config_clone, &c).await
         }));
     }
 
     #[cfg(feature = "dns_history")]
     {
         let domain_clone = d.clone();
-        // SecurityTrails API key would come from config in a real integration.
+        let config_clone = cfg.clone();
+        let c = std::sync::Arc::clone(&client);
         tasks.push(tokio::spawn(async move {
-            scanners::dns_history::scan(domain_clone, None).await
+            scanners::dns_history::scan(domain_clone, &config_clone, &c).await
+        }));
+    }
+
+    // External passive sources (always enabled, gracefully skip when unconfigured).
+    {
+        let domain_clone = d.clone();
+        let config_clone = cfg.clone();
+        let c = std::sync::Arc::clone(&client);
+        tasks.push(tokio::spawn(async move {
+            sources::censys::scan(&domain_clone, &config_clone, &c).await
+        }));
+    }
+    {
+        let domain_clone = d.clone();
+        let config_clone = cfg.clone();
+        let c = std::sync::Arc::clone(&client);
+        tasks.push(tokio::spawn(async move {
+            sources::dnsdb::scan(&domain_clone, &config_clone, &c).await
+        }));
+    }
+    {
+        let domain_clone = d.clone();
+        let config_clone = cfg.clone();
+        let c = std::sync::Arc::clone(&client);
+        tasks.push(tokio::spawn(async move {
+            sources::circl::scan(&domain_clone, &config_clone, &c).await
+        }));
+    }
+    {
+        let domain_clone = d.clone();
+        let config_clone = cfg.clone();
+        let c = std::sync::Arc::clone(&client);
+        tasks.push(tokio::spawn(async move {
+            sources::passivetotal::scan(&domain_clone, &config_clone, &c).await
         }));
     }
 
@@ -94,12 +158,8 @@ pub async fn discover_origin(
         }
     }
 
-    // Sort by confidence, descending.
-    candidates.sort_by(|a, b| b.confidence.cmp(&a.confidence));
-
-    // Deduplicate by IP, keeping the highest-confidence entry.
-    let mut seen = std::collections::HashSet::new();
-    candidates.retain(|c| seen.insert(c.ip));
+    // Active validation
+    candidates = validator::validate(candidates, domain, config, &client).await;
 
     Ok(candidates)
 }
@@ -125,7 +185,6 @@ mod tests {
     }
 
     /// With scanner features active, the function runs without panicking.
-    /// We do not assert emptiness because real scanners may find results.
     #[cfg(any(
         feature = "dns_misconfig",
         feature = "ssl_cert",
@@ -136,7 +195,6 @@ mod tests {
     #[tokio::test]
     async fn discover_origin_runs_without_panic() {
         let result = discover_origin("example.com", &Config::default()).await;
-        // Network calls may fail in CI; we only care that it didn't panic.
         assert!(result.is_ok() || result.is_err());
     }
 }

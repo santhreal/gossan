@@ -92,7 +92,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
         };
 
         findings.push(
-            crate::finding_builder(
+            crate::misconfig_finding(
                 target,
                 severity,
                 if csp_report_only.is_some() {
@@ -133,7 +133,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
         // Check for wildcard
         if values_lower.iter().any(|v| v == "*") {
             findings.push(
-                crate::finding_builder(
+                crate::misconfig_finding(
                     target,
                     Severity::High,
                     "CSP: wildcard * in script-src",
@@ -159,7 +159,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
         for &(dangerous_value, severity, title, detail) in DANGEROUS_SCRIPT_VALUES {
             if values_lower.iter().any(|v| v == dangerous_value) {
                 findings.push(
-                    crate::finding_builder(target, severity, title, detail)
+                    crate::misconfig_finding(target, severity, title, detail)
                         .evidence(Evidence::HttpResponse {
                             status,
                             headers: csp_evidence_headers(&csp_header, &csp_report_only),
@@ -183,7 +183,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
 
     if !has_frame_ancestors && !has_xfo {
         findings.push(
-            crate::finding_builder(
+            crate::misconfig_finding(
                 target,
                 Severity::Low,
                 "CSP: missing frame-ancestors (clickjacking)",
@@ -223,13 +223,22 @@ fn parse_directives(csp: &str) -> Vec<(&str, Vec<&str>)> {
 }
 
 /// Build evidence headers for CSP findings.
-fn csp_evidence_headers(csp: &Option<String>, csp_ro: &Option<String>) -> Vec<(String, String)> {
+fn csp_evidence_headers(
+    csp: &Option<String>,
+    csp_ro: &Option<String>,
+) -> Vec<(std::sync::Arc<str>, std::sync::Arc<str>)> {
     let mut headers = Vec::new();
     if let Some(val) = csp {
-        headers.push(("content-security-policy".into(), val.clone()));
+        headers.push((
+            "content-security-policy".into(),
+            std::sync::Arc::<str>::from(val.as_str()),
+        ));
     }
     if let Some(val) = csp_ro {
-        headers.push(("content-security-policy-report-only".into(), val.clone()));
+        headers.push((
+            "content-security-policy-report-only".into(),
+            std::sync::Arc::<str>::from(val.as_str()),
+        ));
     }
     headers
 }

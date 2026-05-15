@@ -1,0 +1,24 @@
+# Custom service rules — exercised by `tests/custom_rules_toml.rs` to
+# prove that operators can extend gossan-classify with TOML rules
+# without a Rust rebuild. Schema mirrors `ServiceRule` in
+# `crates/classify/src/rules.rs`.
+
+[[rule]]
+id = "custom-acme-api"
+service = "AcmeAPI"
+protocol = "tcp"
+common_ports = [9999]
+patterns = ["X-Acme-Version:", "Server: AcmeAPI"]
+version_pattern = 'X-Acme-Version:\s*(\d+\.\d+\.\d+)'
+security_signals = ["custom-api-exposed"]
+priority = 20
+
+[[rule]]
+id = "custom-foobar-rpc"
+service = "FoobarRPC"
+protocol = "tcp"
+common_ports = [4000]
+patterns = ["FOOBAR-RPC/"]
+version_pattern = 'FOOBAR-RPC/(\d+)'
+security_signals = []
+priority = 15

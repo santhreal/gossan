@@ -8,18 +8,27 @@ use std::collections::HashSet;
 use std::net::IpAddr;
 use std::str::FromStr;
 
+use crate::util::{bounded_json, bounded_text, is_routable_ip};
 use crate::OriginCandidate;
+use gossan_core::{Config, ScanClient};
 
 /// Query SecurityTrails API for historical DNS A records.
 /// Requires a SecurityTrails API key (free tier available: 50 queries/month).
 async fn query_securitytrails(
     domain: &str,
     api_key: &str,
-    client: &reqwest::Client,
+    client: &ScanClient,
+    limit: usize,
 ) -> anyhow::Result<Vec<(IpAddr, String)>> {
     let url = format!("https://api.securitytrails.com/v1/history/{}/dns/a", domain);
 
-    let response = client.get(&url).header("APIKEY", api_key).send().await?;
+    let req = client
+        .inner()
+        .get(&url)
+        .header("APIKEY", api_key)
+        .build()?;
+
+    let response = client.execute(req).await?;
 
     if !response.status().is_success() {
         tracing::warn!(
@@ -31,7 +40,7 @@ async fn query_securitytrails(
         return Ok(Vec::new());
     }
 
-    let body: serde_json::Value = response.json().await?;
+    let body: serde_json::Value = bounded_json(response, limit).await?;
     let mut results = Vec::new();
 
     if let Some(records) = body.get("records").and_then(|r| r.as_array()) {
@@ -44,8 +53,7 @@ async fn query_securitytrails(
                                 .get("first_seen")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("unknown");
-                            results
-                                .push((ip, format!("securitytrails (first_seen: {})", first_seen)));
+                            results.push((ip, format!("securitytrails (first_seen: {})", first_seen)));
                         }
                     }
                 }
@@ -59,19 +67,15 @@ async fn query_securitytrails(
 /// Query ViewDNS.info for historical DNS records (free, no API key for basic usage).
 async fn query_viewdns(
     domain: &str,
-    client: &reqwest::Client,
+    client: &ScanClient,
+    limit: usize,
 ) -> anyhow::Result<Vec<(IpAddr, String)>> {
     let url = format!(
         "https://viewdns.info/iphistory/?domain={}",
         urlencoding::encode(domain)
     );
 
-    let response = match client
-        .get(&url)
-        .header("User-Agent", "Mozilla/5.0")
-        .send()
-        .await
-    {
+    let response = match client.get(&url).await {
         Ok(r) => r,
         Err(e) => {
             tracing::warn!(scanner = "dns_history", source = "viewdns", error = %e, "request failed");
@@ -83,19 +87,23 @@ async fn query_viewdns(
         return Ok(Vec::new());
     }
 
-    let body = response.text().await.unwrap_or_default();
+    let body = bounded_text(response, limit).await.unwrap_or_default();
     let mut results = Vec::new();
 
-    // Parse IP addresses from the HTML table. ViewDNS returns a simple HTML page
-    // with a table containing IP history. We extract IPs with a simple regex-free scan.
+    // Parse IP addresses from the HTML table.
     for line in body.lines() {
         let trimmed = line.trim();
-        // Look for table cells containing IP-like strings.
         if trimmed.contains("<td>") {
-            let stripped = trimmed.replace("<td>", "").replace("</td>", "");
-            let clean = stripped.trim();
-            if let Ok(ip) = IpAddr::from_str(clean) {
-                results.push((ip, "viewdns_ip_history".to_string()));
+            // Use a more robust substring extraction than naive replace.
+            let start = trimmed.find("<td>").map(|i| i + 4);
+            let end = trimmed.find("</td>");
+            if let (Some(s), Some(e)) = (start, end) {
+                if e > s {
+                    let clean = trimmed[s..e].trim();
+                    if let Ok(ip) = IpAddr::from_str(clean) {
+                        results.push((ip, "viewdns_ip_history".to_string()));
+                    }
+                }
             }
         }
     }
@@ -104,28 +112,23 @@ async fn query_viewdns(
 }
 
 /// Scan DNS history services for the domain's pre-CDN IP addresses.
-pub async fn scan(
-    domain: String,
-    securitytrails_key: Option<&str>,
-) -> anyhow::Result<Vec<OriginCandidate>> {
+pub async fn scan(domain: String, config: &Config, client: &ScanClient) -> anyhow::Result<Vec<OriginCandidate>> {
     let mut candidates = Vec::new();
     let mut seen_ips = HashSet::new();
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()?;
+    let limit = config.max_response_size.min(10 * 1024 * 1024).max(1024);
 
     // Query SecurityTrails if API key is available.
-    if let Some(api_key) = securitytrails_key {
-        match query_securitytrails(&domain, api_key, &client).await {
+    if let Some(api_key) = config.api_keys.get("securitytrails") {
+        match query_securitytrails(&domain, api_key, client, limit).await {
             Ok(results) => {
                 for (ip, source) in results {
-                    if seen_ips.insert(ip) {
-                        candidates.push(OriginCandidate {
+                    if is_routable_ip(ip) && seen_ips.insert(ip) {
+                        candidates.push(OriginCandidate::new(
                             ip,
-                            method: format!("dns_history_{}", source),
-                            confidence: 90, // Historical A records are very high confidence.
-                        });
+                            format!("dns_history_{}", source),
+                            90,
+                        ));
                     }
                 }
             }
@@ -136,15 +139,15 @@ pub async fn scan(
     }
 
     // Query ViewDNS (no API key required).
-    match query_viewdns(&domain, &client).await {
+    match query_viewdns(&domain, client, limit).await {
         Ok(results) => {
             for (ip, source) in results {
-                if seen_ips.insert(ip) {
-                    candidates.push(OriginCandidate {
+                if is_routable_ip(ip) && seen_ips.insert(ip) {
+                    candidates.push(OriginCandidate::new(
                         ip,
-                        method: format!("dns_history_{}", source),
-                        confidence: 85,
-                    });
+                        format!("dns_history_{}", source),
+                        85,
+                    ));
                 }
             }
         }

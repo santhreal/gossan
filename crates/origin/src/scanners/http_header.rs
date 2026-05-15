@@ -10,7 +10,9 @@ use std::str::FromStr;
 use serde::Deserialize;
 use std::sync::OnceLock;
 
+use crate::util::{bounded_text, is_routable_ip};
 use crate::OriginCandidate;
+use gossan_core::Config;
 
 /// HTTP header definition from TOML with confidence score.
 #[derive(Debug, Clone, Deserialize)]
@@ -73,20 +75,15 @@ fn leak_headers() -> &'static [LeakHeader] {
 /// Sends requests to both HTTP and HTTPS endpoints and inspects
 /// response headers for values that look like IP addresses or
 /// internal hostnames that could identify the origin server.
-pub async fn scan(domain: String) -> anyhow::Result<Vec<OriginCandidate>> {
+pub async fn scan(domain: String, config: &Config, client: &gossan_core::ScanClient) -> anyhow::Result<Vec<OriginCandidate>> {
     let mut candidates = Vec::new();
     let mut seen_ips = HashSet::new();
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .redirect(reqwest::redirect::Policy::none())
-        .danger_accept_invalid_certs(true)
-        .build()?;
-
     let urls = [format!("https://{}", domain), format!("http://{}", domain)];
+    let limit = config.max_response_size.min(2 * 1024 * 1024).max(1024);
 
     for url in &urls {
-        let response = match client.get(url).send().await {
+        let response = match client.get(url).await {
             Ok(r) => r,
             Err(_) => continue,
         };
@@ -103,9 +100,7 @@ pub async fn scan(domain: String) -> anyhow::Result<Vec<OriginCandidate>> {
                     val_str.split(|c: char| !c.is_ascii_alphanumeric() && c != '.' && c != ':')
                 {
                     if let Ok(ip) = IpAddr::from_str(token.trim()) {
-                        // Skip loopback and private ranges — they're internal but not
-                        // useful for direct-connect bypass over the internet.
-                        if ip.is_loopback() {
+                        if !is_routable_ip(ip) {
                             continue;
                         }
                         if seen_ips.insert(ip) {
@@ -117,16 +112,19 @@ pub async fn scan(domain: String) -> anyhow::Result<Vec<OriginCandidate>> {
                                 _ => header.confidence,
                             };
 
-                            candidates.push(OriginCandidate {
+                            candidates.push(OriginCandidate::new(
                                 ip,
-                                method: format!("http_header_leak ({}: {})", header.name, val_str),
+                                format!("http_header_leak ({}: {})", header.name, val_str),
                                 confidence,
-                            });
+                            ));
                         }
                     }
                 }
             }
         }
+
+        // Consume (and cap) the body so the connection can be reused.
+        let _ = bounded_text(response, limit).await;
     }
 
     Ok(candidates)

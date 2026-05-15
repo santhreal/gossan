@@ -1,0 +1,8 @@
+[toolchain]
+# MSRV per `[workspace.package] rust-version`. Pinning to stable
+# means contributors don't surprise themselves with nightly-only
+# clippy lints; the published binary's behavior matches what CI
+# tests.
+channel = "stable"
+components = ["clippy", "rustfmt"]
+profile = "default"

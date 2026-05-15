@@ -1,21 +1,38 @@
+#![forbid(unsafe_code)]
+// pedantic moved to workspace [lints.clippy] in root Cargo.toml
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::panic
+    )
+)]
+#![allow(
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::missing_errors_doc,
+)]
+
 //! Panoram tech stack scanner — thin integration layer.
 //!
 //! All fingerprinting, security header auditing, and favicon hashing logic
 //! lives in the standalone [`truestack`] crate. This module adapts
 //! `truestack` results into the panoram scanner pipeline.
 
-extern crate self as reqwest;
-pub use upstream_reqwest::{header, redirect, Client, Method, Proxy, Request, Response, StatusCode, Url};
 
-mod bridge;
+pub mod bridge;
 
+use std::sync::Arc;
 use async_trait::async_trait;
 use futures::StreamExt;
 use gossan_core::{
-    build_client, Config, ScanInput, ScanOutput, Scanner, ServiceTarget, Target, WebAssetTarget,
+    Config, ScanClient, ScanInput, Scanner, ServiceTarget, Target, WebAssetTarget,
 };
 use secfinding::Finding;
-
+/// Technology fingerprinting scanner — HTTP headers, HTML patterns, and JS frameworks.
 pub struct TechStackScanner;
 
 #[async_trait]
@@ -30,22 +47,25 @@ impl Scanner for TechStackScanner {
         matches!(target, Target::Service(s) if s.is_web())
     }
 
-    async fn run(&self, input: ScanInput, config: &Config) -> anyhow::Result<ScanOutput> {
-        let mut out = ScanOutput::empty();
-        let client = build_client(config, true)?;
+    async fn run(&self, input: ScanInput, config: &Config) -> anyhow::Result<()> {
+        let client = ScanClient::from_config(config, Arc::clone(&input.resolver))?;
 
-        let web_targets: Vec<ServiceTarget> = input
-            .targets
-            .into_iter()
-            .filter_map(|t| {
+        // Drain the streaming target receiver. Techstack fingerprinting is
+        // batch-shaped (per-asset HTTP probes via `buffer_unordered`), so
+        // the receiver is fully drained up front rather than processed
+        // incrementally.
+        let web_targets: Vec<ServiceTarget> = {
+            let mut rx = input.target_rx.lock().await;
+            let mut buf = Vec::new();
+            while let Ok(t) = rx.try_recv() {
                 if let Target::Service(s) = t {
-                    Some(s)
-                } else {
-                    None
+                    if s.is_web() {
+                        buf.push(s);
+                    }
                 }
-            })
-            .filter(|s| s.is_web())
-            .collect();
+            }
+            buf
+        };
 
         let results: Vec<Option<(WebAssetTarget, Vec<Finding>)>> =
             futures::stream::iter(web_targets)
@@ -64,11 +84,11 @@ impl Scanner for TechStackScanner {
                 tech = ?asset.tech.iter().map(|t| &t.name).collect::<Vec<_>>(),
                 "web asset"
             );
-            out.findings.extend(header_findings);
-            out.targets.push(Target::Web(Box::new(asset)));
+            for f in header_findings { input.emit(f); }
+            input.emit_target(Target::Web(Box::new(asset)));
         }
 
-        Ok(out)
+        Ok(())
     }
 }
 

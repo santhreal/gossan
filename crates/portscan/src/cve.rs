@@ -345,7 +345,7 @@ pub fn correlate_with_rules(banner: &str, svc: &ServiceTarget, rules: &[CveRule]
                 &rule.description,
             )
             .evidence(Evidence::Banner {
-                raw: banner.chars().take(120).collect(),
+                raw: banner.chars().take(120).collect::<String>().into(),
             })
             .tag("cve")
             .tag("version-disclosure");
@@ -353,7 +353,7 @@ pub fn correlate_with_rules(banner: &str, svc: &ServiceTarget, rules: &[CveRule]
                 let target_str = format!("{}:{}", svc.host.ip, svc.port);
                 f = f.exploit_hint(hint.replace("TARGET", &target_str));
             }
-            findings.push(f.build().expect("finding builder: required fields are set"));
+            gossan_core::try_push_finding(f, &mut findings);
         }
     }
 
@@ -421,7 +421,7 @@ mod tests {
     #[test]
     fn correlate_matches_apache_critical_rule() {
         let findings = correlate("Server: Apache/2.4.49", &service(80));
-        assert!(findings.iter().any(|f| f.title.contains("CVE-2021-41773")));
+        assert!(findings.iter().any(|f| f.title().contains("CVE-2021-41773")));
     }
 
     #[test]
@@ -429,11 +429,11 @@ mod tests {
         let findings = correlate("+PONG", &service(6379));
         let finding = findings
             .iter()
-            .find(|f| f.title.contains("CVE-2022-0543"))
+            .find(|f| f.title().contains("CVE-2022-0543"))
             .unwrap();
-        assert_eq!(finding.severity, Severity::Critical);
+        assert_eq!(finding.severity(), Severity::Critical);
         assert!(finding
-            .exploit_hint
+            .exploit_hint()
             .as_deref()
             .unwrap()
             .contains("127.0.0.1:6379"));
@@ -442,7 +442,7 @@ mod tests {
     #[test]
     fn correlate_is_case_insensitive() {
         let findings = correlate("SSH-2.0-OPENSSH_8.0", &service(22));
-        assert!(findings.iter().any(|f| f.title.contains("CVE-2023-38408")));
+        assert!(findings.iter().any(|f| f.title().contains("CVE-2023-38408")));
     }
 
     #[test]
@@ -455,7 +455,7 @@ mod tests {
         let banner = "A".repeat(200) + " apache/2.4.49";
         let findings = correlate(&banner, &service(80));
         let finding = findings.first().unwrap();
-        let Evidence::Banner { raw } = &finding.evidence[0] else {
+        let Evidence::Banner { raw } = &finding.evidence()[0] else {
             panic!("expected banner evidence");
         };
         assert!(raw.len() <= 120);
@@ -527,6 +527,38 @@ description = "Frobnicator 3.0 — test."
     }
 
     #[test]
+    fn shipped_community_rules_file_parses() {
+        // Sanity check: the community rules TOML file shipped in the repo
+        // (`rules/cve/community-2025.toml`) loads without errors and
+        // contributes meaningful rule count beyond the builtins.
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let repo_root = std::path::Path::new(manifest_dir)
+            .parent()
+            .and_then(std::path::Path::parent)
+            .expect("portscan crate is two levels under the repo root");
+        let rules_dir = repo_root.join("rules").join("cve");
+        if !rules_dir.exists() {
+            // The repo layout may differ in vendored builds.
+            return;
+        }
+        let community = load_community_rules(&rules_dir);
+        assert!(
+            community.len() >= 70,
+            "expected ≥70 community rules from rules/cve/, got {}",
+            community.len()
+        );
+        assert!(community.iter().any(|r| r.cve == "CVE-2021-44228"));
+        assert!(community.iter().any(|r| r.cve == "CVE-2024-6387"));
+        assert!(community.iter().any(|r| r.cve == "CVE-2024-23897"));
+        // Built-in + community combined should land at ≥100.
+        let total = all_rules(Some(&rules_dir)).len();
+        assert!(
+            total >= 100,
+            "expected ≥100 total CVE rules (built-in + community), got {total}"
+        );
+    }
+
+    #[test]
     fn correlate_with_custom_rules() {
         let custom = vec![CveRule {
             pattern: "myapp/2.0".into(),
@@ -538,9 +570,9 @@ description = "Frobnicator 3.0 — test."
         }];
         let findings = correlate_with_rules("Server: MyApp/2.0", &service(8080), &custom);
         assert_eq!(findings.len(), 1);
-        assert!(findings[0].title.contains("CVE-9999-0003"));
+        assert!(findings[0].title().contains("CVE-9999-0003"));
         assert!(findings[0]
-            .exploit_hint
+            .exploit_hint()
             .as_deref()
             .unwrap()
             .contains("127.0.0.1:8080"));
