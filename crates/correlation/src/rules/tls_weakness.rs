@@ -4,8 +4,8 @@
 use gossan_core::Target;
 use secfinding::{Finding, FindingKind, Severity};
 
-use crate::CorrelationRule;
 use crate::utils::normalize_host;
+use crate::CorrelationRule;
 /// TlsWeaknessRule correlation rule — detects multi-signal attack chains.
 pub struct TlsWeaknessRule;
 
@@ -33,7 +33,9 @@ impl CorrelationRule for TlsWeaknessRule {
                 continue;
             };
             let normalized_host = normalize_host(host);
-            let entry = host_issues.entry(normalized_host).or_insert((Vec::new(), host.to_string()));
+            let entry = host_issues
+                .entry(normalized_host)
+                .or_insert((Vec::new(), host.to_string()));
             entry.0.push(f.title().to_string());
         }
 
@@ -50,26 +52,27 @@ impl CorrelationRule for TlsWeaknessRule {
                     return None;
                 }
                 // Use normalized host if original target had ports/schemes, otherwise use original
-                let target_for_chain = if original_target.contains(':') || original_target.starts_with("http") {
-                    normalized_host.clone()
-                } else {
-                    original_target.clone()
-                };
+                let target_for_chain =
+                    if original_target.contains(':') || original_target.starts_with("http") {
+                        normalized_host.clone()
+                    } else {
+                        original_target.clone()
+                    };
                 Finding::builder("correlation", target_for_chain, Severity::High)
-                        .title(format!("Multiple TLS weaknesses on {}", normalized_host))
-                        .detail(format!(
-                            "{} has {} distinct TLS/transport-security issues: {}. \
+                    .title(format!("Multiple TLS weaknesses on {}", normalized_host))
+                    .detail(format!(
+                        "{} has {} distinct TLS/transport-security issues: {}. \
                          Combined, these indicate complete absence of transport security hygiene \
                          and make MitM attacks highly feasible.",
-                            normalized_host,
-                            unique.len(),
-                            unique.join("; ")
-                        ))
-                        .kind(FindingKind::Vulnerability)
-                        .tag("chain")
-                        .tag("tls")
-                        .tag("transport")
-                        .build_or_log()
+                        normalized_host,
+                        unique.len(),
+                        unique.join("; ")
+                    ))
+                    .kind(FindingKind::Vulnerability)
+                    .tag("chain")
+                    .tag("tls")
+                    .tag("transport")
+                    .build_or_log()
             })
             .collect()
     }
@@ -81,7 +84,8 @@ mod tests {
     fn finding(target: &str, title: &str) -> Finding {
         Finding::builder("portscan", target, Severity::High)
             .title(title)
-            .build().expect("test finding")
+            .build()
+            .expect("test finding")
     }
 
     #[test]

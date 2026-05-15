@@ -90,13 +90,7 @@ impl IcmpBackoff {
     }
 
     /// Test-friendly variant — explicit `now` so we can simulate time.
-    pub fn feed_at(
-        &self,
-        slash24: u32,
-        count: u32,
-        cfg: IcmpBackoffConfig,
-        now: Instant,
-    ) -> bool {
+    pub fn feed_at(&self, slash24: u32, count: u32, cfg: IcmpBackoffConfig, now: Instant) -> bool {
         let Ok(mut g) = self.inner.write() else {
             return false;
         };

@@ -13,7 +13,7 @@
 #![allow(
     clippy::module_name_repetitions,
     clippy::must_use_candidate,
-    clippy::missing_errors_doc,
+    clippy::missing_errors_doc
 )]
 
 //! Scan checkpoint and resume — persists stage results to a local SQLite file.
@@ -329,7 +329,6 @@ mod tests {
     }
 }
 
-
 /// Finding delta between two scan runs.
 #[derive(Debug)]
 pub struct ScanDelta {
@@ -351,18 +350,34 @@ pub fn diff_findings(baseline: &[Finding], current: &[Finding]) -> ScanDelta {
     // Key: (scanner, target, title) — uniquely identifies a finding class
     let baseline_keys: HashSet<(String, String, String)> = baseline
         .iter()
-        .map(|f| (f.scanner().to_string(), f.target().to_string(), f.title().to_string()))
+        .map(|f| {
+            (
+                f.scanner().to_string(),
+                f.target().to_string(),
+                f.title().to_string(),
+            )
+        })
         .collect();
 
     let current_keys: HashSet<(String, String, String)> = current
         .iter()
-        .map(|f| (f.scanner().to_string(), f.target().to_string(), f.title().to_string()))
+        .map(|f| {
+            (
+                f.scanner().to_string(),
+                f.target().to_string(),
+                f.title().to_string(),
+            )
+        })
         .collect();
 
     let new_findings: Vec<Finding> = current
         .iter()
         .filter(|f| {
-            !baseline_keys.contains(&(f.scanner().to_string(), f.target().to_string(), f.title().to_string()))
+            !baseline_keys.contains(&(
+                f.scanner().to_string(),
+                f.target().to_string(),
+                f.title().to_string(),
+            ))
         })
         .cloned()
         .collect();
@@ -370,7 +385,11 @@ pub fn diff_findings(baseline: &[Finding], current: &[Finding]) -> ScanDelta {
     let resolved_findings: Vec<Finding> = baseline
         .iter()
         .filter(|f| {
-            !current_keys.contains(&(f.scanner().to_string(), f.target().to_string(), f.title().to_string()))
+            !current_keys.contains(&(
+                f.scanner().to_string(),
+                f.target().to_string(),
+                f.title().to_string(),
+            ))
         })
         .cloned()
         .collect();

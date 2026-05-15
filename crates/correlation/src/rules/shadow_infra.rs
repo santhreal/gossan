@@ -24,16 +24,23 @@ impl CorrelationRule for ShadowInfrastructureRule {
         // 2. Look for TLS findings on IP targets
         for f in findings {
             // We only care about findings on IP-like targets (Host)
-            if !f.target().chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            if !f
+                .target()
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_digit())
+            {
                 continue;
             }
 
             for ev in f.evidence() {
                 if let Evidence::Certificate { subject, san, .. } = ev {
                     let mut shadow_domains = Vec::new();
-                    
+
                     let subject_norm = normalize_domain(subject);
-                    if !known_domains.contains(&subject_norm) && is_interesting_domain(&subject_norm) {
+                    if !known_domains.contains(&subject_norm)
+                        && is_interesting_domain(&subject_norm)
+                    {
                         shadow_domains.push(subject_norm);
                     }
 
@@ -75,13 +82,13 @@ impl CorrelationRule for ShadowInfrastructureRule {
 
 fn is_interesting_domain(domain: &str) -> bool {
     let lower = domain.to_lowercase();
-    !(lower.ends_with(".cloudfront.net") ||
-      lower.ends_with(".azureedge.net") ||
-      lower.ends_with(".github.io") ||
-      lower.ends_with(".amazonaws.com") ||
-      lower == "google.com" ||
-      lower.ends_with(".google.com") ||
-      lower.is_empty())
+    !(lower.ends_with(".cloudfront.net")
+        || lower.ends_with(".azureedge.net")
+        || lower.ends_with(".github.io")
+        || lower.ends_with(".amazonaws.com")
+        || lower == "google.com"
+        || lower.ends_with(".google.com")
+        || lower.is_empty())
 }
 
 fn normalize_domain(d: &str) -> String {

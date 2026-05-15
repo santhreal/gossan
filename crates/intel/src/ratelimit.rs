@@ -16,8 +16,7 @@ pub type ServiceRateLimiter =
 /// passing 0 by accident don't crash; if you want unlimited, build a
 /// noop limiter at the call site instead.
 pub fn build_limiter(per_second: u32) -> Arc<ServiceRateLimiter> {
-    let n = NonZeroU32::new(per_second.max(1))
-        .unwrap_or(NonZeroU32::MIN);
+    let n = NonZeroU32::new(per_second.max(1)).unwrap_or(NonZeroU32::MIN);
     let quota = Quota::per_second(n);
     Arc::new(ServiceRateLimiter::keyed(quota))
 }

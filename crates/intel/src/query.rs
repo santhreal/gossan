@@ -72,7 +72,11 @@ pub fn enrichment_to_finding(e: &IntelEnrichment) -> Option<secfinding::Finding>
         detail.push_str(&format!("Classification: {classification}\n"));
     }
     if let Some(ref asn) = e.asn {
-        detail.push_str(&format!("ASN: {} ({})", asn.asn, asn.org.as_deref().unwrap_or("unknown")));
+        detail.push_str(&format!(
+            "ASN: {} ({})",
+            asn.asn,
+            asn.org.as_deref().unwrap_or("unknown")
+        ));
     }
 
     let mut builder = secfinding::Finding::builder("intel", target, secfinding::Severity::Info)

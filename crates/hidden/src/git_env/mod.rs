@@ -29,7 +29,15 @@ pub async fn probe(client: &reqwest::Client, target: &Target) -> anyhow::Result<
     let checks = rules::get_owned_checks();
 
     let results: Vec<Vec<Finding>> = futures::stream::iter(checks)
-        .map(|c| extract::process_check(client.clone(), base.to_string(), target.clone(), c, is_catch_all))
+        .map(|c| {
+            extract::process_check(
+                client.clone(),
+                base.to_string(),
+                target.clone(),
+                c,
+                is_catch_all,
+            )
+        })
         .buffer_unordered(25)
         .collect()
         .await;

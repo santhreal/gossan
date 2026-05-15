@@ -18,7 +18,7 @@
 
 use gossan_core::Target;
 use hickory_resolver::{proto::rr::RecordType, TokioAsyncResolver};
-use secfinding::{Evidence, Finding, Severity, FindingKind};
+use secfinding::{Evidence, Finding, FindingKind, Severity};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// Check all authoritative nameservers for AXFR vulnerability.
@@ -38,7 +38,8 @@ pub async fn check(
 
     for ns in &nameservers {
         if let Some(axfr_result) = attempt(ns, domain, timeout, proxy).await {
-            gossan_core::try_push_finding(Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Critical)
+            gossan_core::try_push_finding(
+                Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Critical)
                     .title(format!("DNS zone transfer (AXFR) succeeds on {ns}"))
                     .detail(format!(
                         "Nameserver {ns} allows unauthenticated AXFR for {domain}. \
@@ -53,7 +54,9 @@ pub async fn check(
                     })
                     .tag("zone-transfer")
                     .tag("critical")
-                    .tag("dns"), &mut findings);
+                    .tag("dns"),
+                &mut findings,
+            );
             break; // one successful transfer is sufficient evidence
         }
     }
@@ -70,10 +73,7 @@ struct AxfrResult {
 }
 
 /// Resolve NS records for a domain.
-async fn resolve_nameservers(
-    resolver: &TokioAsyncResolver,
-    domain: &str,
-) -> Option<Vec<String>> {
+async fn resolve_nameservers(resolver: &TokioAsyncResolver, domain: &str) -> Option<Vec<String>> {
     let ns_records = resolver.lookup(domain, RecordType::NS).await.ok()?;
     let nameservers: Vec<String> = ns_records
         .iter()
@@ -226,7 +226,10 @@ mod tests {
         let msg = build_query("example.com");
         assert_eq!(&msg[..2], &[0x13, 0x37], "transaction ID");
         assert_eq!(&msg[4..6], &[0x00, 0x01], "QDCOUNT = 1");
-        assert!(msg.ends_with(&[0x00, 0xfc, 0x00, 0x01]), "QTYPE=AXFR, QCLASS=IN");
+        assert!(
+            msg.ends_with(&[0x00, 0xfc, 0x00, 0x01]),
+            "QTYPE=AXFR, QCLASS=IN"
+        );
     }
 
     #[test]
@@ -234,7 +237,8 @@ mod tests {
         let msg = build_query("api.example.com.");
         assert!(msg.windows(3).any(|w| w == [3, b'a', b'p']), "label 'api'");
         assert!(
-            msg.windows(8).any(|w| w == [7, b'e', b'x', b'a', b'm', b'p', b'l', b'e']),
+            msg.windows(8)
+                .any(|w| w == [7, b'e', b'x', b'a', b'm', b'p', b'l', b'e']),
             "label 'example'"
         );
     }
@@ -247,14 +251,18 @@ mod tests {
     #[test]
     fn parse_response_rejects_refused() {
         // RCODE = 5 (REFUSED) at byte offset 5 (msg byte 3 after 2-byte len prefix)
-        let buf = [0, 20, 0x13, 0x37, 0x80, 0x05, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let buf = [
+            0, 20, 0x13, 0x37, 0x80, 0x05, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
         assert!(parse_response(&buf, "ns", "z").is_none());
     }
 
     #[test]
     fn parse_response_accepts_valid_transfer() {
         // RCODE = 0, ANCOUNT = 5
-        let buf = [0, 20, 0x13, 0x37, 0x80, 0x00, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let buf = [
+            0, 20, 0x13, 0x37, 0x80, 0x00, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
         let result = parse_response(&buf, "ns1.example.com", "example.com");
         assert!(result.is_some());
         assert_eq!(result.as_ref().unwrap().record_count, 5);

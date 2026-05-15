@@ -26,12 +26,17 @@ async fn pipeline_deduplicates_and_implies() {
             ResponseTemplate::new(200)
                 .insert_header("Set-Cookie", "wordpress_test_cookie=WP+Cookie+check")
                 .insert_header("X-Powered-By", "PHP/7.4.3")
-                .set_body_string(r#"<html><body><script>window.__NUXT__ = {};</script></body></html>"#),
+                .set_body_string(
+                    r#"<html><body><script>window.__NUXT__ = {};</script></body></html>"#,
+                ),
         )
         .mount(&mock_server)
         .await;
 
-    let svc = web_target(&mock_server.address().ip().to_string(), mock_server.address().port());
+    let svc = web_target(
+        &mock_server.address().ip().to_string(),
+        mock_server.address().port(),
+    );
     let client = reqwest::Client::new();
     let (asset, _findings) = probe(&client, svc).await.expect("probe should succeed");
 
@@ -68,7 +73,10 @@ async fn pipeline_detects_modern_frameworks() {
         .mount(&mock_server)
         .await;
 
-    let svc = web_target(&mock_server.address().ip().to_string(), mock_server.address().port());
+    let svc = web_target(
+        &mock_server.address().ip().to_string(),
+        mock_server.address().port(),
+    );
     let client = reqwest::Client::new();
     let (asset, _findings) = probe(&client, svc).await.expect("probe should succeed");
 

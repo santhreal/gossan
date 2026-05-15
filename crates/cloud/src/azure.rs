@@ -45,13 +45,11 @@ fn builtin_azure_containers() -> &'static Vec<AzureContainer> {
             Err(e) => {
                 tracing::error!(error = %e, "failed to parse built-in azure.toml");
                 // Fallback to minimal hardcoded list only on parse failure
-                vec![
-                    AzureContainer {
-                        name: "$web".to_string(),
-                        description: "static website hosting".to_string(),
-                        severity: "critical".to_string(),
-                    },
-                ]
+                vec![AzureContainer {
+                    name: "$web".to_string(),
+                    description: "static website hosting".to_string(),
+                    severity: "critical".to_string(),
+                }]
             }
         }
     })
@@ -105,7 +103,9 @@ impl CloudProvider for AzureProvider {
 
             match status {
                 200 => {
-                    let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
+                    let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
+                        .await
+                        .unwrap_or_default();
                     let is_web = container_name == "$web";
                     gossan_core::try_push_finding(crate::finding_builder(target, Severity::Critical,
                             format!("Azure Blob container public: {}/{}", account, container_name),
@@ -165,8 +165,11 @@ mod tests {
     #[test]
     fn azure_containers_load_from_toml() {
         let containers = container_names();
-        assert!(!containers.is_empty(), "should have Azure containers from TOML");
-        
+        assert!(
+            !containers.is_empty(),
+            "should have Azure containers from TOML"
+        );
+
         // Check for critical $web container
         assert!(
             containers.iter().any(|c| c.name == "$web"),
@@ -177,8 +180,14 @@ mod tests {
     #[test]
     fn azure_containers_have_required_fields() {
         for container in container_names() {
-            assert!(!container.name.is_empty(), "container name should not be empty");
-            assert!(!container.severity.is_empty(), "severity should not be empty");
+            assert!(
+                !container.name.is_empty(),
+                "container name should not be empty"
+            );
+            assert!(
+                !container.severity.is_empty(),
+                "severity should not be empty"
+            );
         }
     }
 
@@ -186,7 +195,11 @@ mod tests {
     fn azure_containers_include_common_names() {
         let names: Vec<_> = container_names().iter().map(|c| c.name.clone()).collect();
         for expected in ["$web", "public", "assets", "backup"] {
-            assert!(names.contains(&expected.to_string()), "missing container: {}", expected);
+            assert!(
+                names.contains(&expected.to_string()),
+                "missing container: {}",
+                expected
+            );
         }
     }
 }

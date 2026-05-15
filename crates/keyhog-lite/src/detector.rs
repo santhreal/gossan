@@ -176,7 +176,9 @@ description = "AWS AKIA prefix"
     #[test]
     fn load_detectors_skips_malformed_and_keeps_valid() {
         let tmp = tempfile::tempdir().expect("tmpdir");
-        write(&tmp.path().join("good.toml"), r#"
+        write(
+            &tmp.path().join("good.toml"),
+            r#"
 [detector]
 id = "good"
 name = "Good"
@@ -184,7 +186,8 @@ service = "test"
 severity = "high"
 [[detector.patterns]]
 regex = "foo"
-"#);
+"#,
+        );
         write(&tmp.path().join("bad.toml"), "this is not [[ valid toml");
         let detectors = load_detectors(tmp.path()).expect("load");
         assert_eq!(detectors.len(), 1);

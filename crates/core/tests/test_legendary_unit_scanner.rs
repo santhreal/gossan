@@ -1,5 +1,8 @@
-use gossan_core::{ScanInput, Target, DomainTarget, DiscoverySource, Severity, make_finding};
-use hickory_resolver::{config::{ResolverConfig, ResolverOpts}, TokioAsyncResolver};
+use gossan_core::{make_finding, DiscoverySource, DomainTarget, ScanInput, Severity, Target};
+use hickory_resolver::{
+    config::{ResolverConfig, ResolverOpts},
+    TokioAsyncResolver,
+};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
@@ -9,7 +12,7 @@ async fn test_scan_input_emit_finding() {
         ResolverConfig::default(),
         ResolverOpts::default(),
     ));
-    
+
     // Streaming-API ScanInput. Pre-streaming form had `targets:
     // Vec<_>`, optional `live_tx`/`target_tx`, no `target_rx`. Now:
     // targets flow through `target_rx`, live + target senders are
@@ -32,13 +35,7 @@ async fn test_scan_input_emit_finding() {
         source: DiscoverySource::Seed,
     });
 
-    let finding = make_finding(
-        "test",
-        target,
-        Severity::Low,
-        "title",
-        "detail"
-    ).unwrap();
+    let finding = make_finding("test", target, Severity::Low, "title", "detail").unwrap();
 
     input.emit(finding.clone());
 

@@ -103,25 +103,65 @@ pub struct Cli {
     // ── API keys (also read from env vars) ──
     #[arg(long, global = true, env = "VT_API_KEY", help = "VirusTotal API key")]
     pub vt_key: Option<String>,
-    #[arg(long, global = true, env = "ST_API_KEY", help = "SecurityTrails API key")]
+    #[arg(
+        long,
+        global = true,
+        env = "ST_API_KEY",
+        help = "SecurityTrails API key"
+    )]
     pub st_key: Option<String>,
     #[arg(long, global = true, env = "SHODAN_API_KEY", help = "Shodan API key")]
     pub shodan_key: Option<String>,
-    #[arg(long, global = true, env = "GITHUB_TOKEN", help = "GitHub token for code-search subdomain discovery")]
+    #[arg(
+        long,
+        global = true,
+        env = "GITHUB_TOKEN",
+        help = "GitHub token for code-search subdomain discovery"
+    )]
     pub github_token: Option<String>,
-    #[arg(long, global = true, env = "CENSYS_API_KEY", help = "Censys API key (format: api_id:api_secret)")]
+    #[arg(
+        long,
+        global = true,
+        env = "CENSYS_API_KEY",
+        help = "Censys API key (format: api_id:api_secret)"
+    )]
     pub censys_key: Option<String>,
-    #[arg(long, global = true, env = "BINARYEDGE_API_KEY", help = "BinaryEdge API key")]
+    #[arg(
+        long,
+        global = true,
+        env = "BINARYEDGE_API_KEY",
+        help = "BinaryEdge API key"
+    )]
     pub binaryedge_key: Option<String>,
-    #[arg(long, global = true, env = "FULLHUNT_API_KEY", help = "FullHunt API key")]
+    #[arg(
+        long,
+        global = true,
+        env = "FULLHUNT_API_KEY",
+        help = "FullHunt API key"
+    )]
     pub fullhunt_key: Option<String>,
-    #[arg(long, global = true, env = "CHAOS_API_KEY", help = "Chaos (ProjectDiscovery) API key")]
+    #[arg(
+        long,
+        global = true,
+        env = "CHAOS_API_KEY",
+        help = "Chaos (ProjectDiscovery) API key"
+    )]
     pub chaos_key: Option<String>,
     #[arg(long, global = true, env = "BEVIGIL_API_KEY", help = "Bevigil API key")]
     pub bevigil_key: Option<String>,
-    #[arg(long, global = true, env = "FOFA_API_KEY", help = "FOFA API key (format: email:key)")]
+    #[arg(
+        long,
+        global = true,
+        env = "FOFA_API_KEY",
+        help = "FOFA API key (format: email:key)"
+    )]
     pub fofa_key: Option<String>,
-    #[arg(long, global = true, env = "HUNTER_API_KEY", help = "Hunter.io API key")]
+    #[arg(
+        long,
+        global = true,
+        env = "HUNTER_API_KEY",
+        help = "Hunter.io API key"
+    )]
     pub hunter_key: Option<String>,
     #[arg(long, global = true, env = "NETLAS_API_KEY", help = "Netlas API key")]
     pub netlas_key: Option<String>,
@@ -129,17 +169,35 @@ pub struct Cli {
     pub zoomeye_key: Option<String>,
     #[arg(long, global = true, env = "C99_API_KEY", help = "C99 API key")]
     pub c99_key: Option<String>,
-    #[arg(long, global = true, env = "QUAKE_API_KEY", help = "Quake (360) API key")]
+    #[arg(
+        long,
+        global = true,
+        env = "QUAKE_API_KEY",
+        help = "Quake (360) API key"
+    )]
     pub quake_key: Option<String>,
-    #[arg(long, global = true, env = "THREATBOOK_API_KEY", help = "ThreatBook API key")]
+    #[arg(
+        long,
+        global = true,
+        env = "THREATBOOK_API_KEY",
+        help = "ThreatBook API key"
+    )]
     pub threatbook_key: Option<String>,
 
     // ── Fault isolation ───────────────────────────────────────────────────
-    #[arg(long, global = true, help = "Abort on first scanner error (for debugging)")]
+    #[arg(
+        long,
+        global = true,
+        help = "Abort on first scanner error (for debugging)"
+    )]
     pub strict: bool,
 
     // ── Tuning ─────────────────────────────────────────────────────────────
-    #[arg(long, global = true, help = "Enable conservative zero-false-positive horizontal scanning")]
+    #[arg(
+        long,
+        global = true,
+        help = "Enable conservative zero-false-positive horizontal scanning"
+    )]
     pub conservative: bool,
 
     // ── Checkpoint / resume ────────────────────────────────────────────────
@@ -321,22 +379,54 @@ impl Cli {
         let port_mode = parse_port_mode(self.ports.as_deref());
 
         let mut api_keys = std::collections::HashMap::new();
-        if let Some(v) = &self.vt_key { api_keys.insert("virustotal".to_string(), v.clone()); }
-        if let Some(v) = &self.st_key { api_keys.insert("securitytrails".to_string(), v.clone()); }
-        if let Some(v) = &self.shodan_key { api_keys.insert("shodan".to_string(), v.clone()); }
-        if let Some(v) = &self.github_token { api_keys.insert("github".to_string(), v.clone()); }
-        if let Some(v) = &self.censys_key { api_keys.insert("censys".to_string(), v.clone()); }
-        if let Some(v) = &self.binaryedge_key { api_keys.insert("binaryedge".to_string(), v.clone()); }
-        if let Some(v) = &self.fullhunt_key { api_keys.insert("fullhunt".to_string(), v.clone()); }
-        if let Some(v) = &self.chaos_key { api_keys.insert("chaos".to_string(), v.clone()); }
-        if let Some(v) = &self.bevigil_key { api_keys.insert("bevigil".to_string(), v.clone()); }
-        if let Some(v) = &self.fofa_key { api_keys.insert("fofa".to_string(), v.clone()); }
-        if let Some(v) = &self.hunter_key { api_keys.insert("hunter".to_string(), v.clone()); }
-        if let Some(v) = &self.netlas_key { api_keys.insert("netlas".to_string(), v.clone()); }
-        if let Some(v) = &self.zoomeye_key { api_keys.insert("zoomeye".to_string(), v.clone()); }
-        if let Some(v) = &self.c99_key { api_keys.insert("c99".to_string(), v.clone()); }
-        if let Some(v) = &self.quake_key { api_keys.insert("quake".to_string(), v.clone()); }
-        if let Some(v) = &self.threatbook_key { api_keys.insert("threatbook".to_string(), v.clone()); }
+        if let Some(v) = &self.vt_key {
+            api_keys.insert("virustotal".to_string(), v.clone());
+        }
+        if let Some(v) = &self.st_key {
+            api_keys.insert("securitytrails".to_string(), v.clone());
+        }
+        if let Some(v) = &self.shodan_key {
+            api_keys.insert("shodan".to_string(), v.clone());
+        }
+        if let Some(v) = &self.github_token {
+            api_keys.insert("github".to_string(), v.clone());
+        }
+        if let Some(v) = &self.censys_key {
+            api_keys.insert("censys".to_string(), v.clone());
+        }
+        if let Some(v) = &self.binaryedge_key {
+            api_keys.insert("binaryedge".to_string(), v.clone());
+        }
+        if let Some(v) = &self.fullhunt_key {
+            api_keys.insert("fullhunt".to_string(), v.clone());
+        }
+        if let Some(v) = &self.chaos_key {
+            api_keys.insert("chaos".to_string(), v.clone());
+        }
+        if let Some(v) = &self.bevigil_key {
+            api_keys.insert("bevigil".to_string(), v.clone());
+        }
+        if let Some(v) = &self.fofa_key {
+            api_keys.insert("fofa".to_string(), v.clone());
+        }
+        if let Some(v) = &self.hunter_key {
+            api_keys.insert("hunter".to_string(), v.clone());
+        }
+        if let Some(v) = &self.netlas_key {
+            api_keys.insert("netlas".to_string(), v.clone());
+        }
+        if let Some(v) = &self.zoomeye_key {
+            api_keys.insert("zoomeye".to_string(), v.clone());
+        }
+        if let Some(v) = &self.c99_key {
+            api_keys.insert("c99".to_string(), v.clone());
+        }
+        if let Some(v) = &self.quake_key {
+            api_keys.insert("quake".to_string(), v.clone());
+        }
+        if let Some(v) = &self.threatbook_key {
+            api_keys.insert("threatbook".to_string(), v.clone());
+        }
 
         for (k, v) in std::env::vars() {
             if k.starts_with("GOSSAN_APIKEY_") {
@@ -344,24 +434,60 @@ impl Cli {
                 api_keys.insert(provider, v);
             }
         }
-        if let Ok(v) = std::env::var("VT_API_KEY") { api_keys.insert("virustotal".to_string(), v); }
-        if let Ok(v) = std::env::var("ST_API_KEY") { api_keys.insert("securitytrails".to_string(), v); }
-        if let Ok(v) = std::env::var("SHODAN_API_KEY") { api_keys.insert("shodan".to_string(), v); }
-        if let Ok(v) = std::env::var("GITHUB_TOKEN") { api_keys.insert("github".to_string(), v); }
-        if let Ok(v) = std::env::var("CENSYS_API_KEY") { api_keys.insert("censys".to_string(), v); }
-        if let Ok(v) = std::env::var("BINARYEDGE_API_KEY") { api_keys.insert("binaryedge".to_string(), v); }
-        if let Ok(v) = std::env::var("FULLHUNT_API_KEY") { api_keys.insert("fullhunt".to_string(), v); }
-        if let Ok(v) = std::env::var("CHAOS_API_KEY") { api_keys.insert("chaos".to_string(), v); }
-        if let Ok(v) = std::env::var("BEVIGIL_API_KEY") { api_keys.insert("bevigil".to_string(), v); }
-        if let Ok(v) = std::env::var("FOFA_API_KEY") { api_keys.insert("fofa".to_string(), v); }
-        if let Ok(v) = std::env::var("HUNTER_API_KEY") { api_keys.insert("hunter".to_string(), v); }
-        if let Ok(v) = std::env::var("NETLAS_API_KEY") { api_keys.insert("netlas".to_string(), v); }
-        if let Ok(v) = std::env::var("ZOOMEYE_API_KEY") { api_keys.insert("zoomeye".to_string(), v); }
-        if let Ok(v) = std::env::var("C99_API_KEY") { api_keys.insert("c99".to_string(), v); }
-        if let Ok(v) = std::env::var("QUAKE_API_KEY") { api_keys.insert("quake".to_string(), v); }
-        if let Ok(v) = std::env::var("THREATBOOK_API_KEY") { api_keys.insert("threatbook".to_string(), v); }
+        if let Ok(v) = std::env::var("VT_API_KEY") {
+            api_keys.insert("virustotal".to_string(), v);
+        }
+        if let Ok(v) = std::env::var("ST_API_KEY") {
+            api_keys.insert("securitytrails".to_string(), v);
+        }
+        if let Ok(v) = std::env::var("SHODAN_API_KEY") {
+            api_keys.insert("shodan".to_string(), v);
+        }
+        if let Ok(v) = std::env::var("GITHUB_TOKEN") {
+            api_keys.insert("github".to_string(), v);
+        }
+        if let Ok(v) = std::env::var("CENSYS_API_KEY") {
+            api_keys.insert("censys".to_string(), v);
+        }
+        if let Ok(v) = std::env::var("BINARYEDGE_API_KEY") {
+            api_keys.insert("binaryedge".to_string(), v);
+        }
+        if let Ok(v) = std::env::var("FULLHUNT_API_KEY") {
+            api_keys.insert("fullhunt".to_string(), v);
+        }
+        if let Ok(v) = std::env::var("CHAOS_API_KEY") {
+            api_keys.insert("chaos".to_string(), v);
+        }
+        if let Ok(v) = std::env::var("BEVIGIL_API_KEY") {
+            api_keys.insert("bevigil".to_string(), v);
+        }
+        if let Ok(v) = std::env::var("FOFA_API_KEY") {
+            api_keys.insert("fofa".to_string(), v);
+        }
+        if let Ok(v) = std::env::var("HUNTER_API_KEY") {
+            api_keys.insert("hunter".to_string(), v);
+        }
+        if let Ok(v) = std::env::var("NETLAS_API_KEY") {
+            api_keys.insert("netlas".to_string(), v);
+        }
+        if let Ok(v) = std::env::var("ZOOMEYE_API_KEY") {
+            api_keys.insert("zoomeye".to_string(), v);
+        }
+        if let Ok(v) = std::env::var("C99_API_KEY") {
+            api_keys.insert("c99".to_string(), v);
+        }
+        if let Ok(v) = std::env::var("QUAKE_API_KEY") {
+            api_keys.insert("quake".to_string(), v);
+        }
+        if let Ok(v) = std::env::var("THREATBOOK_API_KEY") {
+            api_keys.insert("threatbook".to_string(), v);
+        }
 
-        let resolvers: Vec<std::net::IpAddr> = self.resolvers.iter().filter_map(|s| s.parse().ok()).collect();
+        let resolvers: Vec<std::net::IpAddr> = self
+            .resolvers
+            .iter()
+            .filter_map(|s| s.parse().ok())
+            .collect();
 
         // Reject `--out` paths that escape the cwd via `..` segments OR
         // start with `/etc/`, `/sys/`, `/proc/`, `/boot/`, `/var/log/`.

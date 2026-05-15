@@ -10,9 +10,9 @@ pub async fn get_sibling_domains(client: &Client, domain: &str) -> anyhow::Resul
         let r = client.get(&url).send().await?;
         gossan_core::net::bounded_text(r, 1 * 1024 * 1024).await?
     };
-    
+
     let domains = parse_reverseip_response(&resp);
-        
+
     Ok(domains)
 }
 
@@ -32,7 +32,10 @@ mod tests {
     fn parse_reverseip_handles_empty_and_lines() {
         let resp = "example.com\n\nsub.example.com\n ";
         let v = parse_reverseip_response(resp);
-        assert_eq!(v, vec!["example.com".to_string(), "sub.example.com".to_string()]);
+        assert_eq!(
+            v,
+            vec!["example.com".to_string(), "sub.example.com".to_string()]
+        );
 
         let empty = "";
         let v2 = parse_reverseip_response(empty);

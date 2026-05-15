@@ -13,7 +13,7 @@
 #![allow(
     clippy::module_name_repetitions,
     clippy::must_use_candidate,
-    clippy::missing_errors_doc,
+    clippy::missing_errors_doc
 )]
 
 //! Cross-module finding correlation engine.
@@ -38,9 +38,8 @@ use gossan_core::Target;
 use secfinding::{Finding, Severity};
 
 pub use rules::{
-    AdminExposedRule, ApiAuthRule, CorsSecretChainRule, DebugRceRule,
-    ShadowInfrastructureRule, SourceCodeSecretsRule, SsrfInternalRule,
-    TlsWeaknessRule, WildcardTakeoverRule,
+    AdminExposedRule, ApiAuthRule, CorsSecretChainRule, DebugRceRule, ShadowInfrastructureRule,
+    SourceCodeSecretsRule, SsrfInternalRule, TlsWeaknessRule, WildcardTakeoverRule,
 };
 
 /// A correlation rule inspects the full finding + target set and returns
@@ -178,6 +177,8 @@ mod tests {
         let auth = finding("hidden", "api.example.com", "No authentication required");
 
         let chains = engine.run(&[v1, auth], &[]);
-        assert!(chains.iter().any(|f| f.title().contains("Unauthenticated legacy API")));
+        assert!(chains
+            .iter()
+            .any(|f| f.title().contains("Unauthenticated legacy API")));
     }
 }

@@ -12,14 +12,10 @@
 
 use gossan_core::Target;
 use hickory_resolver::{proto::rr::RecordType, TokioAsyncResolver};
-use secfinding::{Evidence, Finding, Severity, FindingKind};
+use secfinding::{Evidence, Finding, FindingKind, Severity};
 
 /// Run all DNSSEC checks.
-pub async fn check(
-    resolver: &TokioAsyncResolver,
-    domain: &str,
-    target: &Target,
-) -> Vec<Finding> {
+pub async fn check(resolver: &TokioAsyncResolver, domain: &str, target: &Target) -> Vec<Finding> {
     let mut findings = Vec::new();
     findings.extend(check_dnssec_signed(resolver, domain, target).await);
     findings.extend(check_zone_walking(resolver, domain, target).await);
@@ -82,10 +78,10 @@ async fn check_zone_walking(
 
     // Query for a non-existent subdomain to trigger NSEC/NSEC3 response
     let nx_domain = format!("gossan-nx-test-{}.{}", fastrand::u32(..), domain);
-    
+
     // We use a raw lookup to see the authority section records
     let _lookup = resolver.lookup(nx_domain, RecordType::A).await;
-    
+
     if let Ok(nsec) = resolver.lookup(domain, RecordType::NSEC).await {
         if !nsec.iter().collect::<Vec<_>>().is_empty() {
             gossan_core::try_push_finding(
@@ -157,7 +153,7 @@ async fn check_ns_dnssec(
                 let ns_str = ns_name.to_string();
                 if let Ok(ds) = resolver.lookup(ns_str.as_str(), RecordType::DS).await {
                     if ds.iter().collect::<Vec<_>>().is_empty() {
-                         gossan_core::try_push_finding(
+                        gossan_core::try_push_finding(
                             Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Low)
                                 .title("DNSSEC: Nameserver not signed")
                                 .detail(format!(

@@ -1,7 +1,7 @@
 //! Query layer for graph traversal.
 
 use crate::store::GraphBackend;
-use crate::{Edge, Node, schema::EdgeType};
+use crate::{schema::EdgeType, Edge, Node};
 use std::collections::{HashSet, VecDeque};
 
 /// Find all nodes of a given type.
@@ -126,7 +126,10 @@ mod tests {
             .unwrap();
 
         let p = path(&backend, "a", "d").unwrap();
-        assert_eq!(p, Some(vec!["a".to_string(), "e".to_string(), "d".to_string()]));
+        assert_eq!(
+            p,
+            Some(vec!["a".to_string(), "e".to_string(), "d".to_string()])
+        );
     }
 
     #[test]

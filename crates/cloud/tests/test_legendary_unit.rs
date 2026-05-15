@@ -21,9 +21,7 @@ fn test_legendary_unit_is_xml_listing() {
     assert!(!common::is_xml_listing(
         "<EnumerationResults ServiceEndpoint=\"https://test.blob.core.windows.net/\">"
     ));
-    assert!(common::is_xml_listing(
-        "<Contents>test</Contents>"
-    ));
+    assert!(common::is_xml_listing("<Contents>test</Contents>"));
     assert!(!common::is_xml_listing("<html><body>Hello</body></html>"));
     assert!(!common::is_xml_listing(""));
 }
@@ -59,7 +57,10 @@ fn test_legendary_unit_providers() {
 
     let azure = AzureProvider;
     assert_eq!(azure.name(), "azure");
-    assert_eq!(azure.endpoint("test"), "https://test.blob.core.windows.net/");
+    assert_eq!(
+        azure.endpoint("test"),
+        "https://test.blob.core.windows.net/"
+    );
 
     let do_spaces = DoSpacesProvider;
     assert_eq!(do_spaces.name(), "spaces");

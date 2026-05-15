@@ -20,21 +20,9 @@ const MANIFESTS: &[(&str, &str, &[&str])] = &[
         "PHP composer.json exposed",
         &["require", "require-dev", "name"],
     ),
-    (
-        "/requirements.txt",
-        "Python requirements.txt exposed",
-        &[],
-    ),
-    (
-        "/Gemfile",
-        "Ruby Gemfile exposed",
-        &["gem", "source"],
-    ),
-    (
-        "/go.mod",
-        "Go go.mod exposed",
-        &["module", "require"],
-    ),
+    ("/requirements.txt", "Python requirements.txt exposed", &[]),
+    ("/Gemfile", "Ruby Gemfile exposed", &["gem", "source"]),
+    ("/go.mod", "Go go.mod exposed", &["module", "require"]),
     (
         "/pom.xml",
         "Maven pom.xml exposed",
@@ -67,7 +55,9 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
         if resp.status().as_u16() != 200 {
             continue;
         }
-        let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
+        let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
+            .await
+            .unwrap_or_default();
 
         // Confirm it's a real manifest, not a generic 200 page
         let confirmed = if confirms.is_empty() {
@@ -146,7 +136,9 @@ fn extract_scopes(path: &str, body: &str) -> Vec<String> {
             while let Some(open_rel) = line[cursor..].find('"') {
                 let open = cursor + open_rel;
                 let after = &line[open + 1..];
-                let Some(close_rel) = after.find('"') else { break };
+                let Some(close_rel) = after.find('"') else {
+                    break;
+                };
                 let close = open + 1 + close_rel;
                 let token = &line[open + 1..close];
                 if token.contains('/')

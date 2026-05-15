@@ -11,7 +11,11 @@ use std::net::IpAddr;
 use std::str::FromStr;
 
 /// Scan DNSDB for origin candidates.
-pub async fn scan(domain: &str, config: &Config, client: &ScanClient) -> anyhow::Result<Vec<OriginCandidate>> {
+pub async fn scan(
+    domain: &str,
+    config: &Config,
+    client: &ScanClient,
+) -> anyhow::Result<Vec<OriginCandidate>> {
     let api_key = match config.api_keys.get("dnsdb") {
         Some(k) => k,
         None => {

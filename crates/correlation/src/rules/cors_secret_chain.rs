@@ -26,7 +26,11 @@ impl super::super::CorrelationRule for CorsSecretChainRule {
 
         let secret_findings: Vec<&Finding> = findings
             .iter()
-            .filter(|f| f.tags().iter().any(|t| t.as_ref() == "secret" || t.as_ref() == "keyhog"))
+            .filter(|f| {
+                f.tags()
+                    .iter()
+                    .any(|t| t.as_ref() == "secret" || t.as_ref() == "keyhog")
+            })
             .collect();
 
         if !has_cors_with_creds || secret_findings.is_empty() {

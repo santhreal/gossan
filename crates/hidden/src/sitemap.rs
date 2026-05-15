@@ -48,7 +48,8 @@ pub async fn probe(client: &reqwest::Client, target: &Target) -> anyhow::Result<
                         .take(20)
                         .collect();
 
-                    gossan_core::try_push_finding(crate::file_finding(
+                    gossan_core::try_push_finding(
+                        crate::file_finding(
                             target,
                             Severity::Info,
                             format!("sitemap.xml found ({} URLs)", urls.len()),
@@ -63,14 +64,22 @@ pub async fn probe(client: &reqwest::Client, target: &Target) -> anyhow::Result<
                             status: 200,
                             headers: vec![],
                             body_excerpt: Some(
-                                urls.iter().take(5).cloned().collect::<Vec<_>>().join("\n").into(),
+                                urls.iter()
+                                    .take(5)
+                                    .cloned()
+                                    .collect::<Vec<_>>()
+                                    .join("\n")
+                                    .into(),
                             ),
                         })
                         .tag("discovery")
-                        .tag("sitemap"), &mut findings);
+                        .tag("sitemap"),
+                        &mut findings,
+                    );
 
                     if !interesting.is_empty() {
-                        gossan_core::try_push_finding(crate::file_finding(
+                        gossan_core::try_push_finding(
+                            crate::file_finding(
                                 target,
                                 Severity::Low,
                                 format!(
@@ -86,7 +95,9 @@ pub async fn probe(client: &reqwest::Client, target: &Target) -> anyhow::Result<
                             })
                             .tag("discovery")
                             .tag("sitemap")
-                            .tag("exposure"), &mut findings);
+                            .tag("exposure"),
+                            &mut findings,
+                        );
                     }
 
                     break;

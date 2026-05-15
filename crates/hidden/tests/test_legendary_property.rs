@@ -1,9 +1,9 @@
-use proptest::prelude::*;
 use gossan_core::{Target, WebAssetTarget};
+use gossan_hidden::cors;
+use proptest::prelude::*;
 use reqwest::{Client, Url};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
-use gossan_hidden::cors;
 
 fn create_mock_target(url: &str) -> Target {
     Target::Web(Box::new(WebAssetTarget {
@@ -40,7 +40,7 @@ proptest! {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let server = MockServer::start().await;
-            
+
             Mock::given(method("GET"))
                 .and(path("/"))
                 .respond_with(
@@ -55,7 +55,7 @@ proptest! {
             let target = create_mock_target(&server.uri());
 
             let result = cors::probe(&client, &target).await;
-            
+
             // Invariant: it should never panic and should always return Ok
             assert!(result.is_ok());
         });

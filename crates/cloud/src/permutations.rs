@@ -51,11 +51,7 @@ fn builtin_permutations() -> &'static PermutationConfig {
                         ],
                     },
                     prefixes: StringList {
-                        values: vec![
-                            "".to_string(),
-                            "assets-".to_string(),
-                            "dev-".to_string(),
-                        ],
+                        values: vec!["".to_string(), "assets-".to_string(), "dev-".to_string()],
                     },
                     transforms: Transforms {
                         dot_to_hyphen: true,
@@ -132,37 +128,70 @@ mod tests {
     #[test]
     fn permutations_load_from_toml() {
         let config = builtin_permutations();
-        assert!(!config.suffixes.values.is_empty(), "should have suffixes from TOML");
-        assert!(!config.prefixes.values.is_empty(), "should have prefixes from TOML");
+        assert!(
+            !config.suffixes.values.is_empty(),
+            "should have suffixes from TOML"
+        );
+        assert!(
+            !config.prefixes.values.is_empty(),
+            "should have prefixes from TOML"
+        );
     }
 
     #[test]
     fn permutations_include_expected_suffixes() {
         let config = builtin_permutations();
         let suffixes = &config.suffixes.values;
-        
+
         // Check for common suffixes
-        assert!(suffixes.contains(&"".to_string()), "should include empty suffix");
-        assert!(suffixes.contains(&"-assets".to_string()), "should include -assets");
-        assert!(suffixes.contains(&"-prod".to_string()), "should include -prod");
-        assert!(suffixes.contains(&"-backup".to_string()), "should include -backup");
+        assert!(
+            suffixes.contains(&"".to_string()),
+            "should include empty suffix"
+        );
+        assert!(
+            suffixes.contains(&"-assets".to_string()),
+            "should include -assets"
+        );
+        assert!(
+            suffixes.contains(&"-prod".to_string()),
+            "should include -prod"
+        );
+        assert!(
+            suffixes.contains(&"-backup".to_string()),
+            "should include -backup"
+        );
     }
 
     #[test]
     fn permutations_include_expected_prefixes() {
         let config = builtin_permutations();
         let prefixes = &config.prefixes.values;
-        
+
         // Check for common prefixes
-        assert!(prefixes.contains(&"".to_string()), "should include empty prefix");
-        assert!(prefixes.contains(&"assets-".to_string()), "should include assets-");
-        assert!(prefixes.contains(&"dev-".to_string()), "should include dev-");
+        assert!(
+            prefixes.contains(&"".to_string()),
+            "should include empty prefix"
+        );
+        assert!(
+            prefixes.contains(&"assets-".to_string()),
+            "should include assets-"
+        );
+        assert!(
+            prefixes.contains(&"dev-".to_string()),
+            "should include dev-"
+        );
     }
 
     #[test]
     fn transforms_are_enabled() {
         let config = builtin_permutations();
-        assert!(config.transforms.dot_to_hyphen, "dot_to_hyphen should be enabled");
-        assert!(config.transforms.hyphen_to_dot, "hyphen_to_dot should be enabled");
+        assert!(
+            config.transforms.dot_to_hyphen,
+            "dot_to_hyphen should be enabled"
+        );
+        assert!(
+            config.transforms.hyphen_to_dot,
+            "hyphen_to_dot should be enabled"
+        );
     }
 }

@@ -33,9 +33,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 use std::time::Instant;
 
-use gossan_core::{
-    Config, DiscoverySource, HostTarget, PortMode, ScanInput, Scanner, Target,
-};
+use gossan_core::{Config, DiscoverySource, HostTarget, PortMode, ScanInput, Scanner, Target};
 use tokio::sync::{mpsc, Mutex};
 
 /// Build a minimal `ScanInput` that funnels a single Host target into
@@ -53,8 +51,7 @@ fn make_scan_input(target: Target, seed: String) -> ScanInput {
         live_tx,
         target_tx: downstream_tx,
         resolver: Arc::new(
-            hickory_resolver::AsyncResolver::tokio_from_system_conf()
-                .expect("system DNS config"),
+            hickory_resolver::AsyncResolver::tokio_from_system_conf().expect("system DNS config"),
         ),
     }
 }

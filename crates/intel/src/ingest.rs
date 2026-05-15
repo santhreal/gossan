@@ -1,10 +1,10 @@
 //! Bulk data ingestion from external sources into the intel database.
 
+use crate::db::{IntelDb, IntelRecord};
+use anyhow::Context;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
-use anyhow::Context;
-use crate::db::{IntelDb, IntelRecord};
 /// Bulk dataset ingester — imports Project Sonar, Censys, and crt.sh dumps.
 pub struct Ingester;
 

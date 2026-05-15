@@ -33,14 +33,10 @@ const EDGE_KINDS: &[EdgeType] = &[
 ];
 
 fn node_strategy() -> impl Strategy<Value = Node> {
-    (
-        "[a-z][a-z0-9_-]{0,31}",
-        any::<u8>(),
-    )
-        .prop_map(|(id, kind_idx)| {
-            let kind = NODE_KINDS[(kind_idx as usize) % NODE_KINDS.len()];
-            Node::new(id.clone(), kind, id)
-        })
+    ("[a-z][a-z0-9_-]{0,31}", any::<u8>()).prop_map(|(id, kind_idx)| {
+        let kind = NODE_KINDS[(kind_idx as usize) % NODE_KINDS.len()];
+        Node::new(id.clone(), kind, id)
+    })
 }
 
 fn edge_strategy() -> impl Strategy<Value = Edge> {

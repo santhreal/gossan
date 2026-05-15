@@ -11,8 +11,15 @@ use gossan_core::Target;
 use secfinding::{Finding, FindingKind, Severity};
 
 const DEBUG_SIGNALS: &[&str] = &[
-    "actuator", "debug", "phpinfo", "profiler", "diagnostics",
-    "swagger", "graphql introspection", "stack trace", "verbose error",
+    "actuator",
+    "debug",
+    "phpinfo",
+    "profiler",
+    "diagnostics",
+    "swagger",
+    "graphql introspection",
+    "stack trace",
+    "verbose error",
 ];
 
 pub struct DebugRceRule;

@@ -21,7 +21,13 @@ pub struct ResponseBaseline {
 
 impl ResponseBaseline {
     /// Returns a similarity score (0.0 to 1.0) between this baseline and a new response.
-    pub fn similarity(&self, length: usize, headers: &HashMap<String, String>, fuzzy_hash: u64, dom: &str) -> f64 {
+    pub fn similarity(
+        &self,
+        length: usize,
+        headers: &HashMap<String, String>,
+        fuzzy_hash: u64,
+        dom: &str,
+    ) -> f64 {
         let mut score = 0.0;
         let mut weights = 0.0;
 
@@ -36,7 +42,9 @@ impl ResponseBaseline {
         let mut header_matches = 0;
         for (k, v) in &self.headers {
             if let Some(val) = headers.get(k) {
-                if val == v { header_matches += 1; }
+                if val == v {
+                    header_matches += 1;
+                }
             }
         }
         if !self.headers.is_empty() {
@@ -59,7 +67,13 @@ impl ResponseBaseline {
     }
 
     /// Determines if a response is a "Mirror" (True) or a "Signal" (False).
-    pub fn is_mirror(&self, length: usize, headers: &HashMap<String, String>, fuzzy_hash: u64, dom: &str) -> bool {
+    pub fn is_mirror(
+        &self,
+        length: usize,
+        headers: &HashMap<String, String>,
+        fuzzy_hash: u64,
+        dom: &str,
+    ) -> bool {
         self.similarity(length, headers, fuzzy_hash, dom) > 0.85
     }
 }

@@ -36,10 +36,7 @@ pub fn is_cdn_ip(ip: IpAddr, ranges: &[ipnet::IpNet]) -> bool {
 /// — gossan-portscan already depends on hickory transitively via
 /// gossan-core, so we take the resolver directly rather than
 /// re-exporting it.
-pub async fn ptr_heuristic(
-    resolver: &hickory_resolver::TokioAsyncResolver,
-    ip: IpAddr,
-) -> bool {
+pub async fn ptr_heuristic(resolver: &hickory_resolver::TokioAsyncResolver, ip: IpAddr) -> bool {
     let Ok(name) = resolver.reverse_lookup(ip).await else {
         return false;
     };

@@ -66,8 +66,11 @@ impl reqwest::dns::Resolve for HickoryResolver {
                 .lookup_ip(name.as_str())
                 .await
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
-            let addrs: Box<dyn Iterator<Item = std::net::SocketAddr> + Send> =
-                Box::new(lookup.into_iter().map(|ip| std::net::SocketAddr::new(ip, 0)));
+            let addrs: Box<dyn Iterator<Item = std::net::SocketAddr> + Send> = Box::new(
+                lookup
+                    .into_iter()
+                    .map(|ip| std::net::SocketAddr::new(ip, 0)),
+            );
             Ok(addrs)
         })
     }
@@ -80,10 +83,7 @@ impl ScanClient {
     ///
     /// Returns an error if the underlying reqwest client cannot be constructed
     /// (e.g. invalid proxy URL).
-    pub fn from_config(
-        config: &Config,
-        resolver: Arc<TokioAsyncResolver>,
-    ) -> anyhow::Result<Self> {
+    pub fn from_config(config: &Config, resolver: Arc<TokioAsyncResolver>) -> anyhow::Result<Self> {
         let mut headers = reqwest::header::HeaderMap::new();
         if let Some(cookie_val) = &config.cookie {
             if let Ok(hv) = reqwest::header::HeaderValue::from_str(cookie_val) {
@@ -228,16 +228,9 @@ impl ScanClient {
     /// Send a request built via the `reqwest::RequestBuilder` API.
     ///
     /// Rate limiting and backoff are still applied.
-    pub async fn execute(
-        &self,
-        request: reqwest::Request,
-    ) -> anyhow::Result<reqwest::Response> {
+    pub async fn execute(&self, request: reqwest::Request) -> anyhow::Result<reqwest::Response> {
         let url = request.url().as_str().to_string();
-        let host = request
-            .url()
-            .host_str()
-            .unwrap_or("")
-            .to_string();
+        let host = request.url().host_str().unwrap_or("").to_string();
         self.rate_limiter.until_ready(&host).await;
         let resp = self.http.execute(request).await?;
         if resp.status().as_u16() == 429 {
@@ -291,13 +284,23 @@ impl ScanClient {
             match send().await {
                 Ok(resp) if resp.status().as_u16() == 429 => {
                     let delay = Duration::from_millis(500 * 2u64.pow(attempt));
-                    tracing::debug!(url, attempt, delay_ms = delay.as_millis(), "429 — backing off");
+                    tracing::debug!(
+                        url,
+                        attempt,
+                        delay_ms = delay.as_millis(),
+                        "429 — backing off"
+                    );
                     tokio::time::sleep(delay).await;
                 }
                 Ok(resp) => return Ok(resp),
                 Err(e) if attempt + 1 < MAX_RETRIES && e.is_timeout() => {
                     let delay = Duration::from_millis(200 * 2u64.pow(attempt));
-                    tracing::debug!(url, attempt, "timeout — retrying in {}ms", delay.as_millis());
+                    tracing::debug!(
+                        url,
+                        attempt,
+                        "timeout — retrying in {}ms",
+                        delay.as_millis()
+                    );
                     tokio::time::sleep(delay).await;
                 }
                 Err(e) => return Err(e.into()),

@@ -14,7 +14,7 @@
 
 use gossan_core::Target;
 use hickory_resolver::TokioAsyncResolver;
-use secfinding::{Evidence, Finding, FindingBuilder, Severity, FindingKind};
+use secfinding::{Evidence, Finding, FindingBuilder, FindingKind, Severity};
 use serde::Deserialize;
 use std::sync::OnceLock;
 
@@ -75,18 +75,19 @@ fn dkim_selector_names() -> &'static [DkimSelector] {
 /// Maximum SPF `include:` recursion depth before declaring permerror.
 const MAX_SPF_INCLUDES: usize = 10;
 
-fn fb(target: &Target, severity: Severity, title: impl Into<String>, detail: impl Into<String>) -> FindingBuilder {
+fn fb(
+    target: &Target,
+    severity: Severity,
+    title: impl Into<String>,
+    detail: impl Into<String>,
+) -> FindingBuilder {
     Finding::builder("dns", target.domain().unwrap_or("?"), severity)
         .title(title)
         .detail(detail)
 }
 
 /// Run all email authentication checks against a domain.
-pub async fn check(
-    resolver: &TokioAsyncResolver,
-    domain: &str,
-    target: &Target,
-) -> Vec<Finding> {
+pub async fn check(resolver: &TokioAsyncResolver, domain: &str, target: &Target) -> Vec<Finding> {
     let mut findings = Vec::new();
     findings.extend(check_spf(resolver, domain, target).await);
     findings.extend(check_dmarc(resolver, domain, target).await);
@@ -97,11 +98,7 @@ pub async fn check(
 // ── SPF ─────────────────────────────────────────────────────────────────────
 
 /// SPF analysis with recursive `include:` resolution and lookup counting.
-async fn check_spf(
-    resolver: &TokioAsyncResolver,
-    domain: &str,
-    target: &Target,
-) -> Vec<Finding> {
+async fn check_spf(resolver: &TokioAsyncResolver, domain: &str, target: &Target) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     let records = match lookup_txt(resolver, domain).await {
@@ -112,36 +109,76 @@ async fn check_spf(
     let spf_rec = match records.iter().find(|r| r.starts_with("v=spf1")) {
         Some(rec) => rec.clone(),
         None => {
-            gossan_core::try_push_finding(fb(target, Severity::Medium, "No SPF record",
-                   format!("{domain} has no SPF record — email spoofing is possible."))
+            gossan_core::try_push_finding(
+                fb(
+                    target,
+                    Severity::Medium,
+                    "No SPF record",
+                    format!("{domain} has no SPF record — email spoofing is possible."),
+                )
                 .kind(FindingKind::Misconfiguration)
-                .tag("email-security").tag("spf"), &mut findings);
+                .tag("email-security")
+                .tag("spf"),
+                &mut findings,
+            );
             return findings;
         }
     };
 
     // Check terminal mechanism
     if spf_rec.contains("+all") {
-        gossan_core::try_push_finding(fb(target, Severity::High, "SPF allows all senders (+all)",
-               format!("{domain} SPF has +all — any server can send as this domain."))
-            .tag("email-security").tag("spf")
-            .evidence(Evidence::DnsRecord { record_type: "TXT".into(), value: spf_rec.clone().into() }), &mut findings);
+        gossan_core::try_push_finding(
+            fb(
+                target,
+                Severity::High,
+                "SPF allows all senders (+all)",
+                format!("{domain} SPF has +all — any server can send as this domain."),
+            )
+            .tag("email-security")
+            .tag("spf")
+            .evidence(Evidence::DnsRecord {
+                record_type: "TXT".into(),
+                value: spf_rec.clone().into(),
+            }),
+            &mut findings,
+        );
     } else if spf_rec.contains("~all") {
-        gossan_core::try_push_finding(fb(target, Severity::Low, "SPF softfail (~all) — not enforced",
-               format!("{domain} uses ~all — emails failing SPF are still delivered."))
-            .tag("email-security").tag("spf"), &mut findings);
+        gossan_core::try_push_finding(
+            fb(
+                target,
+                Severity::Low,
+                "SPF softfail (~all) — not enforced",
+                format!("{domain} uses ~all — emails failing SPF are still delivered."),
+            )
+            .tag("email-security")
+            .tag("spf"),
+            &mut findings,
+        );
     }
 
     // Recursive include resolution — count total lookups
     let lookup_count = count_spf_lookups(resolver, &spf_rec, 0).await;
     if lookup_count > MAX_SPF_INCLUDES {
-        gossan_core::try_push_finding(fb(target, Severity::Medium,
-               format!("SPF exceeds 10-lookup limit ({lookup_count} lookups)"),
-               format!("{domain} SPF record requires {lookup_count} DNS lookups — \
+        gossan_core::try_push_finding(
+            fb(
+                target,
+                Severity::Medium,
+                format!("SPF exceeds 10-lookup limit ({lookup_count} lookups)"),
+                format!(
+                    "{domain} SPF record requires {lookup_count} DNS lookups — \
                         exceeding RFC 7208 §4.6.4 limit of 10. Mail receivers will \
-                        return permerror, effectively disabling SPF protection."))
-            .tag("email-security").tag("spf").tag("permerror")
-            .evidence(Evidence::DnsRecord { record_type: "TXT".into(), value: spf_rec.clone().into() }), &mut findings);
+                        return permerror, effectively disabling SPF protection."
+                ),
+            )
+            .tag("email-security")
+            .tag("spf")
+            .tag("permerror")
+            .evidence(Evidence::DnsRecord {
+                record_type: "TXT".into(),
+                value: spf_rec.clone().into(),
+            }),
+            &mut findings,
+        );
     }
 
     findings
@@ -152,18 +189,15 @@ async fn check_spf(
 /// Each `include:`, `a:`, `mx:`, `ptr:`, `exists:`, and `redirect=` mechanism
 /// costs one lookup. `include:` is followed recursively.
 /// Returns total lookup count across the full include chain.
-async fn count_spf_lookups(
-    resolver: &TokioAsyncResolver,
-    spf_record: &str,
-    depth: usize,
-) -> usize {
+async fn count_spf_lookups(resolver: &TokioAsyncResolver, spf_record: &str, depth: usize) -> usize {
     if depth > 12 {
         return 100; // circular reference protection
     }
 
     let mut count = 0;
     for token in spf_record.split_whitespace() {
-        let mechanism = token.trim_start_matches('+')
+        let mechanism = token
+            .trim_start_matches('+')
             .trim_start_matches('-')
             .trim_start_matches('~')
             .trim_start_matches('?');
@@ -176,8 +210,11 @@ async fn count_spf_lookups(
                     count += Box::pin(count_spf_lookups(resolver, child_spf, depth + 1)).await;
                 }
             }
-        } else if mechanism.starts_with("a:") || mechanism.starts_with("a/") || mechanism == "a"
-            || mechanism.starts_with("mx:") || mechanism.starts_with("mx/")
+        } else if mechanism.starts_with("a:")
+            || mechanism.starts_with("a/")
+            || mechanism == "a"
+            || mechanism.starts_with("mx:")
+            || mechanism.starts_with("mx/")
             || mechanism == "mx"
             || mechanism.starts_with("ptr")
             || mechanism.starts_with("exists:")
@@ -275,11 +312,7 @@ pub fn parse_dmarc(record: &str) -> Option<DmarcRecord> {
 }
 
 /// DMARC policy analysis: presence, enforcement level, subdomain policy, report URIs.
-async fn check_dmarc(
-    resolver: &TokioAsyncResolver,
-    domain: &str,
-    target: &Target,
-) -> Vec<Finding> {
+async fn check_dmarc(resolver: &TokioAsyncResolver, domain: &str, target: &Target) -> Vec<Finding> {
     let mut findings = Vec::new();
     let dmarc_domain = format!("_dmarc.{domain}");
 
@@ -296,38 +329,81 @@ async fn check_dmarc(
     let rec = match records.iter().find(|r| r.starts_with("v=DMARC1")) {
         Some(r) => r.clone(),
         None => {
-            gossan_core::try_push_finding(fb(target, Severity::Medium, "No DMARC record",
-                   format!("{domain} has no DMARC record."))
-                .tag("email-security").tag("dmarc"), &mut findings);
+            gossan_core::try_push_finding(
+                fb(
+                    target,
+                    Severity::Medium,
+                    "No DMARC record",
+                    format!("{domain} has no DMARC record."),
+                )
+                .tag("email-security")
+                .tag("dmarc"),
+                &mut findings,
+            );
             return findings;
         }
     };
 
     // Policy strength
     if rec.contains("p=none") {
-        gossan_core::try_push_finding(fb(target, Severity::Low, "DMARC policy is p=none (monitor only)",
-               format!("{domain} DMARC does not reject or quarantine — unenforced."))
-            .tag("email-security").tag("dmarc"), &mut findings);
+        gossan_core::try_push_finding(
+            fb(
+                target,
+                Severity::Low,
+                "DMARC policy is p=none (monitor only)",
+                format!("{domain} DMARC does not reject or quarantine — unenforced."),
+            )
+            .tag("email-security")
+            .tag("dmarc"),
+            &mut findings,
+        );
     } else if rec.contains("p=quarantine") {
-        gossan_core::try_push_finding(fb(target, Severity::Info, "DMARC policy is p=quarantine",
-               format!("{domain} DMARC quarantines but does not outright reject spoofed emails."))
-            .tag("email-security").tag("dmarc"), &mut findings);
+        gossan_core::try_push_finding(
+            fb(
+                target,
+                Severity::Info,
+                "DMARC policy is p=quarantine",
+                format!("{domain} DMARC quarantines but does not outright reject spoofed emails."),
+            )
+            .tag("email-security")
+            .tag("dmarc"),
+            &mut findings,
+        );
     }
 
     // Subdomain policy
     if !rec.contains("sp=reject") && !rec.contains("p=none") {
-        gossan_core::try_push_finding(fb(target, Severity::Low, "DMARC missing sp=reject (subdomain spoofing risk)",
-               format!("{domain} DMARC lacks sp=reject — unconfigured subdomains are spoofable."))
-            .tag("email-security").tag("dmarc"), &mut findings);
+        gossan_core::try_push_finding(
+            fb(
+                target,
+                Severity::Low,
+                "DMARC missing sp=reject (subdomain spoofing risk)",
+                format!("{domain} DMARC lacks sp=reject — unconfigured subdomains are spoofable."),
+            )
+            .tag("email-security")
+            .tag("dmarc"),
+            &mut findings,
+        );
     }
 
     // Report URI disclosure
     if let Some(part) = rec.split(';').find(|p| p.trim().starts_with("rua=")) {
         let addr = part.trim().trim_start_matches("rua=");
-        gossan_core::try_push_finding(fb(target, Severity::Info, "DMARC aggregate report recipient",
-               format!("{domain} aggregate DMARC reports go to: {addr}"))
-            .evidence(Evidence::DnsRecord { record_type: "TXT".into(), value: rec.clone().into() })
-            .tag("email-security").tag("disclosure"), &mut findings);
+        gossan_core::try_push_finding(
+            fb(
+                target,
+                Severity::Info,
+                "DMARC aggregate report recipient",
+                format!("{domain} aggregate DMARC reports go to: {addr}"),
+            )
+            .evidence(Evidence::DnsRecord {
+                record_type: "TXT".into(),
+                value: rec.clone().into(),
+            })
+            .tag("email-security")
+            .tag("disclosure"),
+            &mut findings,
+        );
     }
 
     findings
@@ -336,35 +412,56 @@ async fn check_dmarc(
 // ── DKIM ────────────────────────────────────────────────────────────────────
 
 /// Probe common DKIM selectors loaded from TOML to discover email signing infrastructure.
-async fn check_dkim(
-    resolver: &TokioAsyncResolver,
-    domain: &str,
-    target: &Target,
-) -> Vec<Finding> {
+async fn check_dkim(resolver: &TokioAsyncResolver, domain: &str, target: &Target) -> Vec<Finding> {
     let mut findings = Vec::new();
     let mut dkim_found = false;
 
     for selector in dkim_selector_names() {
         let dkim_name = format!("{}._domainkey.{domain}", selector.name);
         if let Ok(records) = lookup_txt(resolver, &dkim_name).await {
-            if records.iter().any(|r| r.contains("v=DKIM1") || r.contains("p=")) {
+            if records
+                .iter()
+                .any(|r| r.contains("v=DKIM1") || r.contains("p="))
+            {
                 dkim_found = true;
-                gossan_core::try_push_finding(fb(target, Severity::Info, format!("DKIM selector active: {}", selector.name),
-                       format!("{domain} DKIM selector '{}' resolves — email signing configured.", selector.name))
+                gossan_core::try_push_finding(
+                    fb(
+                        target,
+                        Severity::Info,
+                        format!("DKIM selector active: {}", selector.name),
+                        format!(
+                            "{domain} DKIM selector '{}' resolves — email signing configured.",
+                            selector.name
+                        ),
+                    )
                     .evidence(Evidence::DnsRecord {
                         record_type: "TXT".into(),
                         value: records.first().cloned().unwrap_or_default().into(),
                     })
-                    .tag("email-security").tag("dkim"), &mut findings);
+                    .tag("email-security")
+                    .tag("dkim"),
+                    &mut findings,
+                );
                 break; // one active selector is sufficient confirmation
             }
         }
     }
 
     if !dkim_found {
-        gossan_core::try_push_finding(fb(target, Severity::Low, "No DKIM record found",
-               format!("{domain} — none of {} common DKIM selectors resolved.", dkim_selector_names().len()))
-            .tag("email-security").tag("dkim"), &mut findings);
+        gossan_core::try_push_finding(
+            fb(
+                target,
+                Severity::Low,
+                "No DKIM record found",
+                format!(
+                    "{domain} — none of {} common DKIM selectors resolved.",
+                    dkim_selector_names().len()
+                ),
+            )
+            .tag("email-security")
+            .tag("dkim"),
+            &mut findings,
+        );
     }
 
     findings
@@ -377,7 +474,10 @@ mod tests {
     #[test]
     fn dkim_selectors_load_from_toml() {
         let selectors = dkim_selector_names();
-        assert!(!selectors.is_empty(), "should have DKIM selectors from TOML");
+        assert!(
+            !selectors.is_empty(),
+            "should have DKIM selectors from TOML"
+        );
         assert!(
             selectors.iter().any(|s| s.name == "google"),
             "should include google selector"
@@ -386,9 +486,16 @@ mod tests {
 
     #[test]
     fn dkim_selectors_include_major_providers() {
-        let names: Vec<_> = dkim_selector_names().iter().map(|s| s.name.clone()).collect();
+        let names: Vec<_> = dkim_selector_names()
+            .iter()
+            .map(|s| s.name.clone())
+            .collect();
         for expected in ["default", "google", "mailchimp", "sendgrid", "postmark"] {
-            assert!(names.contains(&expected.to_string()), "missing selector: {}", expected);
+            assert!(
+                names.contains(&expected.to_string()),
+                "missing selector: {}",
+                expected
+            );
         }
     }
 
@@ -469,10 +576,12 @@ mod tests {
 
     #[test]
     fn max_spf_includes_matches_rfc() {
-        assert_eq!(MAX_SPF_INCLUDES, 10, "RFC 7208 §4.6.4 mandates 10-lookup limit");
+        assert_eq!(
+            MAX_SPF_INCLUDES, 10,
+            "RFC 7208 §4.6.4 mandates 10-lookup limit"
+        );
     }
 }
-
 
 /// Parse SPF records to discover third-party services and mail infrastructure.
 ///

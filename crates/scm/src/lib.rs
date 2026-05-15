@@ -13,7 +13,7 @@
 #![allow(
     clippy::module_name_repetitions,
     clippy::must_use_candidate,
-    clippy::missing_errors_doc,
+    clippy::missing_errors_doc
 )]
 
 //! Source code management discovery — GitHub/GitLab organization mapping.
@@ -21,13 +21,12 @@
 //! Discovers repositories, scans for secrets, and identifies dependency
 //! manifests for supply-chain analysis.
 
-
 use async_trait::async_trait;
 use gossan_core::{Config, ScanInput, Scanner, Target};
 
+pub mod git_scanner;
 pub mod github;
 pub mod gitlab_api; // named to avoid conflict with crate name
-pub mod git_scanner;
 /// Source control mapping — discovers GitHub/GitLab organizations and repos.
 pub struct ScmScanner;
 

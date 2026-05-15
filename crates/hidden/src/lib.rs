@@ -13,7 +13,7 @@
 #![allow(
     clippy::module_name_repetitions,
     clippy::must_use_candidate,
-    clippy::missing_errors_doc,
+    clippy::missing_errors_doc
 )]
 
 //! Hidden endpoint/file probe scanner.
@@ -189,7 +189,13 @@ pub(crate) fn vulnerability_finding(
     title: impl Into<String>,
     detail: impl Into<String>,
 ) -> FindingBuilder {
-    finding_builder_typed(target, severity, secfinding::FindingKind::Vulnerability, title, detail)
+    finding_builder_typed(
+        target,
+        severity,
+        secfinding::FindingKind::Vulnerability,
+        title,
+        detail,
+    )
 }
 
 /// Misconfiguration finding (CORS, CSP, headers).
@@ -199,7 +205,13 @@ pub(crate) fn misconfig_finding(
     title: impl Into<String>,
     detail: impl Into<String>,
 ) -> FindingBuilder {
-    finding_builder_typed(target, severity, secfinding::FindingKind::Misconfiguration, title, detail)
+    finding_builder_typed(
+        target,
+        severity,
+        secfinding::FindingKind::Misconfiguration,
+        title,
+        detail,
+    )
 }
 
 /// Exposure finding (open endpoints, admin panels).
@@ -209,7 +221,13 @@ pub(crate) fn exposure_finding(
     title: impl Into<String>,
     detail: impl Into<String>,
 ) -> FindingBuilder {
-    finding_builder_typed(target, severity, secfinding::FindingKind::Exposure, title, detail)
+    finding_builder_typed(
+        target,
+        severity,
+        secfinding::FindingKind::Exposure,
+        title,
+        detail,
+    )
 }
 
 /// File discovery finding (backup files, .git, .env).
@@ -219,7 +237,13 @@ pub(crate) fn file_finding(
     title: impl Into<String>,
     detail: impl Into<String>,
 ) -> FindingBuilder {
-    finding_builder_typed(target, severity, secfinding::FindingKind::FileDiscovery, title, detail)
+    finding_builder_typed(
+        target,
+        severity,
+        secfinding::FindingKind::FileDiscovery,
+        title,
+        detail,
+    )
 }
 
 /// Info disclosure finding (stack traces, server versions).
@@ -229,7 +253,13 @@ pub(crate) fn info_finding(
     title: impl Into<String>,
     detail: impl Into<String>,
 ) -> FindingBuilder {
-    finding_builder_typed(target, severity, secfinding::FindingKind::InfoDisclosure, title, detail)
+    finding_builder_typed(
+        target,
+        severity,
+        secfinding::FindingKind::InfoDisclosure,
+        title,
+        detail,
+    )
 }
 
 /// Tech detect finding (framework/language fingerprint).
@@ -238,7 +268,13 @@ pub(crate) fn tech_finding(
     title: impl Into<String>,
     detail: impl Into<String>,
 ) -> FindingBuilder {
-    finding_builder_typed(target, Severity::Info, secfinding::FindingKind::TechDetect, title, detail)
+    finding_builder_typed(
+        target,
+        Severity::Info,
+        secfinding::FindingKind::TechDetect,
+        title,
+        detail,
+    )
 }
 
 /// Supply chain finding (dependency confusion, typosquat).
@@ -248,7 +284,13 @@ pub(crate) fn supply_chain_finding(
     title: impl Into<String>,
     detail: impl Into<String>,
 ) -> FindingBuilder {
-    finding_builder_typed(target, severity, secfinding::FindingKind::SupplyChain, title, detail)
+    finding_builder_typed(
+        target,
+        severity,
+        secfinding::FindingKind::SupplyChain,
+        title,
+        detail,
+    )
 }
 
 /// Secret leak finding (exposed API keys, tokens).
@@ -258,7 +300,13 @@ pub(crate) fn secret_finding(
     title: impl Into<String>,
     detail: impl Into<String>,
 ) -> FindingBuilder {
-    finding_builder_typed(target, severity, secfinding::FindingKind::SecretLeak, title, detail)
+    finding_builder_typed(
+        target,
+        severity,
+        secfinding::FindingKind::SecretLeak,
+        title,
+        detail,
+    )
 }
 
 /// Build a finding from a FindingBuilder and push it into the provided findings
@@ -284,7 +332,8 @@ impl Scanner for HiddenScanner {
     }
 
     async fn run(&self, input: ScanInput, config: &Config) -> anyhow::Result<()> {
-        let client_no_redir = ScanClient::from_config_no_redirect(config, Arc::clone(&input.resolver))?;
+        let client_no_redir =
+            ScanClient::from_config_no_redirect(config, Arc::clone(&input.resolver))?;
         let client_follow = ScanClient::from_config(config, Arc::clone(&input.resolver))?;
         let rate_limiter = Arc::new(HostRateLimiter::new(config.host_delay_ms));
 
@@ -456,7 +505,10 @@ mod tests {
         limiter.wait_for_host("example.com").await;
         let second = Instant::now();
         let elapsed = second.duration_since(first);
-        assert!(elapsed >= Duration::from_millis(100), "Rate limiter did not enforce delay");
+        assert!(
+            elapsed >= Duration::from_millis(100),
+            "Rate limiter did not enforce delay"
+        );
 
         let third_start = Instant::now();
         limiter.wait_for_host("other.com").await;

@@ -17,8 +17,8 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::Duration;
 
-use hickory_resolver::TokioAsyncResolver;
 use governor::{DefaultDirectRateLimiter, Quota, RateLimiter};
+use hickory_resolver::TokioAsyncResolver;
 use tokio::sync::RwLock;
 
 use crate::Config;
@@ -104,8 +104,8 @@ pub fn build_client(
 
     // Optional proxy
     if let Some(proxy_url) = &config.proxy {
-        let proxy = reqwest::Proxy::all(proxy_url)
-            .map_err(|e| anyhow::anyhow!("invalid proxy: {e}"))?;
+        let proxy =
+            reqwest::Proxy::all(proxy_url).map_err(|e| anyhow::anyhow!("invalid proxy: {e}"))?;
         builder = builder.proxy(proxy);
     }
 
@@ -115,13 +115,29 @@ pub fn build_client(
 struct HickoryResolver(Arc<TokioAsyncResolver>);
 
 impl reqwest::dns::Resolve for HickoryResolver {
-    fn resolve(&self, name: reqwest::dns::Name) -> std::pin::Pin<Box<dyn std::future::Future<Output = std::result::Result<Box<dyn Iterator<Item = std::net::SocketAddr> + Send>, Box<dyn std::error::Error + Send + Sync>>> + Send>> {
+    fn resolve(
+        &self,
+        name: reqwest::dns::Name,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = std::result::Result<
+                        Box<dyn Iterator<Item = std::net::SocketAddr> + Send>,
+                        Box<dyn std::error::Error + Send + Sync>,
+                    >,
+                > + Send,
+        >,
+    > {
         let resolver = Arc::clone(&self.0);
         Box::pin(async move {
-            let lookup = resolver.lookup_ip(name.as_str()).await
+            let lookup = resolver
+                .lookup_ip(name.as_str())
+                .await
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
             let addrs: Box<dyn Iterator<Item = std::net::SocketAddr> + Send> = Box::new(
-                lookup.into_iter().map(|ip| std::net::SocketAddr::new(ip, 0))
+                lookup
+                    .into_iter()
+                    .map(|ip| std::net::SocketAddr::new(ip, 0)),
             );
             Ok(addrs)
         })
@@ -148,17 +164,24 @@ pub async fn get_with_backoff(
 use futures::StreamExt;
 
 /// Reads the entire response body while enforcing a size limit.
-/// 
+///
 /// If the body exceeds `max_size`, returns an error and stops reading.
 /// This is the 'Response Bomb Shield' designed to prevent OOM from malicious servers.
-pub async fn read_response_limited(resp: reqwest::Response, max_size: usize) -> anyhow::Result<Vec<u8>> {
+pub async fn read_response_limited(
+    resp: reqwest::Response,
+    max_size: usize,
+) -> anyhow::Result<Vec<u8>> {
     let mut body = Vec::new();
     let mut total_read = 0;
 
     // Check Content-Length header first if available
     if let Some(cl) = resp.content_length() {
         if cl > max_size as u64 {
-            anyhow::bail!("Response body exceeds max size (header check): {} > {}", cl, max_size);
+            anyhow::bail!(
+                "Response body exceeds max size (header check): {} > {}",
+                cl,
+                max_size
+            );
         }
     }
 
@@ -167,7 +190,11 @@ pub async fn read_response_limited(resp: reqwest::Response, max_size: usize) -> 
         let chunk = chunk_res?;
         total_read += chunk.len();
         if total_read > max_size {
-            anyhow::bail!("Response body exceeds max size (stream check): {} > {}", total_read, max_size);
+            anyhow::bail!(
+                "Response body exceeds max size (stream check): {} > {}",
+                total_read,
+                max_size
+            );
         }
         body.extend_from_slice(&chunk);
     }

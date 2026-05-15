@@ -3,19 +3,19 @@
 #[cfg(feature = "cloud")]
 use aws_config::{BehaviorVersion, SdkConfig};
 #[cfg(feature = "cloud")]
-use aws_sdk_s3::Client as S3Client;
-#[cfg(feature = "cloud")]
 use aws_sdk_ec2::Client as Ec2Client;
-#[cfg(feature = "cloud")]
-use aws_sdk_route53::Client as Route53Client;
 #[cfg(feature = "cloud")]
 use aws_sdk_rds::Client as RdsClient;
 #[cfg(feature = "cloud")]
-use gossan_core::{ScanInput, Target, DomainTarget, HostTarget, DiscoverySource};
+use aws_sdk_route53::Client as Route53Client;
+#[cfg(feature = "cloud")]
+use aws_sdk_s3::Client as S3Client;
+#[cfg(feature = "cloud")]
+use gossan_core::{DiscoverySource, DomainTarget, HostTarget, ScanInput, Target};
 #[cfg(feature = "cloud")]
 use std::net::IpAddr;
 #[cfg(feature = "cloud")]
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 /// Perform "Inside-Out" discovery by querying the AWS API for unmapped
 /// assets. Uses the standard AWS credential chain (env vars,
@@ -61,10 +61,16 @@ pub async fn discover_aws_with_config(input: &ScanInput, config: &SdkConfig) -> 
                 Some(_) if e.to_string().contains("AccessDenied") => {
                     warn!("S3 list_buckets: Permission Denied. Skipping S3 inside-out discovery.");
                 }
-                Some(_) if e.to_string().contains("Throttling") || e.to_string().contains("Rate exceeded") => {
+                Some(_)
+                    if e.to_string().contains("Throttling")
+                        || e.to_string().contains("Rate exceeded") =>
+                {
                     error!("S3 list_buckets: Rate limited. AWS API is throttling requests.");
                 }
-                _ => warn!("S3 list_buckets failed: {}. credentials might be missing or invalid.", e),
+                _ => warn!(
+                    "S3 list_buckets failed: {}. credentials might be missing or invalid.",
+                    e
+                ),
             }
         }
     }
@@ -86,7 +92,7 @@ pub async fn discover_aws_with_config(input: &ScanInput, config: &SdkConfig) -> 
                         }
                     }
                     if let Some(ip) = instance.private_ip_address() {
-                         if let Ok(parsed_ip) = ip.parse::<IpAddr>() {
+                        if let Ok(parsed_ip) = ip.parse::<IpAddr>() {
                             let target = Target::Host(HostTarget {
                                 ip: parsed_ip,
                                 domain: instance.private_dns_name().map(String::from),
@@ -107,7 +113,12 @@ pub async fn discover_aws_with_config(input: &ScanInput, config: &SdkConfig) -> 
         Ok(resp) => {
             for zone in resp.hosted_zones() {
                 let id = zone.id();
-                match r53.list_resource_record_sets().hosted_zone_id(id).send().await {
+                match r53
+                    .list_resource_record_sets()
+                    .hosted_zone_id(id)
+                    .send()
+                    .await
+                {
                     Ok(records) => {
                         for record in records.resource_record_sets() {
                             let name = record.name();
@@ -119,7 +130,10 @@ pub async fn discover_aws_with_config(input: &ScanInput, config: &SdkConfig) -> 
                             input.emit_target(target);
                         }
                     }
-                    Err(e) => warn!("Route53 list_resource_record_sets for zone {} failed: {}", id, e),
+                    Err(e) => warn!(
+                        "Route53 list_resource_record_sets for zone {} failed: {}",
+                        id, e
+                    ),
                 }
             }
         }
@@ -133,12 +147,12 @@ pub async fn discover_aws_with_config(input: &ScanInput, config: &SdkConfig) -> 
             for db in resp.db_instances() {
                 if let Some(endpoint) = db.endpoint() {
                     if let Some(addr) = endpoint.address() {
-                         let target = Target::Domain(DomainTarget {
-                             domain: addr.to_string(),
-                             source: DiscoverySource::CloudDiscovery,
-                         });
-                         input.emit_target(target.clone());
-                         input.emit_target(target);
+                        let target = Target::Domain(DomainTarget {
+                            domain: addr.to_string(),
+                            source: DiscoverySource::CloudDiscovery,
+                        });
+                        input.emit_target(target.clone());
+                        input.emit_target(target);
                     }
                 }
             }
@@ -153,9 +167,9 @@ pub async fn discover_aws_with_config(input: &ScanInput, config: &SdkConfig) -> 
 mod tests {
     use super::*;
     use aws_sdk_s3::config::{Credentials, Region, SharedCredentialsProvider};
-    use tokio::sync::mpsc;
     use hickory_resolver::TokioAsyncResolver;
     use std::sync::Arc;
+    use tokio::sync::mpsc;
 
     fn mock_scan_input() -> (ScanInput, mpsc::UnboundedReceiver<Target>) {
         // Streaming-API ScanInput. The pre-streaming literal-struct
@@ -171,12 +185,10 @@ mod tests {
             target_rx: tokio::sync::Mutex::new(in_rx),
             live_tx,
             target_tx,
-            resolver: Arc::new(
-                TokioAsyncResolver::tokio(
-                    hickory_resolver::config::ResolverConfig::default(),
-                    hickory_resolver::config::ResolverOpts::default(),
-                ),
-            ),
+            resolver: Arc::new(TokioAsyncResolver::tokio(
+                hickory_resolver::config::ResolverConfig::default(),
+                hickory_resolver::config::ResolverOpts::default(),
+            )),
         };
         (input, rx)
     }
@@ -192,7 +204,7 @@ mod tests {
             // wrapper. `Credentials::for_tests()` still produces a
             // `Credentials`; wrap it explicitly.
             .credentials_provider(SharedCredentialsProvider::new(Credentials::for_tests()))
-            .behavior_version(BehaviorVersion::v2023_11_09())
+            .behavior_version(BehaviorVersion::latest())
             .endpoint_url("http://localhost:1") // Guaranteed to fail
             .build();
 
@@ -202,9 +214,15 @@ mod tests {
         // channel emission. We verify nothing was emitted by polling
         // the channel rx instead.
         let result = discover_aws_with_config(&input, &config).await;
-        assert!(result.is_ok(), "should not return error on API failures, just warn and continue");
+        assert!(
+            result.is_ok(),
+            "should not return error on API failures, just warn and continue"
+        );
 
-        assert!(rx.try_recv().is_err(), "no targets should reach the channel on a guaranteed-fail endpoint");
+        assert!(
+            rx.try_recv().is_err(),
+            "no targets should reach the channel on a guaranteed-fail endpoint"
+        );
     }
 
     #[tokio::test]
@@ -222,7 +240,7 @@ mod tests {
             // wrapper. `Credentials::for_tests()` still produces a
             // `Credentials`; wrap it explicitly.
             .credentials_provider(SharedCredentialsProvider::new(Credentials::for_tests()))
-            .behavior_version(BehaviorVersion::v2023_11_09())
+            .behavior_version(BehaviorVersion::latest())
             .build();
 
         // Will likely fail due to lack of real credentials in CI,

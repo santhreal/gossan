@@ -1,5 +1,5 @@
 use gossan_core::target::{
-    Target, DomainTarget, HostTarget, ServiceTarget, WebAssetTarget, DiscoverySource, Protocol
+    DiscoverySource, DomainTarget, HostTarget, Protocol, ServiceTarget, Target, WebAssetTarget,
 };
 use url::Url;
 
@@ -10,7 +10,7 @@ fn test_target_adversarial_huge_domain() {
         domain: domain.clone(),
         source: DiscoverySource::Seed,
     });
-    
+
     // Memory constraints test. It shouldn't panic when we fetch it.
     assert_eq!(target.domain().unwrap(), domain.as_str());
 }
@@ -22,7 +22,7 @@ fn test_target_adversarial_null_bytes_in_domain() {
         domain: domain.clone(),
         source: DiscoverySource::Seed,
     });
-    
+
     // String slices don't care about null bytes in Rust, but good to test
     assert_eq!(target.domain().unwrap(), domain.as_str());
     assert!(target.base_url().unwrap().contains("null\0byte.com"));

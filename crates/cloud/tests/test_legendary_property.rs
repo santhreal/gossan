@@ -5,7 +5,7 @@ proptest! {
     #[test]
     fn test_legendary_property_permutations_generate(ref input in any::<String>()) {
         let perms = permutations::generate(input);
-        
+
         // Assertions
         for perm in perms {
             // Note: `generate` currently has a bug where transforms don't verify length
@@ -19,7 +19,7 @@ proptest! {
         // should never panic
         let _ = common::is_xml_listing(input);
     }
-    
+
     #[test]
     fn test_legendary_property_make_target(ref input in any::<String>()) {
         // should never panic

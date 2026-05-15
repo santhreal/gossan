@@ -1,4 +1,4 @@
-use gossan_correlation::{CorrelationEngine, CorrelationRule, TlsWeaknessRule, AdminExposedRule};
+use gossan_correlation::{AdminExposedRule, CorrelationEngine, CorrelationRule, TlsWeaknessRule};
 use secfinding::{Finding, Severity};
 
 fn create_finding(scanner: &str, target: &str, title: &str) -> Finding {
@@ -55,7 +55,7 @@ fn admin_exposed_handles_unicode_targets() {
         create_finding("hidden", target, "Admin panel exposed"),
         create_finding("hidden", target, "No authentication required"),
     ];
-    
+
     let chains = AdminExposedRule.check(&findings, &[]);
     assert_eq!(chains.len(), 1);
     assert_eq!(chains[0].target(), target);
@@ -64,7 +64,7 @@ fn admin_exposed_handles_unicode_targets() {
 #[test]
 fn engine_handles_huge_input() {
     let mut findings = Vec::with_capacity(100_000);
-    
+
     // Create 100k noise findings
     for i in 0..100_000 {
         findings.push(create_finding(
@@ -73,26 +73,44 @@ fn engine_handles_huge_input() {
             "Unrelated finding",
         ));
     }
-    
+
     // Embed correlation triggers at the very end
-    findings.push(create_finding("hidden", "admin.internal", "Admin panel exposed"));
-    findings.push(create_finding("hidden", "admin.internal", "No authentication required"));
-    
+    findings.push(create_finding(
+        "hidden",
+        "admin.internal",
+        "Admin panel exposed",
+    ));
+    findings.push(create_finding(
+        "hidden",
+        "admin.internal",
+        "No authentication required",
+    ));
+
     let engine = CorrelationEngine::new();
     let chains = engine.run(&findings, &[]);
-    
+
     // Engine should efficiently filter the noise and find the 1 chain
     assert_eq!(chains.len(), 1);
-    assert!(chains[0].title().contains("Admin panel exposed without authentication"));
+    assert!(chains[0]
+        .title()
+        .contains("Admin panel exposed without authentication"));
 }
 
 #[test]
 fn tls_weakness_handles_path_traversal_titles() {
     let findings = vec![
-        create_finding("portscan", "example.com", "../../../etc/passwd Self-signed TLS certificate"),
-        create_finding("portscan", "example.com", "Missing HSTS header /var/log/../../"),
+        create_finding(
+            "portscan",
+            "example.com",
+            "../../../etc/passwd Self-signed TLS certificate",
+        ),
+        create_finding(
+            "portscan",
+            "example.com",
+            "Missing HSTS header /var/log/../../",
+        ),
     ];
-    
+
     let chains = TlsWeaknessRule.check(&findings, &[]);
     assert_eq!(chains.len(), 1);
 }
@@ -102,12 +120,16 @@ fn engine_handles_duplicate_huge_findings() {
     let mut findings = Vec::new();
     // 100 duplicate findings
     for _ in 0..100 {
-        findings.push(create_finding("portscan", "example.com", "Self-signed TLS certificate"));
+        findings.push(create_finding(
+            "portscan",
+            "example.com",
+            "Self-signed TLS certificate",
+        ));
     }
-    
+
     let engine = CorrelationEngine::new();
     let chains = engine.run(&findings, &[]);
-    
+
     // Rule deduplication should ensure we don't get 100 identical chains or panic
     assert!(chains.is_empty(), "Multiple IDENTICAL tls issues should not trigger the chain rule since it requires DISTINCT issues");
 }

@@ -12,11 +12,15 @@ const MAX: Duration = Duration::from_millis(500);
 fn synth_findings(n: usize) -> Vec<Finding> {
     (0..n)
         .map(|i| {
-            Finding::builder("portscan", format!("10.0.{}.{}", (i >> 8) & 0xff, i & 0xff), Severity::Info)
-                .title(format!("open: {}/tcp", 80 + (i % 1024) as u16))
-                .detail("synthetic open port")
-                .build()
-                .expect("build finding")
+            Finding::builder(
+                "portscan",
+                format!("10.0.{}.{}", (i >> 8) & 0xff, i & 0xff),
+                Severity::Info,
+            )
+            .title(format!("open: {}/tcp", 80 + (i % 1024) as u16))
+            .detail("synthetic open port")
+            .build()
+            .expect("build finding")
         })
         .collect()
 }

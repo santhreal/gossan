@@ -1,5 +1,5 @@
 use gossan_core::target::{
-    Target, DomainTarget, HostTarget, ServiceTarget, DiscoverySource, Protocol
+    DiscoverySource, DomainTarget, HostTarget, Protocol, ServiceTarget, Target,
 };
 use proptest::prelude::*;
 use std::net::{IpAddr, Ipv4Addr};
@@ -15,7 +15,7 @@ proptest! {
             domain: domain.clone(),
             source: DiscoverySource::Seed,
         });
-        
+
         assert_eq!(t.domain(), Some(domain.as_str()));
         assert_eq!(t.ip(), None);
         // Note: target_domain implementation does not lowercase domains directly, it just returns string formatting for domains.
@@ -28,7 +28,7 @@ proptest! {
             ip,
             domain: Some(domain.clone()),
         });
-        
+
         assert_eq!(t.domain(), Some(domain.as_str()));
         assert_eq!(t.ip(), Some(ip));
         assert_eq!(t.base_url(), Some(format!("http://{}/", ip)));

@@ -90,7 +90,11 @@ fn murmur3_32(data: &[u8], seed: u32) -> u32 {
 /// Fetch the target's favicon and compute its hash.
 /// If a Shodan API key is provided, query Shodan for hosts with the same favicon.
 /// Also queries Censys if a Censys API key pair is present.
-pub async fn scan(domain: String, config: &Config, client: &gossan_core::ScanClient) -> anyhow::Result<Vec<OriginCandidate>> {
+pub async fn scan(
+    domain: String,
+    config: &Config,
+    client: &gossan_core::ScanClient,
+) -> anyhow::Result<Vec<OriginCandidate>> {
     let mut candidates = Vec::new();
 
     let paths = [
@@ -234,7 +238,11 @@ pub async fn scan(domain: String, config: &Config, client: &gossan_core::ScanCli
 
             let mut seen_ips = HashSet::new();
 
-            if let Some(results) = json.get("result").and_then(|r| r.get("hits")).and_then(|h| h.as_array()) {
+            if let Some(results) = json
+                .get("result")
+                .and_then(|r| r.get("hits"))
+                .and_then(|h| h.as_array())
+            {
                 for hit in results {
                     if let Some(ip_str) = hit.get("ip").and_then(|v| v.as_str()) {
                         if let Ok(ip) = IpAddr::from_str(ip_str) {

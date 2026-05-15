@@ -130,7 +130,10 @@ impl RateLimiter {
         let elapsed_us = now.duration_since(self.last_refill).as_micros() as i64;
         if elapsed_us > 0 {
             let new_tokens = elapsed_us.saturating_mul(self.refill_per_us_x1000);
-            self.tokens_x1000 = self.tokens_x1000.saturating_add(new_tokens).min(self.max_tokens_x1000);
+            self.tokens_x1000 = self
+                .tokens_x1000
+                .saturating_add(new_tokens)
+                .min(self.max_tokens_x1000);
             self.last_refill = now;
         }
     }
@@ -352,9 +355,12 @@ mod tests {
     fn adaptive_loop_decreases_on_tx_drop_burst() {
         let mut lo = AdaptiveLoop::new(1_000_000);
         let before = lo.tick(0, 0); // baseline
-        // 1000 packets sent, 50 dropped — classifier sees drops.
+                                    // 1000 packets sent, 50 dropped — classifier sees drops.
         let after = lo.tick(1000, 50);
-        assert!(after < before, "expected rate to decrease: {after} < {before}");
+        assert!(
+            after < before,
+            "expected rate to decrease: {after} < {before}"
+        );
     }
 
     #[test]

@@ -19,8 +19,8 @@
 //! This test feeds 3 fixture findings of varying severity through
 //! the santh_output renderer and validates the emitted JSON.
 
-use secfinding::{Evidence, Finding, Severity};
 use santh_output::format::Format;
+use secfinding::{Evidence, Finding, Severity};
 
 fn fixture_findings() -> Vec<Finding> {
     let make = |sev: Severity, title: &str| {
@@ -41,8 +41,7 @@ fn fixture_findings() -> Vec<Finding> {
 }
 
 fn render_sarif(findings: &[Finding]) -> serde_json::Value {
-    let s = santh_output::render::render(findings, Format::Sarif, "gossan")
-        .expect("render");
+    let s = santh_output::render::render(findings, Format::Sarif, "gossan").expect("render");
     serde_json::from_str(&s).expect("emitted SARIF must be valid JSON")
 }
 

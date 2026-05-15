@@ -33,9 +33,7 @@ proptest! {
 
 #[test]
 fn ten_thousand_domains_dedup_without_panic() {
-    let big: Vec<String> = (0..10_000)
-        .map(|i| format!("h{i}.example.com"))
-        .collect();
+    let big: Vec<String> = (0..10_000).map(|i| format!("h{i}.example.com")).collect();
     let deduped = dedup_domains(big);
     assert_eq!(deduped.len(), 10_000);
 }

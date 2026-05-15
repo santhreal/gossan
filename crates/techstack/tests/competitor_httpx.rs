@@ -16,17 +16,18 @@ use std::process::Command;
 
 fn pd_httpx_path() -> Option<String> {
     let candidates = [
-        format!(
-            "{}/go/bin/httpx",
-            std::env::var("HOME").unwrap_or_default()
-        ),
+        format!("{}/go/bin/httpx", std::env::var("HOME").unwrap_or_default()),
         "/usr/local/bin/httpx-pd".into(),
     ];
     candidates.into_iter().find(|c| Path::new(c).exists())
 }
 
 fn binary_present(name: &str) -> bool {
-    Command::new("which").arg(name).output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new("which")
+        .arg(name)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 #[test]

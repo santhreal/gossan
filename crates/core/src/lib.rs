@@ -13,7 +13,7 @@
 #![allow(
     clippy::module_name_repetitions,
     clippy::must_use_candidate,
-    clippy::missing_errors_doc,
+    clippy::missing_errors_doc
 )]
 
 //! Core types and traits for the Gossan attack surface scanner.
@@ -28,7 +28,6 @@
 //!
 //! All 14 scanner crates depend on `gossan-core` for these shared types.
 
-
 pub mod accuracy;
 pub mod config;
 pub mod error;
@@ -39,19 +38,21 @@ pub mod scanner;
 pub mod target;
 pub mod transport;
 
-pub use accuracy::{ResponseBaseline, calculate_fuzzy_hash, generate_dom_fingerprint};
+pub use accuracy::{calculate_fuzzy_hash, generate_dom_fingerprint, ResponseBaseline};
 pub use config::{
     ApiKeys, Config, CrawlConfig, ModuleConfig, OutputConfig, OutputFormat, PortMode,
 };
 pub use error::Error;
 pub use finding::{make_finding, try_push_finding, Evidence, Finding, FindingKind, Severity};
 pub use net::connect_tcp;
-pub use ratelimit::{build_client, get_with_backoff, read_response_limited, send_with_backoff, HostRateLimiter};
+pub use ratelimit::{
+    build_client, get_with_backoff, read_response_limited, send_with_backoff, HostRateLimiter,
+};
+pub use reqwest;
 pub use scanner::{ScanInput, Scanner};
 pub use target::{
-    DiscoveredForm, DiscoveredParam, DiscoverySource, DomainTarget, HostTarget, ParamLocation,
-    ParamSource, Protocol, ServiceTarget, Target, TechCategory, Technology, WebAssetTarget,
-    NetworkTarget,
+    DiscoveredForm, DiscoveredParam, DiscoverySource, DomainTarget, HostTarget, NetworkTarget,
+    ParamLocation, ParamSource, Protocol, ServiceTarget, Target, TechCategory, Technology,
+    WebAssetTarget,
 };
 pub use transport::ScanClient;
-pub use reqwest;

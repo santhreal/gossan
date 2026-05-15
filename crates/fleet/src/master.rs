@@ -1,15 +1,17 @@
 //! Fleet master — listens for workers and distributes scan targets.
 
+use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
+use tokio_stream::StreamExt;
 use tonic::{Request, Response, Status, Streaming};
-use dashmap::DashMap;
-use tracing::{info, error};
+use tracing::{error, info};
 
 use crate::proto::fleet_control_server::FleetControl;
-use crate::proto::{WorkerUpdate, MasterInstruction, TaskAssignment, worker_update, master_instruction};
+use crate::proto::{
+    master_instruction, worker_update, MasterInstruction, TaskAssignment, WorkerUpdate,
+};
 
 use crate::proto::fleet_control_server::FleetControlServer;
 use tonic::transport::Server;
@@ -55,7 +57,12 @@ impl Default for Master {
 }
 
 impl Master {
-    pub async fn dispatch_task(&self, module: &str, targets: Vec<String>, config: &str) -> anyhow::Result<String> {
+    pub async fn dispatch_task(
+        &self,
+        module: &str,
+        targets: Vec<String>,
+        config: &str,
+    ) -> anyhow::Result<String> {
         let task_id = uuid::Uuid::new_v4().to_string();
         let worker_count = self.workers.len();
         if worker_count == 0 {
@@ -66,16 +73,21 @@ impl Master {
         let shards: Vec<Vec<String>> = targets.chunks(chunk_size).map(|c| c.to_vec()).collect();
         let total_shards = shards.len();
 
-        self.tasks.insert(task_id.clone(), TaskState {
-            findings: Arc::new(Mutex::new(Vec::new())),
-            completed_workers: Arc::new(Mutex::new(0)),
-            total_shards,
-        });
+        self.tasks.insert(
+            task_id.clone(),
+            TaskState {
+                findings: Arc::new(Mutex::new(Vec::new())),
+                completed_workers: Arc::new(Mutex::new(0)),
+                total_shards,
+            },
+        );
 
         // Use a loop over indices to avoid dashmap iteration issues
         let worker_ids: Vec<String> = self.workers.iter().map(|r| r.key().clone()).collect();
         for (i, worker_id) in worker_ids.iter().enumerate() {
-            if i >= total_shards { break; }
+            if i >= total_shards {
+                break;
+            }
             if let Some(tx) = self.workers.get(worker_id) {
                 let assignment = TaskAssignment {
                     task_id: task_id.clone(),
@@ -83,9 +95,11 @@ impl Master {
                     targets: shards[i].clone(),
                     config_json: config.to_string(),
                 };
-                let _ = tx.send(MasterInstruction {
-                    instruction: Some(master_instruction::Instruction::Task(assignment)),
-                }).await;
+                let _ = tx
+                    .send(MasterInstruction {
+                        instruction: Some(master_instruction::Instruction::Task(assignment)),
+                    })
+                    .await;
             }
         }
 
@@ -104,16 +118,20 @@ impl FleetControl for Arc<Master> {
         let mut stream = request.into_inner();
         let (tx, rx) = mpsc::channel::<Result<MasterInstruction, Status>>(32);
         let worker_id_res = stream.next().await;
-        
+
         let worker_id = match worker_id_res {
             Some(Ok(update)) => update.worker_id,
-            _ => return Err(Status::invalid_argument("First message must contain worker_id")),
+            _ => {
+                return Err(Status::invalid_argument(
+                    "First message must contain worker_id",
+                ))
+            }
         };
 
         info!(worker_id = %worker_id, "Worker connected");
-        
+
         // We need to store a sender that takes MasterInstruction, but our channel takes Result.
-        // We'll wrap it or change the map type. 
+        // We'll wrap it or change the map type.
         // Actually, let's keep the map as MasterInstruction and wrap the sender.
         let (instr_tx, mut instr_rx) = mpsc::channel::<MasterInstruction>(32);
         self.workers.insert(worker_id.clone(), instr_tx);

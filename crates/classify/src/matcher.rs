@@ -3,8 +3,8 @@
 //! CPU-based implementation using substring search + regex version extraction.
 //! This is the fallback when Vyre GPU acceleration is not available.
 
-use std::collections::HashMap;
 use crate::rules::{ServiceMatch, ServiceRule};
+use std::collections::HashMap;
 
 /// CPU-based banner pattern matcher.
 pub struct CpuMatcher {
@@ -24,7 +24,10 @@ impl CpuMatcher {
                 version_regexes.insert(rule.id.clone(), re);
             }
         }
-        Self { rules, version_regexes }
+        Self {
+            rules,
+            version_regexes,
+        }
     }
 
     /// Match a banner against all rules.
@@ -45,7 +48,8 @@ impl CpuMatcher {
             }
 
             // Extract version if we have a regex
-            let version = self.version_regexes
+            let version = self
+                .version_regexes
                 .get(&rule.id)
                 .and_then(|re| re.as_ref())
                 .and_then(|re| {
@@ -55,11 +59,12 @@ impl CpuMatcher {
                 });
 
             // Compute confidence based on specificity
-            let pattern_matches: usize = rule.patterns.iter()
+            let pattern_matches: usize = rule
+                .patterns
+                .iter()
                 .filter(|p| banner_lower.contains(&p.to_lowercase()))
                 .count();
-            let confidence = (pattern_matches as f32 / rule.patterns.len() as f32)
-                .min(1.0)
+            let confidence = (pattern_matches as f32 / rule.patterns.len() as f32).min(1.0)
                 * if version.is_some() { 1.0 } else { 0.8 };
 
             // Detect security signals
@@ -76,7 +81,9 @@ impl CpuMatcher {
         }
 
         matches.sort_by(|a, b| {
-            b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal)
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         matches
     }

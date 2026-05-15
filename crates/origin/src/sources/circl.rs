@@ -11,7 +11,11 @@ use std::net::IpAddr;
 use std::str::FromStr;
 
 /// Scan CIRCL PDNS for origin candidates.
-pub async fn scan(domain: &str, config: &Config, client: &ScanClient) -> anyhow::Result<Vec<OriginCandidate>> {
+pub async fn scan(
+    domain: &str,
+    config: &Config,
+    client: &ScanClient,
+) -> anyhow::Result<Vec<OriginCandidate>> {
     let username = match config.api_keys.get("circl_user") {
         Some(k) => k,
         None => {
@@ -57,11 +61,7 @@ pub async fn scan(domain: &str, config: &Config, client: &ScanClient) -> anyhow:
                             {
                                 if let Ok(ip) = IpAddr::from_str(rdata) {
                                     if is_routable_ip(ip) && seen.insert(ip) {
-                                        candidates.push(OriginCandidate::new(
-                                            ip,
-                                            "circl_pdns",
-                                            85,
-                                        ));
+                                        candidates.push(OriginCandidate::new(ip, "circl_pdns", 85));
                                     }
                                 }
                             }

@@ -11,10 +11,10 @@
 //!
 //! Only runs when the target returns 403 on a common admin/sensitive path.
 
-use std::sync::Arc;
 use gossan_core::Target;
 use reqwest::Client;
 use secfinding::{Evidence, Finding, Severity};
+use std::sync::Arc;
 
 /// Paths commonly blocked by WAFs / auth middleware.
 const SENSITIVE_PATHS: &[&str] = &[
@@ -38,7 +38,11 @@ const HEADER_BYPASSES: &[(&str, &str, &str)] = &[
     ("X-Rewrite-URL", "/admin", "x-rewrite-url rewrite"),
     ("X-Forwarded-For", "127.0.0.1", "xff localhost spoof"),
     ("X-Custom-IP-Authorization", "127.0.0.1", "x-custom-ip-auth"),
-    ("X-Forwarded-Host", "localhost", "x-forwarded-host localhost"),
+    (
+        "X-Forwarded-Host",
+        "localhost",
+        "x-forwarded-host localhost",
+    ),
     ("X-Host", "localhost", "x-host localhost"),
     ("X-Remote-IP", "127.0.0.1", "x-remote-ip spoof"),
     ("X-Client-IP", "127.0.0.1", "x-client-ip spoof"),
@@ -59,7 +63,10 @@ fn path_mutations(path: &str) -> Vec<(String, &'static str)> {
         (format!("{}..%00/", trimmed), "null byte traversal"),
         (format!("{}.json", trimmed), "extension change .json"),
         (format!("{}/~", trimmed), "tilde suffix"),
-        (format!("/{}", trimmed.to_uppercase().trim_start_matches('/')), "case swap"),
+        (
+            format!("/{}", trimmed.to_uppercase().trim_start_matches('/')),
+            "case swap",
+        ),
     ]
 }
 
@@ -123,9 +130,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                             headers: vec![(Arc::<str>::from(*header), Arc::<str>::from(*value))],
                             body_excerpt: None,
                         })
-                        .exploit_hint(format!(
-                            "curl -s -H '{header}: {value}' '{blocked_url}'"
-                        )),
+                        .exploit_hint(format!("curl -s -H '{header}: {value}' '{blocked_url}'")),
                         &mut findings,
                     );
                     // Don't test more header bypasses for this path — one is enough.
@@ -174,7 +179,11 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
         }
 
         // ── Method switching ─────────────────────────────────────────────
-        for method in &[reqwest::Method::POST, reqwest::Method::HEAD, reqwest::Method::PUT] {
+        for method in &[
+            reqwest::Method::POST,
+            reqwest::Method::HEAD,
+            reqwest::Method::PUT,
+        ] {
             let Ok(resp) = client.request(method.clone(), &blocked_url).send().await else {
                 continue;
             };

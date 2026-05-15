@@ -13,13 +13,12 @@
 #![allow(
     clippy::module_name_repetitions,
     clippy::must_use_candidate,
-    clippy::missing_errors_doc,
+    clippy::missing_errors_doc
 )]
 
 //! JavaScript analysis scanner.
 //! Finds <script src> URLs, fetches each JS file, extracts endpoints,
 //! detects hardcoded secrets, and probes for source maps.
-
 
 pub mod endpoints;
 pub mod secrets;
@@ -27,12 +26,12 @@ pub mod verifiers;
 
 mod wasm;
 
-use std::sync::Arc;
-use gossan_core::HostRateLimiter;
 use async_trait::async_trait;
 use futures::StreamExt;
+use gossan_core::HostRateLimiter;
 use gossan_core::{Config, ScanClient, ScanInput, Scanner, Target};
 use secfinding::{Evidence, Finding, FindingBuilder, Severity};
+use std::sync::Arc;
 /// JavaScript analysis scanner — secrets, endpoints, source maps, and WASM.
 pub struct JsScanner;
 
@@ -61,7 +60,6 @@ impl Scanner for JsScanner {
     }
 
     async fn run(&self, input: ScanInput, config: &Config) -> anyhow::Result<()> {
-
         let client = ScanClient::from_config(config, Arc::clone(&input.resolver))?;
 
         // Drain the inbound channel — the pre-streaming `targets:
@@ -98,7 +96,9 @@ impl Scanner for JsScanner {
             .await;
 
         for batch in findings {
-            for f in batch { input.emit(f); }
+            for f in batch {
+                input.emit(f);
+            }
         }
         Ok(())
     }
@@ -168,10 +168,14 @@ async fn analyze(
 
                 // Protection: don't download huge JS files (max 10MB)
                 if let Some(len) = resp.content_length() {
-                    if len > 10 * 1024 * 1024 { return None; }
+                    if len > 10 * 1024 * 1024 {
+                        return None;
+                    }
                 }
-                
-                let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.ok()?;
+
+                let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
+                    .await
+                    .ok()?;
                 Some((url, body))
             }
         })
@@ -187,7 +191,7 @@ async fn analyze(
         // Endpoint extraction
         for ep in endpoints::extract(js_url, body) {
             gossan_core::try_push_finding(ep.into_finding(target), &mut findings);
-            
+
             // Emit new targets if they are external domains or IPs
             if let Some(new_target) = ep.as_target() {
                 let _ = target_tx.send(new_target);
@@ -281,12 +285,18 @@ pub(crate) async fn probe_sourcemap_full(
         return findings;
     };
 
-    let sources: Vec<String> = map.get("sources")
+    let sources: Vec<String> = map
+        .get("sources")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
-    let contents: Vec<Option<String>> = map.get("sourcesContent")
+    let contents: Vec<Option<String>> = map
+        .get("sourcesContent")
         .and_then(|v| v.as_array())
         .map(|arr| arr.iter().map(|v| v.as_str().map(String::from)).collect())
         .unwrap_or_default();
@@ -341,4 +351,3 @@ fn extract_script_urls(html: &str, base: &url::Url) -> Vec<String> {
         .map(|u| u.to_string())
         .collect()
 }
-

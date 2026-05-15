@@ -30,7 +30,9 @@ impl IntelCache {
              CREATE INDEX IF NOT EXISTS idx_cache_lookup ON cache(source, target_type, target_value);
              CREATE INDEX IF NOT EXISTS idx_cache_stale ON cache(fetched_at);"
         )?;
-        Ok(Self { conn: Mutex::new(conn) })
+        Ok(Self {
+            conn: Mutex::new(conn),
+        })
     }
 
     /// Get a cached enrichment if it exists and is not stale.
@@ -41,13 +43,18 @@ impl IntelCache {
         target_value: &str,
         ttl_secs: u64,
     ) -> anyhow::Result<Option<IntelEnrichment>> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
-        let row: Option<(String, i64)> = conn.query_row(
-            "SELECT data, fetched_at FROM cache
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
+        let row: Option<(String, i64)> = conn
+            .query_row(
+                "SELECT data, fetched_at FROM cache
              WHERE source = ?1 AND target_type = ?2 AND target_value = ?3",
-            params![source, target_type, target_value],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
-        ).optional()?;
+                params![source, target_type, target_value],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .optional()?;
 
         let Some((data, fetched_at)) = row else {
             return Ok(None);
@@ -66,7 +73,10 @@ impl IntelCache {
 
     /// Store an enrichment in the cache.
     pub fn put(&self, enrichment: &IntelEnrichment) -> anyhow::Result<()> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
         let data = serde_json::to_string(enrichment)?;
         conn.execute(
             "INSERT OR REPLACE INTO cache (source, target_type, target_value, data, fetched_at)
@@ -89,17 +99,20 @@ impl IntelCache {
             .unwrap_or_default()
             .as_secs() as i64
             - ttl_secs as i64;
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
-        let n = conn.execute(
-            "DELETE FROM cache WHERE fetched_at < ?1",
-            params![cutoff],
-        )?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
+        let n = conn.execute("DELETE FROM cache WHERE fetched_at < ?1", params![cutoff])?;
         Ok(n)
     }
 
     /// Clear all cached data.
     pub fn clear(&self) -> anyhow::Result<()> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
         conn.execute("DELETE FROM cache", [])?;
         Ok(())
     }

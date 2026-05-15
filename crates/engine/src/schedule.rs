@@ -268,7 +268,10 @@ mod tests {
 
         // Check that ip_indices are not monotonically increasing
         let sequential = first_ten.windows(2).all(|w| w[0].0 <= w[1].0);
-        assert!(!sequential, "schedule should not be sequential: {first_ten:?}");
+        assert!(
+            !sequential,
+            "schedule should not be sequential: {first_ten:?}"
+        );
     }
 }
 

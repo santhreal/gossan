@@ -21,9 +21,7 @@ use gossan_core::net::build_resolver;
 use gossan_core::{Config, ScanInput, Scanner, Target};
 use secfinding::{Finding, Severity};
 
-use super::helpers::{
-    apply_kind_filter, apply_min_severity, dedup, seed_target,
-};
+use super::helpers::{apply_kind_filter, apply_min_severity, dedup, seed_target};
 
 #[cfg(feature = "checkpoint")]
 use gossan_checkpoint::CheckpointStore;
@@ -33,6 +31,8 @@ use gossan_cloud::CloudScanner;
 use gossan_crawl::CrawlScanner;
 #[cfg(feature = "dns")]
 use gossan_dns::DnsScanner;
+#[cfg(feature = "engine")]
+use gossan_engine::EngineScanner;
 #[cfg(feature = "headless")]
 use gossan_headless::HeadlessScanner;
 #[cfg(feature = "hidden")]
@@ -43,11 +43,8 @@ use gossan_js::JsScanner;
 use gossan_portscan::PortScanner;
 #[cfg(feature = "subdomain")]
 use gossan_subdomain::SubdomainScanner;
-#[cfg(feature = "engine")]
-use gossan_engine::EngineScanner;
 #[cfg(feature = "techstack")]
 use gossan_techstack::TechStackScanner;
-
 
 // ── Checkpoint helpers ────────────────────────────────────────────────────────
 
@@ -77,7 +74,7 @@ pub async fn run_module(seed: &str, module: &str, config: Config) -> anyhow::Res
     let (in_tx, in_rx) = tokio::sync::mpsc::unbounded_channel();
     let (out_tx, mut out_rx) = tokio::sync::mpsc::unbounded_channel();
     let (live_tx, mut live_rx) = tokio::sync::mpsc::unbounded_channel();
-    
+
     // Seed the target channel
     let _ = in_tx.send(seed_target(seed));
     drop(in_tx);
@@ -89,14 +86,14 @@ pub async fn run_module(seed: &str, module: &str, config: Config) -> anyhow::Res
         target_tx: out_tx,
         resolver,
     };
-    
+
     let _ = dispatch_module(module, input, &config).await?;
-    
+
     let mut findings = Vec::new();
     while let Some(finding) = live_rx.recv().await {
         findings.push(finding);
     }
-    
+
     let mut out_targets = Vec::new();
     while let Some(t) = out_rx.recv().await {
         out_targets.push(t);
@@ -130,8 +127,15 @@ pub async fn run_module(seed: &str, module: &str, config: Config) -> anyhow::Res
                         // Protocol is a small `non_exhaustive` enum
                         // (Tcp | Udp) without an as_str(); use Debug
                         // + lowercase to render `tcp`/`udp`.
-                        .title(format!("Open Port: {}/{}", s.port, format!("{:?}", s.protocol).to_lowercase()))
-                        .detail(format!("Found open service directly addressing {}", s.host.ip))
+                        .title(format!(
+                            "Open Port: {}/{}",
+                            s.port,
+                            format!("{:?}", s.protocol).to_lowercase()
+                        ))
+                        .detail(format!(
+                            "Found open service directly addressing {}",
+                            s.host.ip
+                        ))
                         .tag(scheme)
                         .kind(secfinding::FindingKind::Exposure),
                     &mut findings,
@@ -141,12 +145,22 @@ pub async fn run_module(seed: &str, module: &str, config: Config) -> anyhow::Res
         "techstack" => {
             for target in &out_targets {
                 let Target::Web(w) = target else { continue };
-                if w.tech.is_empty() { continue; }
-                let tech_list = w.tech.iter().map(|t| t.name.clone()).collect::<Vec<_>>().join(", ");
+                if w.tech.is_empty() {
+                    continue;
+                }
+                let tech_list = w
+                    .tech
+                    .iter()
+                    .map(|t| t.name.clone())
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 gossan_core::try_push_finding(
                     Finding::builder("techstack", w.url.clone(), Severity::Info)
                         .title(format!("Tech Stack: {}", tech_list))
-                        .detail(format!("Fingerprinted {} distinct technologies", w.tech.len()))
+                        .detail(format!(
+                            "Fingerprinted {} distinct technologies",
+                            w.tech.len()
+                        ))
                         .kind(secfinding::FindingKind::Exposure),
                     &mut findings,
                 );
@@ -180,11 +194,7 @@ pub fn resolve_targets(target: String) -> Vec<String> {
     }
 }
 
-pub async fn exec_module(
-    target: String,
-    module_name: &str,
-    config: Config,
-) -> anyhow::Result<()> {
+pub async fn exec_module(target: String, module_name: &str, config: Config) -> anyhow::Result<()> {
     let output_config = config.output.clone();
     let targets = resolve_targets(target);
     let mut all = Vec::new();
@@ -228,7 +238,7 @@ fn make_service_targets(domain: &str) -> Vec<Target> {
 /// Build synthetic `Target::Web` targets for a domain — used by `js` and `hidden`
 /// standalone mode, which require  inputs.
 fn make_web_targets(domain: &str) -> Vec<Target> {
-    use gossan_core::{HostTarget, Protocol, ServiceTarget, };
+    use gossan_core::{HostTarget, Protocol, ServiceTarget};
     use std::net::{IpAddr, Ipv4Addr};
     let ip = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
     let mut targets = Vec::new();
@@ -260,11 +270,7 @@ fn make_web_targets(domain: &str) -> Vec<Target> {
     targets
 }
 
-async fn dispatch_module(
-    module: &str,
-    input: ScanInput,
-    config: &Config,
-) -> anyhow::Result<()> {
+async fn dispatch_module(module: &str, input: ScanInput, config: &Config) -> anyhow::Result<()> {
     let seed = input.seed.clone();
     // Helper for the standalone-module case where the user invoked
     // e.g. `gossan scan --modules hidden example.com` directly. Those
@@ -329,11 +335,15 @@ async fn dispatch_module(
         #[cfg(feature = "horizontal")]
         "horizontal" => {
             if config.conservative {
-                gossan_horizontal::conservative::ConservativeScanner.run(input, config).await
+                gossan_horizontal::conservative::ConservativeScanner
+                    .run(input, config)
+                    .await
             } else {
-                gossan_horizontal::HorizontalScanner.run(input, config).await
+                gossan_horizontal::HorizontalScanner
+                    .run(input, config)
+                    .await
             }
-        },
+        }
         #[cfg(feature = "scm")]
         "scm" => gossan_scm::ScmScanner.run(input, config).await,
         #[cfg(feature = "intel")]
@@ -352,8 +362,8 @@ mod tests {
     use super::*;
     use crate::pipeline::helpers::dedup_web_assets;
     use gossan_core::Target;
-    use url::Url;
     use secfinding::{Evidence, Finding, Severity};
+    use url::Url;
 
     fn finding(title: &str, severity: Severity) -> Finding {
         Finding::builder("test", "example.com", severity)
@@ -434,7 +444,7 @@ mod tests {
 
     #[test]
     fn dedup_web_assets_keeps_distinct_hostnames() {
-        use gossan_core::{HostTarget, Protocol, ServiceTarget, };
+        use gossan_core::{HostTarget, Protocol, ServiceTarget};
         use std::net::{IpAddr, Ipv4Addr};
 
         let ip = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10));

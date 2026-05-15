@@ -16,16 +16,14 @@
     )
 )]
 
+mod dedup;
 mod detector;
 mod scanner;
-mod dedup;
 mod verifier;
 
-pub use detector::{
-    load_detectors, Companion, Detector, DetectorError, DetectorMeta, Pattern,
-};
-pub use scanner::{Chunk, ChunkMetadata, CompiledScanner, Match, MatchLocation, ScannerError};
 pub use dedup::{dedup_matches, DedupScope};
+pub use detector::{load_detectors, Companion, Detector, DetectorError, DetectorMeta, Pattern};
+pub use scanner::{Chunk, ChunkMetadata, CompiledScanner, Match, MatchLocation, ScannerError};
 pub use verifier::{
     RawMatch, VerificationEngine, VerificationResult, VerifiedFinding, VerifyConfig,
 };
@@ -35,7 +33,9 @@ use serde::{Deserialize, Serialize};
 /// Severity grades. Matches the upstream `keyhog_core::Severity` shape
 /// so `From` / `Into` between gossan-js's `secfinding::Severity` and
 /// this enum is a 5-arm match.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
     /// Discovery-only signal; not a confirmed secret.

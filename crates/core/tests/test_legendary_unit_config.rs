@@ -1,4 +1,4 @@
-use gossan_core::{Config, config::ModuleConfig};
+use gossan_core::{config::ModuleConfig, Config};
 use std::path::PathBuf;
 
 #[test]
@@ -22,9 +22,21 @@ fn test_module_config_all() {
     let mut modules: ModuleConfig = std::collections::HashMap::new();
     modules.insert("all".into(), true);
     let want = [
-        "subdomain", "portscan", "techstack", "dns", "js", "hidden",
-        "cloud", "headless", "crawl", "origin",
-        "horizontal", "graph", "scm", "intel", "fleet",
+        "subdomain",
+        "portscan",
+        "techstack",
+        "dns",
+        "js",
+        "hidden",
+        "cloud",
+        "headless",
+        "crawl",
+        "origin",
+        "horizontal",
+        "graph",
+        "scm",
+        "intel",
+        "fleet",
     ];
     // Either explicit-key=true OR the "all" wildcard counts as enabled.
     for m in want {

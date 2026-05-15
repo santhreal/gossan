@@ -12,7 +12,9 @@ pub async fn probe(client: &reqwest::Client, target: &Target) -> anyhow::Result<
 
     if let Ok(resp) = client.get(&url).send().await {
         if resp.status().as_u16() == 200 {
-            let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
+            let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
+                .await
+                .unwrap_or_default();
 
             // Parse robots.txt into groups; extract Sitemap directives and
             // disallow/allow lists that apply to the wildcard User-agent (*).
@@ -42,9 +44,15 @@ pub async fn probe(client: &reqwest::Client, target: &Target) -> anyhow::Result<
                         match key.as_str() {
                             "user-agent" => {
                                 // start a new group if the current group already has directives
-                                if !current.agents.is_empty() && (!current.allow.is_empty() || !current.disallow.is_empty()) {
+                                if !current.agents.is_empty()
+                                    && (!current.allow.is_empty() || !current.disallow.is_empty())
+                                {
                                     groups.push(current);
-                                    current = Group { agents: Vec::new(), allow: Vec::new(), disallow: Vec::new() };
+                                    current = Group {
+                                        agents: Vec::new(),
+                                        allow: Vec::new(),
+                                        disallow: Vec::new(),
+                                    };
                                 }
                                 current.agents.push(val);
                             }
@@ -56,14 +64,17 @@ pub async fn probe(client: &reqwest::Client, target: &Target) -> anyhow::Result<
                     }
                 }
                 // push last group
-                if !current.agents.is_empty() || !current.allow.is_empty() || !current.disallow.is_empty() {
+                if !current.agents.is_empty()
+                    || !current.allow.is_empty()
+                    || !current.disallow.is_empty()
+                {
                     groups.push(current);
                 }
 
                 // Collect disallow rules applicable to the wildcard agent '*'
                 let mut wildcard_disallow: Vec<String> = Vec::new();
                 for g in groups.iter() {
-                    if g.agents.iter().any(|a| a == "*" ) {
+                    if g.agents.iter().any(|a| a == "*") {
                         for d in &g.disallow {
                             if !d.is_empty() && d != "/" {
                                 wildcard_disallow.push(d.clone());
@@ -89,7 +100,10 @@ pub async fn probe(client: &reqwest::Client, target: &Target) -> anyhow::Result<
                 let detail = if detail_parts.is_empty() {
                     "robots.txt parsed but no useful directives found".to_string()
                 } else {
-                    format!("robots.txt: {} — show sample rules below.", detail_parts.join(", "))
+                    format!(
+                        "robots.txt: {} — show sample rules below.",
+                        detail_parts.join(", ")
+                    )
                 };
 
                 crate::try_push_finding(
@@ -116,7 +130,10 @@ pub async fn probe(client: &reqwest::Client, target: &Target) -> anyhow::Result<
                             target,
                             Severity::Low,
                             format!("robots.txt disallow rules ({})", disallowed.len()),
-                            format!("Disallow rules (wildcard group '*'): {}", disallowed.join(", ")),
+                            format!(
+                                "Disallow rules (wildcard group '*'): {}",
+                                disallowed.join(", ")
+                            ),
                         )
                         .tag("robots")
                         .tag("recon"),

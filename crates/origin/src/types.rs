@@ -90,11 +90,7 @@ mod tests {
 
     #[test]
     fn origin_candidate_serializes_cleanly() {
-        let candidate = OriginCandidate::new(
-            "192.0.2.10".parse().unwrap(),
-            "http_header",
-            75,
-        );
+        let candidate = OriginCandidate::new("192.0.2.10".parse().unwrap(), "http_header", 75);
         let value = serde_json::to_value(candidate).unwrap();
         assert_eq!(value["ip"], json!("192.0.2.10"));
         assert_eq!(value["method"], json!("http_header"));

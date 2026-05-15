@@ -39,13 +39,7 @@ fn check_args_fail(args: &[&str]) {
 
 #[test]
 fn each_subcommand_help_succeeds() {
-    for sc in [
-        "scan",
-        "subdomain",
-        "ports",
-        "dns",
-        "list-scans",
-    ] {
+    for sc in ["scan", "subdomain", "ports", "dns", "list-scans"] {
         check_args_succeed(&[sc, "--help"]);
     }
 }

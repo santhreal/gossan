@@ -88,7 +88,8 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
 
     // ── X-Frame-Options ─────────────────────────────────────────────────
     if headers.get("x-frame-options").is_none()
-        && headers.get("content-security-policy")
+        && headers
+            .get("content-security-policy")
             .and_then(|v| v.to_str().ok())
             .map_or(true, |csp| !csp.contains("frame-ancestors"))
     {

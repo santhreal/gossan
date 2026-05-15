@@ -8,17 +8,17 @@ fn test_legendary_adversarial_permutations_generate() {
     let large_str4 = "a".repeat(64);
 
     let inputs = [
-        "", // Empty input
+        "",   // Empty input
         "\0", // Null byte
         "\x00\x00\x00\x00\x00",
         "a", // Too small? Wait, `generate` filters len >= 3 and <= 63. But what if org is "a"? It generates `a-assets` which is fine.
         &large_str1, // Huge input (exceeds 63 chars max limit normally). `generate` will just drop items.
         &large_str2, // 1MB+ input
-        "👨‍👩‍👧‍👦", // Unicode / Zalgo
+        "👨‍👩‍👧‍👦",        // Unicode / Zalgo
         "../../../../../etc/passwd", // Path traversal
         &large_str3, // Boundary 63
         &large_str4, // Boundary 64
-        "\u{FFFF}", // Boundary unicode
+        "\u{FFFF}",  // Boundary unicode
     ];
 
     for input in inputs.iter() {
@@ -40,7 +40,7 @@ fn test_legendary_adversarial_is_xml_listing() {
         &pre_content,
         &post_content,
         "../../../../../etc/passwd",
-        "👨‍👩‍👧‍👦", // Unicode / Zalgo
+        "👨‍👩‍👧‍👦",       // Unicode / Zalgo
         "\u{FFFF}", // Boundary unicode
     ];
 
@@ -53,12 +53,12 @@ fn test_legendary_adversarial_is_xml_listing() {
 fn test_legendary_adversarial_make_target() {
     let massive = "A".repeat(1_000_000);
     let inputs = [
-        "", // Empty input
-        "\0", // Null byte
-        &massive, // Massive string
+        "",                          // Empty input
+        "\0",                        // Null byte
+        &massive,                    // Massive string
         "../../../../../etc/passwd", // Path traversal
-        "👨‍👩‍👧‍👦", // Unicode / Zalgo
-        "\u{FFFF}", // Boundary unicode
+        "👨‍👩‍👧‍👦",                        // Unicode / Zalgo
+        "\u{FFFF}",                  // Boundary unicode
     ];
 
     for input in inputs.iter() {

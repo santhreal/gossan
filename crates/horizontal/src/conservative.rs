@@ -21,17 +21,17 @@
 
 use async_trait::async_trait;
 use gossan_core::{Config, ScanInput, Scanner, Target};
+use rustls::pki_types::ServerName;
+use rustls::ClientConfig;
 use secfinding::{Evidence, Severity};
 use std::collections::HashSet;
 use std::net::IpAddr;
 use std::sync::Arc;
-use tokio::net::TcpStream;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use rustls::ClientConfig;
-use rustls::pki_types::ServerName;
+use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
-use x509_cert::Certificate;
 use x509_cert::der::Decode;
+use x509_cert::Certificate;
 
 // ---------------------------------------------------------------------------
 // Signal types
@@ -67,7 +67,7 @@ const EMISSION_THRESHOLD: u32 = 50;
 const AMBIENT_JARM: &[&str] = &[
     "00000000000000000000000000000000000000000000000000000000000000", // empty
     "27d40d40d29d40d1dc42d43d00041d4689ee210f31b69966d2ca5cbdcea5a4", // Cloudflare
-    "29d29d15d29d29d29d29d29d29d29de1a3c0b40e3adf9e5c3de16c8210fb1", // Cloudflare alt
+    "29d29d15d29d29d29d29d29d29d29de1a3c0b40e3adf9e5c3de16c8210fb1",  // Cloudflare alt
     "27d3ed3ed0003ed1dc42d43d00041d6183ff1bfae51ebd88d70e",           // Akamai
 ];
 
@@ -81,9 +81,14 @@ const AMBIENT_FAVICON: &[i32] = &[
 
 /// RFC 1918 addresses too common to be organizational identifiers.
 const AMBIENT_INTERNAL_IPS: &[&str] = &[
-    "10.0.0.1", "10.0.0.2", "10.0.1.1",
-    "192.168.0.1", "192.168.1.1", "192.168.1.254",
-    "172.16.0.1", "127.0.0.1",
+    "10.0.0.1",
+    "10.0.0.2",
+    "10.0.1.1",
+    "192.168.0.1",
+    "192.168.1.1",
+    "192.168.1.254",
+    "172.16.0.1",
+    "127.0.0.1",
 ];
 
 // ---------------------------------------------------------------------------
@@ -167,8 +172,13 @@ fn extract_internal_ips(headers: &[(String, String)]) -> HashSet<String> {
         ).expect("compile-time RFC-1918 regex literal must compile")
     });
     let leak_headers = [
-        "x-forwarded-for", "x-real-ip", "x-backend-server", "x-served-by",
-        "x-host", "via", "x-forwarded-host",
+        "x-forwarded-for",
+        "x-real-ip",
+        "x-backend-server",
+        "x-served-by",
+        "x-host",
+        "via",
+        "x-forwarded-host",
     ];
     let mut ips = HashSet::new();
     for (name, value) in headers {
@@ -243,9 +253,8 @@ async fn get_dns_ips(
 }
 
 async fn get_jarm_fingerprint(host: &str) -> anyhow::Result<String> {
-    let fp = gossan_portscan::jarm::fingerprint(
-        host, 443, std::time::Duration::from_secs(5), None,
-    ).await;
+    let fp = gossan_portscan::jarm::fingerprint(host, 443, std::time::Duration::from_secs(5), None)
+        .await;
     match fp {
         Some(jarm) => Ok(jarm),
         None => anyhow::bail!("failed to get jarm fingerprint for {}", host),
@@ -272,7 +281,7 @@ async fn get_favicon_hash(
     host: &str,
     max_size: usize,
 ) -> anyhow::Result<i32> {
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
     let url = format!("http://{}/favicon.ico", host);
     let resp = client.get(&url).send().await?;
     let b = gossan_core::ratelimit::read_response_limited(resp, max_size).await?;
@@ -297,9 +306,8 @@ async fn get_ssh_host_key(host: &str) -> anyhow::Result<String> {
     let mut stream = TcpStream::connect(addr).await?;
 
     let mut banner = vec![0; 256];
-    let n = tokio::time::timeout(
-        std::time::Duration::from_secs(2), stream.read(&mut banner),
-    ).await??;
+    let n =
+        tokio::time::timeout(std::time::Duration::from_secs(2), stream.read(&mut banner)).await??;
     if n == 0 {
         anyhow::bail!("ssh connection closed for {}", host);
     }
@@ -307,9 +315,8 @@ async fn get_ssh_host_key(host: &str) -> anyhow::Result<String> {
     stream.write_all(b"SSH-2.0-Gossan_1.0\r\n").await?;
 
     let mut kex = vec![0; 4096];
-    let n = tokio::time::timeout(
-        std::time::Duration::from_secs(2), stream.read(&mut kex),
-    ).await??;
+    let n =
+        tokio::time::timeout(std::time::Duration::from_secs(2), stream.read(&mut kex)).await??;
     if n == 0 {
         anyhow::bail!("ssh connection closed after banner for {}", host);
     }
@@ -333,7 +340,10 @@ async fn get_cert_serial(host: &str) -> anyhow::Result<Vec<u8>> {
     let server_name = ServerName::try_from(host.to_string())?.to_owned();
 
     let stream = connector.connect(server_name, stream).await?;
-    let certs = stream.get_ref().1.peer_certificates()
+    let certs = stream
+        .get_ref()
+        .1
+        .peer_certificates()
         .ok_or_else(|| anyhow::anyhow!("no certificates found for {}", host))?;
 
     if let Some(cert) = certs.first() {
@@ -473,8 +483,11 @@ impl SeedFingerprint {
 
         // Shared tracking/analytics IDs
         if !self.tracking_ids.is_empty() {
-            let shared: Vec<_> = self.tracking_ids.intersection(&t_tracking_ids)
-                .cloned().collect();
+            let shared: Vec<_> = self
+                .tracking_ids
+                .intersection(&t_tracking_ids)
+                .cloned()
+                .collect();
             if !shared.is_empty() {
                 signals.push(Signal {
                     name: "Shared Tracking ID",
@@ -487,13 +500,19 @@ impl SeedFingerprint {
 
         // Leaked internal IPs
         if !self.internal_ips.is_empty() {
-            let shared: Vec<_> = self.internal_ips.intersection(&t_internal_ips)
-                .cloned().collect();
+            let shared: Vec<_> = self
+                .internal_ips
+                .intersection(&t_internal_ips)
+                .cloned()
+                .collect();
             if !shared.is_empty() {
                 signals.push(Signal {
                     name: "Leaked Internal IP",
                     weight: 35,
-                    detail: format!("same RFC 1918 address leaked in headers: {}", shared.join(", ")),
+                    detail: format!(
+                        "same RFC 1918 address leaked in headers: {}",
+                        shared.join(", ")
+                    ),
                     matched_value: shared.join(", "),
                 });
             }
@@ -513,8 +532,11 @@ impl SeedFingerprint {
 
         // CORS non-public origin match
         if !self.cors_origins.is_empty() {
-            let shared: Vec<_> = self.cors_origins.intersection(&t_cors_origins)
-                .cloned().collect();
+            let shared: Vec<_> = self
+                .cors_origins
+                .intersection(&t_cors_origins)
+                .cloned()
+                .collect();
             if !shared.is_empty() {
                 signals.push(Signal {
                     name: "CORS Allowed Origin",
@@ -567,7 +589,10 @@ impl SeedFingerprint {
                         signals.push(Signal {
                             name: "JARM TLS Fingerprint",
                             weight: 10,
-                            detail: format!("same JARM (non-CDN): {}", &t_jarm[..16.min(t_jarm.len())]),
+                            detail: format!(
+                                "same JARM (non-CDN): {}",
+                                &t_jarm[..16.min(t_jarm.len())]
+                            ),
                             matched_value: t_jarm,
                         });
                     }
@@ -585,10 +610,17 @@ impl SeedFingerprint {
                             weight: 5,
                             detail: format!(
                                 "resolves to same IP(s): {}",
-                                t_dns.iter().map(|ip| ip.to_string()).collect::<Vec<_>>().join(", ")
+                                t_dns
+                                    .iter()
+                                    .map(|ip| ip.to_string())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
                             ),
-                            matched_value: t_dns.iter()
-                                .map(|ip| ip.to_string()).collect::<Vec<_>>().join(", "),
+                            matched_value: t_dns
+                                .iter()
+                                .map(|ip| ip.to_string())
+                                .collect::<Vec<_>>()
+                                .join(", "),
                         });
                     }
                 }
@@ -687,17 +719,13 @@ impl Scanner for ConservativeScanner {
     }
 
     async fn run(&self, input: ScanInput, config: &Config) -> anyhow::Result<()> {
-
-        let client = gossan_core::ScanClient::from_config(
-            config, Arc::clone(&input.resolver),
-        )?;
+        let client = gossan_core::ScanClient::from_config(config, Arc::clone(&input.resolver))?;
         let resolver = Arc::clone(&input.resolver);
         let seed = &input.seed;
 
         // Collect all signals from the seed target once.
-        let fingerprint = SeedFingerprint::collect(
-            &client, &resolver, seed, config.max_response_size,
-        ).await;
+        let fingerprint =
+            SeedFingerprint::collect(&client, &resolver, seed, config.max_response_size).await;
 
         // Drain the inbound target stream. Conservative campaign
         // matching scores each candidate against the seed fingerprint,
@@ -724,15 +752,16 @@ impl Scanner for ConservativeScanner {
                 continue;
             }
 
-            let signals = fingerprint.compare(
-                &client, &resolver, host, config.max_response_size,
-            ).await;
+            let signals = fingerprint
+                .compare(&client, &resolver, host, config.max_response_size)
+                .await;
 
             let total_weight: u32 = signals.iter().map(|s| s.weight).sum();
 
             if total_weight >= EMISSION_THRESHOLD {
                 let signal_names: Vec<_> = signals.iter().map(|s| s.name).collect();
-                let signal_details: Vec<_> = signals.iter()
+                let signal_details: Vec<_> = signals
+                    .iter()
                     .map(|s| format!("  [{}] (weight: {}) {}", s.name, s.weight, s.detail))
                     .collect();
 
@@ -744,28 +773,27 @@ impl Scanner for ConservativeScanner {
                 // double-emit relic from the earlier API.
                 input.emit_target(target.clone());
 
-                let mut builder = secfinding::Finding::builder(
-                    "conservative", host, Severity::Info,
-                )
-                .title(format!(
-                    "Campaign candidate: {} signals matched (score: {})",
-                    signal_names.len(), total_weight,
-                ))
-                .detail(format!(
+                let mut builder =
+                    secfinding::Finding::builder("conservative", host, Severity::Info)
+                        .title(format!(
+                            "Campaign candidate: {} signals matched (score: {})",
+                            signal_names.len(),
+                            total_weight,
+                        ))
+                        .detail(format!(
                     "Target {} correlates with seed {} via {} independent infrastructure signals \
                      (cumulative weight: {}/{}):\n{}",
                     host, seed, signals.len(), total_weight, EMISSION_THRESHOLD,
                     signal_details.join("\n"),
                 ))
-                .confidence(confidence)
-                .tag("conservative")
-                .tag("campaign-candidate")
-                .kind(secfinding::FindingKind::InfoDisclosure);
+                        .confidence(confidence)
+                        .tag("conservative")
+                        .tag("campaign-candidate")
+                        .kind(secfinding::FindingKind::InfoDisclosure);
 
                 for signal in &signals {
-                    builder = builder.matched_value(format!(
-                        "{}={}", signal.name, signal.matched_value,
-                    ));
+                    builder =
+                        builder.matched_value(format!("{}={}", signal.name, signal.matched_value));
                 }
 
                 // Attach structured signal evidence as JSON

@@ -119,16 +119,11 @@ fn run_tx_hot_loop_parallel(
                 let target_cpu = thread_id % cpu_count;
                 let mut cpuset: libc::cpu_set_t = std::mem::zeroed();
                 libc::CPU_SET(target_cpu, &mut cpuset);
-                let _ = libc::sched_setaffinity(
-                    0,
-                    std::mem::size_of::<libc::cpu_set_t>(),
-                    &cpuset,
-                );
+                let _ = libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &cpuset);
             }
             let encoder = SeqEncoder::new();
             let backend = CountingEngine::new();
-            let mut batch: Vec<RawPacket> =
-                (0..batch_size).map(|_| template.clone()).collect();
+            let mut batch: Vec<RawPacket> = (0..batch_size).map(|_| template.clone()).collect();
             let mut batch_len = 0usize;
             let mut local_sent = 0u64;
 
@@ -234,7 +229,11 @@ fn engine_tx_hot_loop_4_threads_scales() {
 fn engine_tx_hot_loop_2_threads_meets_gate() {
     let num_targets: u64 = 65_536;
     let num_ports: u64 = 100;
-    if std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1) < 2 {
+    if std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        < 2
+    {
         return;
     }
     let start = std::time::Instant::now();
@@ -282,7 +281,9 @@ fn engine_tx_hot_loop_16_threads_documented() {
         .map(|n| n.get())
         .unwrap_or(1);
     if cpu_count < 16 {
-        eprintln!("skipping engine_tx_hot_loop_16_threads_documented: needs ≥16 CPUs, have {cpu_count}");
+        eprintln!(
+            "skipping engine_tx_hot_loop_16_threads_documented: needs ≥16 CPUs, have {cpu_count}"
+        );
         return;
     }
     let start = std::time::Instant::now();

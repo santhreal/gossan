@@ -39,12 +39,7 @@ impl IntelSource for PassiveDnsSource {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Passive DNS requires an API key"))?;
         let url = format!("{}/lookup/rdata/{ip}", self.endpoint);
-        let resp = self
-            .client
-            .get(&url)
-            .bearer_auth(api_key)
-            .send()
-            .await?;
+        let resp = self.client.get(&url).bearer_auth(api_key).send().await?;
         let body: PdnsResp = resp.error_for_status()?.json().await?;
 
         let mut enrichment = IntelEnrichment::new("passive_dns", "ip", ip);
@@ -66,12 +61,7 @@ impl IntelSource for PassiveDnsSource {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Passive DNS requires an API key"))?;
         let url = format!("{}/lookup/rrset/name/{domain}", self.endpoint);
-        let resp = self
-            .client
-            .get(&url)
-            .bearer_auth(api_key)
-            .send()
-            .await?;
+        let resp = self.client.get(&url).bearer_auth(api_key).send().await?;
         let body: PdnsResp = resp.error_for_status()?.json().await?;
 
         let mut enrichment = IntelEnrichment::new("passive_dns", "domain", domain);

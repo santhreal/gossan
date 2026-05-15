@@ -48,13 +48,17 @@ impl CloudProvider for S3Provider {
 
             if let Ok(resp) = client.get(&vhost).send().await {
                 status = resp.status().as_u16();
-                body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
+                body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
+                    .await
+                    .unwrap_or_default();
             }
             // Retry path-style ONLY if we are using the real AWS endpoint
             if (status == 0 || status == 301) && vhost.contains("amazonaws.com") {
                 if let Ok(resp) = client.get(&path).send().await {
                     status = resp.status().as_u16();
-                    body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
+                    body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
+                        .await
+                        .unwrap_or_default();
                     eff = path.clone();
                 }
             }
@@ -90,7 +94,8 @@ impl CloudProvider for S3Provider {
                 try_write(client, name, &effective_url, target, &mut findings).await;
             }
             403 => {
-                gossan_core::try_push_finding(crate::finding_builder(
+                gossan_core::try_push_finding(
+                    crate::finding_builder(
                         target,
                         Severity::Low,
                         format!("S3 bucket exists (access denied): {}", name),
@@ -106,7 +111,9 @@ impl CloudProvider for S3Provider {
                         body_excerpt: None,
                     })
                     .tag("s3")
-                    .tag("cloud"), &mut findings);
+                    .tag("cloud"),
+                    &mut findings,
+                );
                 // A 403 on GET / doesn't mean PUT is blocked — common misconfiguration
                 try_write(client, name, &effective_url, target, &mut findings).await;
             }

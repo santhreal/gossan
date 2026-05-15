@@ -101,7 +101,7 @@ impl super::super::CorrelationRule for SourceCodeSecretsRule {
             secret_types.join(", "),
         ))
         .kind(FindingKind::Vulnerability)
-                        .tag("chain")
+        .tag("chain")
         .tag("source-exposure")
         .tag("credential-leak")
         .build_or_log();
@@ -118,7 +118,8 @@ mod tests {
     fn finding(scanner: &str, target: &str, title: &str) -> Finding {
         Finding::builder(scanner, target, Severity::High)
             .title(title)
-            .build().expect("test finding")
+            .build()
+            .expect("test finding")
     }
 
     #[test]

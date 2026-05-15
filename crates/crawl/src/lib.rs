@@ -13,7 +13,7 @@
 #![allow(
     clippy::module_name_repetitions,
     clippy::must_use_candidate,
-    clippy::missing_errors_doc,
+    clippy::missing_errors_doc
 )]
 
 //! Authenticated web crawler — form extraction, parameter discovery, link following.
@@ -29,8 +29,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use chromiumoxide::{Browser, BrowserConfig};
 use gossan_core::{
-    Config, DiscoveredForm, DiscoveredParam, ParamLocation, ParamSource, ScanInput,
-    Scanner, Target, WebAssetTarget,
+    Config, DiscoveredForm, DiscoveredParam, ParamLocation, ParamSource, ScanInput, Scanner,
+    Target, WebAssetTarget,
 };
 use url::Url;
 
@@ -50,7 +50,6 @@ impl Scanner for CrawlScanner {
     }
 
     async fn run(&self, input: ScanInput, config: &Config) -> anyhow::Result<()> {
-
         let (browser, mut handler) = Browser::launch(
             BrowserConfig::builder()
                 .with_head()
@@ -168,27 +167,53 @@ async fn crawl_asset(
                 // 1. Process Extracted Forms
                 if let Some(forms_arr) = val.get("forms").and_then(|v| v.as_array()) {
                     for f in forms_arr {
-                        let action = f.get("action").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        let method = f.get("method").and_then(|v| v.as_str()).unwrap_or("GET").to_string();
+                        let action = f
+                            .get("action")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let method = f
+                            .get("method")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("GET")
+                            .to_string();
                         let mut inputs = Vec::new();
-                        
+
                         if let Some(ins) = f.get("inputs").and_then(|v| v.as_array()) {
                             for i in ins {
                                 if let Some(pair) = i.as_array() {
-                                    let name = pair.first().and_then(|v| v.as_str()).unwrap_or("").to_string();
-                                    let typ = pair.get(1).and_then(|v| v.as_str()).unwrap_or("text").to_string();
+                                    let name = pair
+                                        .first()
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
+                                    let typ = pair
+                                        .get(1)
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("text")
+                                        .to_string();
                                     inputs.push((name, typ));
                                 }
                             }
                         }
 
-                        let df = DiscoveredForm { action, method, inputs };
-                        if !all_forms.iter().any(|existing| existing.action == df.action && existing.method == df.method) {
+                        let df = DiscoveredForm {
+                            action,
+                            method,
+                            inputs,
+                        };
+                        if !all_forms.iter().any(|existing| {
+                            existing.action == df.action && existing.method == df.method
+                        }) {
                             for (name, _t) in &df.inputs {
                                 if !all_params.iter().any(|p| p.name == *name) {
                                     all_params.push(DiscoveredParam {
                                         name: name.clone(),
-                                        location: if df.method.eq_ignore_ascii_case("POST") { ParamLocation::Body } else { ParamLocation::Query },
+                                        location: if df.method.eq_ignore_ascii_case("POST") {
+                                            ParamLocation::Body
+                                        } else {
+                                            ParamLocation::Query
+                                        },
                                         source: ParamSource::HtmlForm,
                                     });
                                 }
@@ -204,7 +229,9 @@ async fn crawl_asset(
                         for l in links_arr {
                             if let Some(href) = l.as_str() {
                                 if let Ok(u) = Url::parse(href) {
-                                    if u.host_str() == Some(&base_host) && !visited.contains(u.as_str()) {
+                                    if u.host_str() == Some(&base_host)
+                                        && !visited.contains(u.as_str())
+                                    {
                                         discovered_urls.push(u.clone());
                                         queue.push((u, depth + 1));
                                     }

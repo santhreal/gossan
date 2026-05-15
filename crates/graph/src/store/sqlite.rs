@@ -2,8 +2,8 @@
 
 use std::path::Path;
 
-use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use chrono::NaiveDateTime;
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
 use crate::schema::{EdgeType, NodeType, SCHEMA_VERSION};
 use crate::store::GraphBackend;
@@ -272,12 +272,13 @@ impl SqliteBackend {
         )?;
         let rows = stmt.query_map(params![threshold_datetime], |row| {
             let data: String = row.get(0)?;
-            serde_json::from_str::<gossan_core::Target>(&data)
-                .map_err(|e| rusqlite::Error::FromSqlConversionFailure(
+            serde_json::from_str::<gossan_core::Target>(&data).map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
                     0,
                     rusqlite::types::Type::Text,
                     Box::new(e),
-                ))
+                )
+            })
         })?;
         for r in rows {
             diff.removed_targets.push(r?);
@@ -312,14 +313,14 @@ impl SqliteBackend {
             .unwrap_or_default();
         let first_seen = Self::ms_to_datetime(node.first_seen_ms);
         let last_seen = Self::ms_to_datetime(node.last_seen_ms);
-        
+
         // Determine table based on node type
         let table = if node.kind == NodeType::Finding {
             "findings"
         } else {
             "targets"
         };
-        
+
         let insert_query = format!(
             "INSERT OR IGNORE INTO {} (id, kind, label, data, first_seen, last_seen) 
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -336,15 +337,12 @@ impl SqliteBackend {
                 last_seen
             ],
         )?;
-        
+
         let update_query = format!(
             "UPDATE {} SET last_seen = ?2, data = ?3 WHERE id = ?1",
             table
         );
-        tx.execute(
-            &update_query,
-            params![node.id, last_seen, data],
-        )?;
+        tx.execute(&update_query, params![node.id, last_seen, data])?;
         Ok(())
     }
 
@@ -356,7 +354,7 @@ impl SqliteBackend {
             .unwrap_or_default();
         let first_seen = Self::ms_to_datetime(edge.first_seen_ms);
         let last_seen = Self::ms_to_datetime(edge.last_seen_ms);
-        
+
         tx.execute(
             "INSERT OR IGNORE INTO relationships (source_id, target_id, rel_type, data, first_seen, last_seen)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -372,7 +370,13 @@ impl SqliteBackend {
         tx.execute(
             "UPDATE relationships SET last_seen = ?4, data = ?5
              WHERE source_id = ?1 AND target_id = ?2 AND rel_type = ?3",
-            params![edge.source_id, edge.target_id, edge.kind.to_string(), last_seen, data],
+            params![
+                edge.source_id,
+                edge.target_id,
+                edge.kind.to_string(),
+                last_seen,
+                data
+            ],
         )?;
         Ok(())
     }
@@ -487,11 +491,11 @@ impl GraphBackend for SqliteBackend {
 
     fn read_nodes(&self) -> Result<Vec<Node>, Self::Error> {
         let mut nodes = Vec::new();
-        
+
         // Read from targets table
-        let mut stmt = self.conn.prepare(
-            "SELECT id, kind, label, data, first_seen, last_seen FROM targets",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, kind, label, data, first_seen, last_seen FROM targets")?;
         let target_rows = stmt.query_map([], |row| {
             let kind_str: String = row.get(1)?;
             let data_str: String = row.get(3)?;
@@ -513,11 +517,11 @@ impl GraphBackend for SqliteBackend {
         for row in target_rows {
             nodes.push(row?);
         }
-        
+
         // Read from findings table
-        let mut stmt = self.conn.prepare(
-            "SELECT id, kind, label, data, first_seen, last_seen FROM findings",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, kind, label, data, first_seen, last_seen FROM findings")?;
         let finding_rows = stmt.query_map([], |row| {
             let kind_str: String = row.get(1)?;
             let data_str: String = row.get(3)?;
@@ -539,7 +543,7 @@ impl GraphBackend for SqliteBackend {
         for row in finding_rows {
             nodes.push(row?);
         }
-        
+
         Ok(nodes)
     }
 
@@ -565,8 +569,7 @@ impl GraphBackend for SqliteBackend {
                 last_seen_ms: Self::datetime_to_ms(&last_seen_str),
             })
         })?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(Into::into)
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
     fn find_nodes_by_type(&self, kind: NodeType) -> Result<Vec<Node>, Self::Error> {
@@ -576,7 +579,7 @@ impl GraphBackend for SqliteBackend {
         } else {
             "targets"
         };
-        
+
         let query = format!(
             "SELECT id, kind, label, data, first_seen, last_seen FROM {} WHERE kind = ?1",
             table
@@ -599,8 +602,7 @@ impl GraphBackend for SqliteBackend {
                 last_seen_ms: Self::datetime_to_ms(&last_seen_str),
             })
         })?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(Into::into)
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
     fn neighbors(
@@ -641,8 +643,7 @@ impl GraphBackend for SqliteBackend {
             Some(et) => stmt.query_map(params![node_id, et.to_string()], map_row)?,
             None => stmt.query_map(params![node_id], map_row)?,
         };
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(Into::into)
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
     fn clear(&mut self) -> Result<(), Self::Error> {
@@ -693,9 +694,7 @@ fn target_to_node(target: &gossan_core::Target) -> Node {
     let (kind, label) = match target {
         gossan_core::Target::Domain(d) => (NodeType::Domain, d.domain.clone()),
         gossan_core::Target::Host(h) => (NodeType::Ip, h.ip.to_string()),
-        gossan_core::Target::Service(s) => {
-            (NodeType::Service, format!("{}:{}", s.host.ip, s.port))
-        }
+        gossan_core::Target::Service(s) => (NodeType::Service, format!("{}:{}", s.host.ip, s.port)),
         gossan_core::Target::Web(w) => (NodeType::Endpoint, w.url.to_string()),
         gossan_core::Target::Network(n) => (NodeType::Ip, n.cidr.clone()),
         gossan_core::Target::Repository(r) => (NodeType::Endpoint, r.url.to_string()),
@@ -828,38 +827,34 @@ mod tests {
 
     #[test]
     fn target_id_from_finding_ipv4() {
-        let f = secfinding::Finding::new("s", "1.2.3.4", secfinding::Severity::Info, "t", "")
-            .unwrap();
+        let f =
+            secfinding::Finding::new("s", "1.2.3.4", secfinding::Severity::Info, "t", "").unwrap();
         assert_eq!(target_id_from_finding(&f).unwrap(), "host:1.2.3.4");
     }
 
     #[test]
     fn target_id_from_finding_ipv6() {
-        let f =
-            secfinding::Finding::new("s", "::1", secfinding::Severity::Info, "t", "").unwrap();
+        let f = secfinding::Finding::new("s", "::1", secfinding::Severity::Info, "t", "").unwrap();
         assert_eq!(target_id_from_finding(&f).unwrap(), "host:::1");
     }
 
     #[test]
     fn target_id_from_finding_service() {
-        let f =
-            secfinding::Finding::new("s", "1.2.3.4:443", secfinding::Severity::Info, "t", "")
-                .unwrap();
+        let f = secfinding::Finding::new("s", "1.2.3.4:443", secfinding::Severity::Info, "t", "")
+            .unwrap();
         assert_eq!(target_id_from_finding(&f).unwrap(), "service:1.2.3.4:443");
     }
 
     #[test]
     fn target_id_from_finding_domain_with_port() {
-        let f = secfinding::Finding::new(
-            "s",
-            "example.com:443",
-            secfinding::Severity::Info,
-            "t",
-            "",
-        )
-        .unwrap();
+        let f =
+            secfinding::Finding::new("s", "example.com:443", secfinding::Severity::Info, "t", "")
+                .unwrap();
         // Domain with port but no scheme falls through to domain.
-        assert_eq!(target_id_from_finding(&f).unwrap(), "domain:example.com:443");
+        assert_eq!(
+            target_id_from_finding(&f).unwrap(),
+            "domain:example.com:443"
+        );
     }
 
     #[test]

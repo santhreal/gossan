@@ -13,14 +13,10 @@
 
 use gossan_core::Target;
 use hickory_resolver::{proto::rr::RecordType, TokioAsyncResolver};
-use secfinding::{Evidence, Finding, Severity, FindingKind};
+use secfinding::{Evidence, Finding, FindingKind, Severity};
 
 /// Run all posture checks.
-pub async fn check(
-    resolver: &TokioAsyncResolver,
-    domain: &str,
-    target: &Target,
-) -> Vec<Finding> {
+pub async fn check(resolver: &TokioAsyncResolver, domain: &str, target: &Target) -> Vec<Finding> {
     let mut findings = Vec::new();
     findings.extend(check_caa(resolver, domain, target).await);
     findings.extend(check_mx_info(resolver, domain, target).await);
@@ -32,11 +28,7 @@ pub async fn check(
 // ── SOA ─────────────────────────────────────────────────────────────────────
 
 /// Start of Authority (SOA) record audit.
-async fn check_soa(
-    resolver: &TokioAsyncResolver,
-    domain: &str,
-    target: &Target,
-) -> Vec<Finding> {
+async fn check_soa(resolver: &TokioAsyncResolver, domain: &str, target: &Target) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     let soa_records = match resolver.lookup(domain, RecordType::SOA).await {
@@ -197,18 +189,42 @@ async fn check_ns_resilience(
 fn detect_ns_provider(nameservers: &[String]) -> Option<&'static str> {
     for ns in nameservers {
         let lower = ns.to_lowercase();
-        if lower.contains("awsdns") { return Some("AWS Route 53"); }
-        if lower.contains("cloudflare") { return Some("Cloudflare"); }
-        if lower.contains("googledomains") || lower.contains("google.com") { return Some("Google DNS"); }
-        if lower.contains("azure-dns") { return Some("Azure DNS"); }
-        if lower.contains("cscdns") { return Some("CSC Digital Brand Services"); }
-        if lower.contains("ultradns") { return Some("Vercara (UltraDNS)"); }
-        if lower.contains("dynect") { return Some("Oracle Dyn"); }
-        if lower.contains("akam") { return Some("Akamai"); }
-        if lower.contains("dnsmadeeasy") { return Some("DigiCert (DNS Made Easy)"); }
-        if lower.contains("nsone") { return Some("IBM NS1"); }
-        if lower.contains("digitalocean") { return Some("DigitalOcean"); }
-        if lower.contains("linode") { return Some("Linode"); }
+        if lower.contains("awsdns") {
+            return Some("AWS Route 53");
+        }
+        if lower.contains("cloudflare") {
+            return Some("Cloudflare");
+        }
+        if lower.contains("googledomains") || lower.contains("google.com") {
+            return Some("Google DNS");
+        }
+        if lower.contains("azure-dns") {
+            return Some("Azure DNS");
+        }
+        if lower.contains("cscdns") {
+            return Some("CSC Digital Brand Services");
+        }
+        if lower.contains("ultradns") {
+            return Some("Vercara (UltraDNS)");
+        }
+        if lower.contains("dynect") {
+            return Some("Oracle Dyn");
+        }
+        if lower.contains("akam") {
+            return Some("Akamai");
+        }
+        if lower.contains("dnsmadeeasy") {
+            return Some("DigiCert (DNS Made Easy)");
+        }
+        if lower.contains("nsone") {
+            return Some("IBM NS1");
+        }
+        if lower.contains("digitalocean") {
+            return Some("DigitalOcean");
+        }
+        if lower.contains("linode") {
+            return Some("Linode");
+        }
     }
     None
 }
@@ -246,9 +262,7 @@ pub fn parse_caa(record: &str) -> Option<CaaEntry> {
     let tag = it.next()?.trim().to_string();
     let value_raw = it.next()?.trim();
     let flags: u8 = flags_s.parse().ok()?;
-    let value = value_raw
-        .trim_matches('"')
-        .to_string();
+    let value = value_raw.trim_matches('"').to_string();
     Some(CaaEntry {
         critical: flags & 0x80 != 0,
         tag,
@@ -310,24 +324,20 @@ impl CaaRrset {
     }
 }
 
-
 /// Certificate Authority Authorization audit.
 ///
 /// Checks:
 /// - Presence of CAA records (missing = any CA can issue)
 /// - `issuewild` restrictions (missing = wildcard certs uncontrolled)
 /// - `iodef` reporting URI (best practice for incident notification)
-async fn check_caa(
-    resolver: &TokioAsyncResolver,
-    domain: &str,
-    target: &Target,
-) -> Vec<Finding> {
+async fn check_caa(resolver: &TokioAsyncResolver, domain: &str, target: &Target) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     let caa_records = match resolver.lookup(domain, RecordType::CAA).await {
         Ok(r) => r,
         Err(_) => {
-            gossan_core::try_push_finding(Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Low)
+            gossan_core::try_push_finding(
+                Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Low)
                     .title("No CAA records — any CA may issue certificates")
                     .detail(format!(
                         "{domain} has no CAA DNS records. Any Certificate Authority \
@@ -336,7 +346,11 @@ async fn check_caa(
                          unauthorized certificate creation."
                     ))
                     .kind(FindingKind::Misconfiguration)
-                    .tag("dns").tag("caa").tag("certificates"), &mut findings);
+                    .tag("dns")
+                    .tag("caa")
+                    .tag("certificates"),
+                &mut findings,
+            );
             return findings;
         }
     };
@@ -361,36 +375,52 @@ async fn check_caa(
     }
 
     if has_issue {
-        gossan_core::try_push_finding(Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Info)
-                .title(format!("CAA restricts certificate issuance to {} CA(s)", cas.len()))
+        gossan_core::try_push_finding(
+            Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Info)
+                .title(format!(
+                    "CAA restricts certificate issuance to {} CA(s)",
+                    cas.len()
+                ))
                 .detail(format!(
                     "{domain} has CAA records restricting TLS certificate issuance: {}",
                     cas.join(", ")
                 ))
                 .kind(FindingKind::Misconfiguration)
-                .tag("dns").tag("caa").tag("good"), &mut findings);
+                .tag("dns")
+                .tag("caa")
+                .tag("good"),
+            &mut findings,
+        );
     }
 
     if !has_issuewild {
-        gossan_core::try_push_finding(Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Info)
+        gossan_core::try_push_finding(
+            Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Info)
                 .title("CAA missing issuewild restriction")
                 .detail(format!(
                     "{domain} has CAA issue records but no issuewild. \
                      Wildcard certificates (*.{domain}) are not explicitly restricted."
                 ))
                 .kind(FindingKind::Misconfiguration)
-                .tag("dns").tag("caa"), &mut findings);
+                .tag("dns")
+                .tag("caa"),
+            &mut findings,
+        );
     }
 
     if !has_iodef {
-        gossan_core::try_push_finding(Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Info)
+        gossan_core::try_push_finding(
+            Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Info)
                 .title("CAA missing iodef (incident reporting URI)")
                 .detail(format!(
                     "{domain} CAA records have no iodef tag. \
                      CAs will not notify you of rejected certificate requests."
                 ))
                 .kind(FindingKind::Misconfiguration)
-                .tag("dns").tag("caa"), &mut findings);
+                .tag("dns")
+                .tag("caa"),
+            &mut findings,
+        );
     }
 
     findings
@@ -433,7 +463,8 @@ async fn check_mx_info(
     // Detect common mail providers for tech intelligence
     let provider = detect_mail_provider(&exchanges);
 
-    gossan_core::try_push_finding(Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Info)
+    gossan_core::try_push_finding(
+        Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Info)
             .title(format!(
                 "Mail topology: {} MX record(s) — {}",
                 exchanges.len(),
@@ -448,7 +479,11 @@ async fn check_mx_info(
                 record_type: "MX".into(),
                 value: topology.join("; ").into(),
             })
-            .tag("dns").tag("mx").tag("intel"), &mut findings);
+            .tag("dns")
+            .tag("mx")
+            .tag("intel"),
+        &mut findings,
+    );
 
     findings
 }
@@ -579,10 +614,7 @@ mod tests {
 
     #[test]
     fn caa_authorized_cas_filters_disable_marker() {
-        let records = [
-            r#"0 issue "letsencrypt.org""#,
-            r#"0 issue ";""#,
-        ];
+        let records = [r#"0 issue "letsencrypt.org""#, r#"0 issue ";""#];
         let rrset = CaaRrset::from_records(records);
         let cas = rrset.authorized_cas();
         assert_eq!(cas, vec!["letsencrypt.org".to_string()]);

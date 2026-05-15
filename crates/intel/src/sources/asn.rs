@@ -47,7 +47,9 @@ impl IntelSource for AsnSource {
             region: body.region.clone(),
         });
 
-        enrichment.raw.insert("loc".to_string(), serde_json::to_value(body.loc)?);
+        enrichment
+            .raw
+            .insert("loc".to_string(), serde_json::to_value(body.loc)?);
 
         Ok(enrichment)
     }

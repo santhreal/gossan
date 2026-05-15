@@ -13,7 +13,7 @@
 #![allow(
     clippy::module_name_repetitions,
     clippy::must_use_candidate,
-    clippy::missing_errors_doc,
+    clippy::missing_errors_doc
 )]
 
 //! Intelligence scanner — online enrichment + offline bulk datasets.
@@ -171,11 +171,7 @@ impl IntelScanner {
     /// Enrich a single target using all configured sources.
     ///
     /// Emits findings via `input.emit()` and returns the number of enrichments.
-    pub async fn enrich_target(
-        &self,
-        target: &Target,
-        input: &ScanInput,
-    ) -> anyhow::Result<usize> {
+    pub async fn enrich_target(&self, target: &Target, input: &ScanInput) -> anyhow::Result<usize> {
         let mut emitted = 0usize;
 
         // 1. Offline bulk lookup (legacy)

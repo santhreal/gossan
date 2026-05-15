@@ -32,14 +32,14 @@
 #![allow(
     clippy::module_name_repetitions,
     clippy::must_use_candidate,
-    clippy::missing_errors_doc,
+    clippy::missing_errors_doc
 )]
 
 pub mod icmp_backoff;
 pub mod probe;
 pub mod rate;
-pub mod schedule;
 pub mod scan;
+pub mod schedule;
 
 pub use probe::{probe, Backend, ProbeReport};
 pub use scan::EngineScanner;

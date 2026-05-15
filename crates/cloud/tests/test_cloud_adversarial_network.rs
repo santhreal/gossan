@@ -1,14 +1,17 @@
 use gossan_cloud::{
-    apigateway::ApiGatewayProvider, cloudfront::CloudFrontProvider,
-    lambda::LambdaProvider, provider::CloudProvider, CloudScanner,
+    apigateway::ApiGatewayProvider, cloudfront::CloudFrontProvider, lambda::LambdaProvider,
+    provider::CloudProvider, CloudScanner,
 };
 use gossan_core::{Config, DiscoverySource, DomainTarget, HostTarget, ScanInput, Scanner, Target};
+use std::net::IpAddr;
+use std::sync::Arc;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
-use std::sync::Arc;
-use std::net::IpAddr;
 
-use hickory_resolver::{config::{ResolverConfig, ResolverOpts}, TokioAsyncResolver};
+use hickory_resolver::{
+    config::{ResolverConfig, ResolverOpts},
+    TokioAsyncResolver,
+};
 
 /// Build a no-op resolver for tests. The original
 /// `Resolver::builder_with_config(...).with_options(...).build()` form
@@ -31,7 +34,10 @@ fn dummy_resolver() -> Arc<TokioAsyncResolver> {
 /// targets flow in via a one-shot channel and the cancellation
 /// field doesn't exist. Returns the input plus the live-finding
 /// receiver so each test can drain emissions.
-fn streaming_input(seed: &str, targets: Vec<Target>) -> (
+fn streaming_input(
+    seed: &str,
+    targets: Vec<Target>,
+) -> (
     ScanInput,
     tokio::sync::mpsc::UnboundedReceiver<secfinding::Finding>,
 ) {
@@ -55,7 +61,7 @@ fn streaming_input(seed: &str, targets: Vec<Target>) -> (
 #[tokio::test]
 async fn test_cloudfront_adversarial_403() {
     let server: MockServer = MockServer::start().await;
-    
+
     Mock::given(method("GET"))
         .and(path("/"))
         .respond_with(ResponseTemplate::new(403).set_body_string("Some error message"))
@@ -67,13 +73,22 @@ async fn test_cloudfront_adversarial_403() {
         domain: "example.com".into(),
         source: DiscoverySource::Seed,
     });
-    
+
     struct TestCFProvider(String);
     #[async_trait::async_trait]
     impl CloudProvider for TestCFProvider {
-        fn name(&self) -> &'static str { "cloudfront" }
-        fn endpoint(&self, _name: &str) -> String { self.0.clone() }
-        async fn probe(&self, c: &reqwest::Client, n: &str, t: &Target) -> anyhow::Result<Vec<secfinding::Finding>> {
+        fn name(&self) -> &'static str {
+            "cloudfront"
+        }
+        fn endpoint(&self, _name: &str) -> String {
+            self.0.clone()
+        }
+        async fn probe(
+            &self,
+            c: &reqwest::Client,
+            n: &str,
+            t: &Target,
+        ) -> anyhow::Result<Vec<secfinding::Finding>> {
             let cf = CloudFrontProvider;
             cf.probe(c, n, t).await
         }
@@ -89,11 +104,11 @@ async fn test_multi_cloud_correlation() {
     // This test verifies that we can get multi-cloud responses for the same input domain string
     let names = vec!["aws-assets", "gcp-assets"];
     assert!(names.len() >= 2);
-    
+
     let result1 = gossan_cloud::permutations::generate(names[0]);
     let result2 = gossan_cloud::permutations::generate(names[1]);
-    
-    // Check that we can map across multiple clouds by utilizing the same domain inputs 
+
+    // Check that we can map across multiple clouds by utilizing the same domain inputs
     assert!(!result1.is_empty());
     assert!(!result2.is_empty());
 }
@@ -103,13 +118,16 @@ async fn test_multi_cloud_correlation() {
 #[test]
 fn test_cloudfront_endpoint_generation() {
     let cf = CloudFrontProvider;
-    assert_eq!(cf.endpoint("d111111abcdef8"), "https://d111111abcdef8.cloudfront.net/");
+    assert_eq!(
+        cf.endpoint("d111111abcdef8"),
+        "https://d111111abcdef8.cloudfront.net/"
+    );
 }
 
 #[tokio::test]
 async fn test_apigateway_adversarial_403() {
     let server: MockServer = MockServer::start().await;
-    
+
     Mock::given(method("GET"))
         .and(path("/"))
         .respond_with(ResponseTemplate::new(403).set_body_string("Missing Authentication Token"))
@@ -121,13 +139,22 @@ async fn test_apigateway_adversarial_403() {
         domain: "example.com".into(),
         source: DiscoverySource::Seed,
     });
-    
+
     struct TestAPIProvider(String);
     #[async_trait::async_trait]
     impl CloudProvider for TestAPIProvider {
-        fn name(&self) -> &'static str { "apigateway" }
-        fn endpoint(&self, _name: &str) -> String { self.0.clone() }
-        async fn probe(&self, c: &reqwest::Client, n: &str, t: &Target) -> anyhow::Result<Vec<secfinding::Finding>> {
+        fn name(&self) -> &'static str {
+            "apigateway"
+        }
+        fn endpoint(&self, _name: &str) -> String {
+            self.0.clone()
+        }
+        async fn probe(
+            &self,
+            c: &reqwest::Client,
+            n: &str,
+            t: &Target,
+        ) -> anyhow::Result<Vec<secfinding::Finding>> {
             let api = ApiGatewayProvider;
             api.probe(c, n, t).await
         }
@@ -141,13 +168,16 @@ async fn test_apigateway_adversarial_403() {
 #[test]
 fn test_apigateway_endpoint_generation() {
     let api = ApiGatewayProvider;
-    assert_eq!(api.endpoint("test-api"), "https://test-api.execute-api.us-east-1.amazonaws.com/");
+    assert_eq!(
+        api.endpoint("test-api"),
+        "https://test-api.execute-api.us-east-1.amazonaws.com/"
+    );
 }
 
 #[tokio::test]
 async fn test_lambda_adversarial_403() {
     let server: MockServer = MockServer::start().await;
-    
+
     Mock::given(method("GET"))
         .and(path("/"))
         .respond_with(ResponseTemplate::new(403).set_body_string("Forbidden"))
@@ -159,18 +189,27 @@ async fn test_lambda_adversarial_403() {
         domain: "example.com".into(),
         source: DiscoverySource::Seed,
     });
-    
+
     struct TestLambdaProvider(String);
     #[async_trait::async_trait]
     impl CloudProvider for TestLambdaProvider {
-        fn name(&self) -> &'static str { "lambda" }
-        fn endpoint(&self, _name: &str) -> String { self.0.clone() }
-        async fn probe(&self, c: &reqwest::Client, n: &str, t: &Target) -> anyhow::Result<Vec<secfinding::Finding>> {
+        fn name(&self) -> &'static str {
+            "lambda"
+        }
+        fn endpoint(&self, _name: &str) -> String {
+            self.0.clone()
+        }
+        async fn probe(
+            &self,
+            c: &reqwest::Client,
+            n: &str,
+            t: &Target,
+        ) -> anyhow::Result<Vec<secfinding::Finding>> {
             let lambda = LambdaProvider;
             lambda.probe(c, n, t).await
         }
     }
-    
+
     let url = server.uri() + "/";
     let resp = client.get(&url).send().await.unwrap();
     assert_eq!(resp.status().as_u16(), 403);
@@ -180,7 +219,10 @@ async fn test_lambda_adversarial_403() {
 fn test_lambda_endpoint_generation() {
     let lambda = LambdaProvider;
     let url_id = "0123456789abcdef0123456789abcdef"; // 32 chars
-    assert_eq!(lambda.endpoint(url_id), format!("https://{}.lambda-url.us-east-1.on.aws/", url_id));
+    assert_eq!(
+        lambda.endpoint(url_id),
+        format!("https://{}.lambda-url.us-east-1.on.aws/", url_id)
+    );
 }
 
 // SSRF-protection tests assert the scanner refuses to follow
@@ -207,7 +249,10 @@ async fn test_metadata_ssrf_protection_seed() {
     while let Ok(f) = live_rx.try_recv() {
         emitted.push(f);
     }
-    assert!(emitted.is_empty(), "SSRF attempt must return immediately with no findings.");
+    assert!(
+        emitted.is_empty(),
+        "SSRF attempt must return immediately with no findings."
+    );
 }
 
 #[tokio::test]
@@ -225,7 +270,10 @@ async fn test_metadata_ssrf_protection_target_domain() {
     while let Ok(f) = live_rx.try_recv() {
         emitted.push(f);
     }
-    assert!(emitted.is_empty(), "SSRF attempt must return immediately with no findings.");
+    assert!(
+        emitted.is_empty(),
+        "SSRF attempt must return immediately with no findings."
+    );
 }
 
 #[tokio::test]
@@ -243,5 +291,8 @@ async fn test_metadata_ssrf_protection_target_ip() {
     while let Ok(f) = live_rx.try_recv() {
         emitted.push(f);
     }
-    assert!(emitted.is_empty(), "SSRF attempt must return immediately with no findings.");
+    assert!(
+        emitted.is_empty(),
+        "SSRF attempt must return immediately with no findings."
+    );
 }

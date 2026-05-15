@@ -123,10 +123,7 @@ impl Error {
     pub fn is_retryable(&self) -> bool {
         matches!(
             self,
-            Self::Network { .. }
-                | Self::Timeout { .. }
-                | Self::RateLimit { .. }
-                | Self::Dns { .. }
+            Self::Network { .. } | Self::Timeout { .. } | Self::RateLimit { .. } | Self::Dns { .. }
         )
     }
 

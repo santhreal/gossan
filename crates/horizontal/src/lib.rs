@@ -19,7 +19,7 @@
 #![allow(
     clippy::module_name_repetitions,
     clippy::must_use_candidate,
-    clippy::missing_errors_doc,
+    clippy::missing_errors_doc
 )]
 
 //! Horizontal discovery — ASN/BGP prefix mapping and sibling domain correlation.
@@ -28,14 +28,16 @@
 //! organization's network footprint via public BGP and WHOIS data.
 
 use async_trait::async_trait;
-use gossan_core::{Config, DiscoverySource, DomainTarget, ScanInput, Scanner, Target, NetworkTarget};
+use futures::StreamExt;
+use gossan_core::{
+    Config, DiscoverySource, DomainTarget, NetworkTarget, ScanInput, Scanner, Target,
+};
 use secfinding::{Finding, Severity};
 use std::sync::Arc;
-use futures::StreamExt;
 
 pub mod asn;
-pub mod ownership;
 pub mod conservative;
+pub mod ownership;
 /// ASN/BGP prefix mapper and sibling domain correlator for attack surface expansion.
 pub struct HorizontalScanner;
 
@@ -48,7 +50,10 @@ impl Scanner for HorizontalScanner {
         &["passive", "network", "intel", "horizontal"]
     }
     fn accepts(&self, target: &Target) -> bool {
-        matches!(target, Target::Domain(_) | Target::Host(_) | Target::Network(_))
+        matches!(
+            target,
+            Target::Domain(_) | Target::Host(_) | Target::Network(_)
+        )
     }
 
     async fn run(&self, input: ScanInput, config: &Config) -> anyhow::Result<()> {
@@ -80,7 +85,7 @@ impl Scanner for HorizontalScanner {
                             cidr: prefix.clone(),
                             source: DiscoverySource::AsnLookup,
                         });
-                        
+
                         // Emit to the target stream for recursive
                         // scanning. (The historical
                         // `if let Some(ref tx) = input.target_tx` +
@@ -103,7 +108,9 @@ impl Scanner for HorizontalScanner {
                             let resolver = Arc::clone(&input.resolver);
                             async move {
                                 resolver.reverse_lookup(ip).await.ok().and_then(|r| {
-                                    r.iter().next().map(|name| name.to_string().trim_end_matches('.').to_string())
+                                    r.iter().next().map(|name| {
+                                        name.to_string().trim_end_matches('.').to_string()
+                                    })
                                 })
                             }
                         })
@@ -123,7 +130,9 @@ impl Scanner for HorizontalScanner {
 
             // 3. Domain → Organization → Root Domains
             if let Target::Domain(d) = target {
-                if let Ok(sibling_domains) = ownership::get_sibling_domains(&client, &d.domain).await {
+                if let Ok(sibling_domains) =
+                    ownership::get_sibling_domains(&client, &d.domain).await
+                {
                     for domain in sibling_domains {
                         let new_domain = Target::Domain(DomainTarget {
                             domain: domain.clone(),

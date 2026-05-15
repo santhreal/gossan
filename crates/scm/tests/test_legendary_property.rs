@@ -1,5 +1,8 @@
+use gossan_core::{
+    target::{DiscoverySource, DomainTarget},
+    Scanner, Target,
+};
 use gossan_scm::ScmScanner;
-use gossan_core::{Scanner, Target, target::{DomainTarget, DiscoverySource}};
 use proptest::prelude::*;
 
 proptest! {
@@ -10,10 +13,10 @@ proptest! {
             domain: domain_str,
             source: DiscoverySource::Seed,
         });
-        
+
         // accepts must return a boolean without panicking for any generated String.
         let result = scanner.accepts(&domain);
-        
+
         // In this particular implementation, domain should always return true.
         assert!(result);
     }

@@ -17,9 +17,22 @@ fn module_config_all_enables_every_module() {
     let mut modules: ModuleConfig = std::collections::HashMap::new();
     modules.insert("all".into(), true);
     let want = [
-        "subdomain", "portscan", "techstack", "dns", "js", "hidden",
-        "cloud", "synscan", "headless", "crawl", "origin",
-        "horizontal", "graph", "scm", "intel", "fleet",
+        "subdomain",
+        "portscan",
+        "techstack",
+        "dns",
+        "js",
+        "hidden",
+        "cloud",
+        "synscan",
+        "headless",
+        "crawl",
+        "origin",
+        "horizontal",
+        "graph",
+        "scm",
+        "intel",
+        "fleet",
     ];
     for m in want {
         let enabled = modules.get(m).copied().unwrap_or(false)

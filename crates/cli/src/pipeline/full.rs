@@ -1,21 +1,33 @@
 // Pipeline orchestration
 
+use crate::pipeline::registry::Registry;
 use gossan_core::Config;
 use secfinding::Finding;
-use crate::pipeline::registry::Registry;
 
-#[cfg(feature = "subdomain")] use gossan_subdomain::SubdomainScanner;
-#[cfg(feature = "portscan")] use gossan_portscan::PortScanner;
-#[cfg(feature = "techstack")] use gossan_techstack::TechStackScanner;
-#[cfg(feature = "dns")] use gossan_dns::DnsScanner;
-#[cfg(feature = "js")] use gossan_js::JsScanner;
-#[cfg(feature = "hidden")] use gossan_hidden::HiddenScanner;
-#[cfg(feature = "headless")] use gossan_headless::HeadlessScanner;
-#[cfg(feature = "crawl")] use gossan_crawl::CrawlScanner;
-#[cfg(feature = "cloud")] use gossan_cloud::CloudScanner;
-#[cfg(feature = "intel")] use gossan_intel::IntelScanner;
-#[cfg(feature = "scm")] use gossan_scm::ScmScanner;
-#[cfg(feature = "horizontal")] use gossan_horizontal::HorizontalScanner;
+#[cfg(feature = "cloud")]
+use gossan_cloud::CloudScanner;
+#[cfg(feature = "crawl")]
+use gossan_crawl::CrawlScanner;
+#[cfg(feature = "dns")]
+use gossan_dns::DnsScanner;
+#[cfg(feature = "headless")]
+use gossan_headless::HeadlessScanner;
+#[cfg(feature = "hidden")]
+use gossan_hidden::HiddenScanner;
+#[cfg(feature = "horizontal")]
+use gossan_horizontal::HorizontalScanner;
+#[cfg(feature = "intel")]
+use gossan_intel::IntelScanner;
+#[cfg(feature = "js")]
+use gossan_js::JsScanner;
+#[cfg(feature = "portscan")]
+use gossan_portscan::PortScanner;
+#[cfg(feature = "scm")]
+use gossan_scm::ScmScanner;
+#[cfg(feature = "subdomain")]
+use gossan_subdomain::SubdomainScanner;
+#[cfg(feature = "techstack")]
+use gossan_techstack::TechStackScanner;
 
 pub async fn run_full(
     seed: &str,
@@ -25,8 +37,10 @@ pub async fn run_full(
 ) -> anyhow::Result<Vec<Finding>> {
     let mut registry = Registry::new();
 
-    #[cfg(feature = "subdomain")] registry.register(Box::new(SubdomainScanner));
-    #[cfg(feature = "horizontal")] registry.register(Box::new(HorizontalScanner));
+    #[cfg(feature = "subdomain")]
+    registry.register(Box::new(SubdomainScanner));
+    #[cfg(feature = "horizontal")]
+    registry.register(Box::new(HorizontalScanner));
     // IntelScanner needs config (api keys, cache path); use the
     // builder. SynScanner has a unit-style new() — `Box::new(SynScanner)`
     // looked like a unit-struct construction but `SynScanner` actually
@@ -65,16 +79,24 @@ pub async fn run_full(
             tracing::info!("port scanner: portscan (TCP connect; run as root for engine)");
         }
     }
-    
-    #[cfg(feature = "techstack")] registry.register(Box::new(TechStackScanner));
-    #[cfg(feature = "dns")] registry.register(Box::new(DnsScanner));
-    #[cfg(feature = "js")] registry.register(Box::new(JsScanner));
-    #[cfg(feature = "hidden")] registry.register(Box::new(HiddenScanner));
-    #[cfg(feature = "headless")] registry.register(Box::new(HeadlessScanner));
-    #[cfg(feature = "crawl")] registry.register(Box::new(CrawlScanner));
-    
-    #[cfg(feature = "cloud")] registry.register(Box::new(CloudScanner));
-    #[cfg(feature = "scm")] registry.register(Box::new(ScmScanner));
+
+    #[cfg(feature = "techstack")]
+    registry.register(Box::new(TechStackScanner));
+    #[cfg(feature = "dns")]
+    registry.register(Box::new(DnsScanner));
+    #[cfg(feature = "js")]
+    registry.register(Box::new(JsScanner));
+    #[cfg(feature = "hidden")]
+    registry.register(Box::new(HiddenScanner));
+    #[cfg(feature = "headless")]
+    registry.register(Box::new(HeadlessScanner));
+    #[cfg(feature = "crawl")]
+    registry.register(Box::new(CrawlScanner));
+
+    #[cfg(feature = "cloud")]
+    registry.register(Box::new(CloudScanner));
+    #[cfg(feature = "scm")]
+    registry.register(Box::new(ScmScanner));
 
     registry.execute_pipeline(seed, config).await
 }

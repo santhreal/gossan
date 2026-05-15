@@ -47,10 +47,10 @@ fn graph_insert_10k_nodes_under_1s() {
 #[test]
 #[cfg(not(debug_assertions))]
 fn graph_insert_100k_edges_under_5s() {
+    use gossan_graph::schema::{EdgeType, NodeType};
     use gossan_graph::store::memory::MemoryStore;
     use gossan_graph::store::GraphBackend;
     use gossan_graph::{Edge, Node};
-    use gossan_graph::schema::{EdgeType, NodeType};
 
     const E: usize = 100_000;
     let mut s = MemoryStore::new();
@@ -62,7 +62,9 @@ fn graph_insert_100k_edges_under_5s() {
         Node::new("b", NodeType::Domain, "b"),
     ];
     s.write_nodes(&nodes).unwrap();
-    let edges: Vec<Edge> = (0..E).map(|_| Edge::new("a", "b", EdgeType::Hosts)).collect();
+    let edges: Vec<Edge> = (0..E)
+        .map(|_| Edge::new("a", "b", EdgeType::Hosts))
+        .collect();
     let start = Instant::now();
     s.write_edges(&edges).unwrap();
     let elapsed = start.elapsed();

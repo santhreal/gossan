@@ -152,7 +152,8 @@ fn analyze_spec(
         for server in servers {
             if let Some(srv_url) = server.get("url").and_then(|u| u.as_str()) {
                 if srv_url.starts_with("http://") {
-                    gossan_core::try_push_finding(crate::exposure_finding(
+                    gossan_core::try_push_finding(
+                        crate::exposure_finding(
                             target,
                             Severity::Medium,
                             "OpenAPI spec lists HTTP (unencrypted) server URL",
@@ -165,7 +166,9 @@ fn analyze_spec(
                         )
                         .tag("swagger")
                         .tag("tls")
-                        .tag("exposure"), findings);
+                        .tag("exposure"),
+                        findings,
+                    );
                 }
             }
         }
@@ -179,7 +182,8 @@ fn analyze_spec(
             .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
             .unwrap_or_default();
         if schemes.contains(&"http") && !schemes.contains(&"https") {
-            gossan_core::try_push_finding(crate::exposure_finding(
+            gossan_core::try_push_finding(
+                crate::exposure_finding(
                     target,
                     Severity::Medium,
                     "Swagger 2.0 spec: HTTP-only scheme declared",
@@ -190,7 +194,9 @@ fn analyze_spec(
                     ),
                 )
                 .tag("swagger")
-                .tag("tls"), findings);
+                .tag("tls"),
+                findings,
+            );
         }
     }
 
@@ -242,10 +248,8 @@ fn analyze_spec(
                         unauth_endpoints.push(format!("{} {}", method.to_uppercase(), path));
                     }
 
-                    let all_params_locs = [
-                        operation.get("parameters"),
-                        path_item.get("parameters"),
-                    ];
+                    let all_params_locs =
+                        [operation.get("parameters"), path_item.get("parameters")];
                     for params_opt in all_params_locs {
                         if let Some(params) = params_opt.and_then(|p| p.as_array()) {
                             for param in params {
@@ -286,7 +290,8 @@ fn analyze_spec(
     // Emit aggregate finding for unauthenticated endpoints
     if !unauth_endpoints.is_empty() {
         let sample = unauth_endpoints[..unauth_endpoints.len().min(5)].join(", ");
-        gossan_core::try_push_finding(crate::exposure_finding(
+        gossan_core::try_push_finding(
+            crate::exposure_finding(
                 target,
                 Severity::High,
                 format!(
@@ -306,15 +311,22 @@ fn analyze_spec(
             .evidence(Evidence::HttpResponse {
                 status: 200,
                 headers: vec![],
-                body_excerpt: Some(unauth_endpoints[..unauth_endpoints.len().min(10)].join("\n").into()),
+                body_excerpt: Some(
+                    unauth_endpoints[..unauth_endpoints.len().min(10)]
+                        .join("\n")
+                        .into(),
+                ),
             })
             .tag("swagger")
             .tag("auth-bypass")
-            .tag("exposure"), findings);
+            .tag("exposure"),
+            findings,
+        );
 
         // Emit one finding per unauthenticated endpoint (capped)
         for ep in unauth_endpoints.iter().take(MAX_ENDPOINT_FINDINGS) {
-            gossan_core::try_push_finding(crate::exposure_finding(
+            gossan_core::try_push_finding(
+                crate::exposure_finding(
                     target,
                     Severity::Medium,
                     format!("Unauthenticated API endpoint: {}", ep),
@@ -327,7 +339,9 @@ fn analyze_spec(
                 .tag("swagger")
                 .tag("endpoint")
                 .tag("auth-bypass")
-                .tag("exposure"), findings);
+                .tag("exposure"),
+                findings,
+            );
         }
     }
 
@@ -348,7 +362,8 @@ fn analyze_spec(
 /// Text-heuristic analysis for YAML specs (no parser dependency).
 fn analyze_spec_text(body: &str, spec_url: &str, target: &Target, findings: &mut Vec<Finding>) {
     if body.contains("http://") && !body.contains("https://") {
-        gossan_core::try_push_finding(crate::exposure_finding(
+        gossan_core::try_push_finding(
+            crate::exposure_finding(
                 target,
                 Severity::Medium,
                 "OpenAPI/YAML spec lists HTTP-only server",
@@ -359,7 +374,9 @@ fn analyze_spec_text(body: &str, spec_url: &str, target: &Target, findings: &mut
                 ),
             )
             .tag("swagger")
-            .tag("tls"), findings);
+            .tag("tls"),
+            findings,
+        );
     }
 
     let path_count = body
@@ -371,7 +388,8 @@ fn analyze_spec_text(body: &str, spec_url: &str, target: &Target, findings: &mut
         .count();
 
     if path_count > 20 {
-        gossan_core::try_push_finding(crate::exposure_finding(
+        gossan_core::try_push_finding(
+            crate::exposure_finding(
                 target,
                 Severity::Medium,
                 format!("Large API surface exposed: ~{} paths in spec", path_count),
@@ -382,7 +400,9 @@ fn analyze_spec_text(body: &str, spec_url: &str, target: &Target, findings: &mut
                 ),
             )
             .tag("swagger")
-            .tag("exposure"), findings);
+            .tag("exposure"),
+            findings,
+        );
     }
 }
 
@@ -394,10 +414,13 @@ mod tests {
 
     fn target() -> Target {
         Target::Web(Box::new(WebAssetTarget {
-            url: Url::parse("https://example.com").unwrap_or_else(|_| Url::parse("http://127.0.0.1").unwrap()),
+            url: Url::parse("https://example.com")
+                .unwrap_or_else(|_| Url::parse("http://127.0.0.1").unwrap()),
             service: ServiceTarget {
                 host: HostTarget {
-                    ip: "127.0.0.1".parse().unwrap_or_else(|_| "127.0.0.1".parse().unwrap()),
+                    ip: "127.0.0.1"
+                        .parse()
+                        .unwrap_or_else(|_| "127.0.0.1".parse().unwrap()),
                     domain: Some("example.com".into()),
                 },
                 port: 443,
@@ -587,7 +610,12 @@ mod tests {
             }
         });
         let mut findings = Vec::new();
-        analyze_spec(&spec, "https://example.com/openapi.json", &target(), &mut findings);
+        analyze_spec(
+            &spec,
+            "https://example.com/openapi.json",
+            &target(),
+            &mut findings,
+        );
         let endpoint_findings: Vec<_> = findings
             .iter()
             .filter(|f| f.title().contains("Unauthenticated API endpoint"))

@@ -62,22 +62,29 @@ fn identify_banner_detects_old_ssh_versions_as_high() {
 
 #[test]
 fn identify_banner_detects_modern_ssh_versions_as_info() {
-    let finding = identify_banner_or_probe("SSH-2.0-OpenSSH_9.7", &[], &service(22, None), 22).unwrap();
+    let finding =
+        identify_banner_or_probe("SSH-2.0-OpenSSH_9.7", &[], &service(22, None), 22).unwrap();
 
     assert_eq!(finding.severity(), Severity::Info);
 }
 
 #[test]
 fn identify_banner_detects_ftp_banner() {
-    let finding = identify_banner_or_probe("220 ProFTPD 1.3.5 Server", &[], &service(21, None), 21).unwrap();
+    let finding =
+        identify_banner_or_probe("220 ProFTPD 1.3.5 Server", &[], &service(21, None), 21).unwrap();
     assert!(finding.title().contains("FTP banner"));
     assert!(finding.tags().iter().any(|t| t.as_ref() == "ftp"));
 }
 
 #[test]
 fn identify_banner_detects_smtp_banner() {
-    let finding =
-        identify_banner_or_probe("220 mx.example.com ESMTP Postfix", &[], &service(25, None), 25).unwrap();
+    let finding = identify_banner_or_probe(
+        "220 mx.example.com ESMTP Postfix",
+        &[],
+        &service(25, None),
+        25,
+    )
+    .unwrap();
     assert!(finding.title().contains("SMTP banner"));
     assert!(finding.tags().iter().any(|t| t.as_ref() == "smtp"));
 }
@@ -101,7 +108,8 @@ fn identify_banner_detects_redis_no_auth() {
 
 #[test]
 fn identify_banner_detects_mongodb_no_auth() {
-    let finding = identify_banner_or_probe("ismaster MongoDB", &[], &service(27017, None), 27017).unwrap();
+    let finding =
+        identify_banner_or_probe("ismaster MongoDB", &[], &service(27017, None), 27017).unwrap();
     assert_eq!(finding.severity(), Severity::Critical);
     assert!(finding.tags().iter().any(|t| t.as_ref() == "mongodb"));
 }
@@ -115,7 +123,9 @@ fn identify_banner_detects_telnet_response() {
 
 #[test]
 fn identify_banner_returns_none_for_unrecognized_banner() {
-    assert!(identify_banner_or_probe("some random banner", &[], &service(1234, None), 1234).is_none());
+    assert!(
+        identify_banner_or_probe("some random banner", &[], &service(1234, None), 1234).is_none()
+    );
 }
 
 #[test]
@@ -363,11 +373,15 @@ fn cve_correlation_edge_cases() {
     let long_banner = format!("Server: Apache/2.4.49{}", "x".repeat(10000));
     let findings = correlate(&long_banner, &svc);
     // Should still match the pattern
-    assert!(findings.iter().any(|f| f.title().contains("CVE-2021-41773")));
+    assert!(findings
+        .iter()
+        .any(|f| f.title().contains("CVE-2021-41773")));
 
     // Case insensitivity check
     let findings = correlate("SERVER: APACHE/2.4.49", &svc);
-    assert!(findings.iter().any(|f| f.title().contains("CVE-2021-41773")));
+    assert!(findings
+        .iter()
+        .any(|f| f.title().contains("CVE-2021-41773")));
 }
 
 /// Test TLS info display formatting.

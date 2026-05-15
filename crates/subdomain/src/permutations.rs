@@ -58,7 +58,11 @@ pub async fn expand(
         .collect()
         .await;
 
-    tracing::info!(found = targets.len(), root = root_domain, "permutation hits");
+    tracing::info!(
+        found = targets.len(),
+        root = root_domain,
+        "permutation hits"
+    );
     Ok(targets)
 }
 

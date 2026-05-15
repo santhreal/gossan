@@ -57,7 +57,10 @@ fn generate_respects_s3_length_limits() {
     // S3 bucket-name spec: 3-63 chars.
     let cands = gossan_cloud::permutations::generate("acme");
     for c in &cands {
-        assert!(c.len() >= 3 && c.len() <= 63, "{c} violates 3-63 length limit");
+        assert!(
+            c.len() >= 3 && c.len() <= 63,
+            "{c} violates 3-63 length limit"
+        );
     }
 }
 

@@ -8,7 +8,9 @@
 //! the count contract, not byte-for-byte equivalence.
 
 use gossan_graph::schema::{EdgeType, NodeType};
-use gossan_graph::store::{json::JsonBackend, memory::MemoryStore, sqlite::SqliteBackend, GraphBackend};
+use gossan_graph::store::{
+    json::JsonBackend, memory::MemoryStore, sqlite::SqliteBackend, GraphBackend,
+};
 use gossan_graph::{Edge, Node};
 
 fn fixture_nodes() -> Vec<Node> {

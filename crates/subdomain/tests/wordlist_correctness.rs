@@ -29,7 +29,10 @@ fn wordlist_has_no_leading_slashes_or_comments() {
             continue;
         }
         assert!(!trimmed.starts_with('#'), "line {n}: comment line `{line}`");
-        assert!(!trimmed.starts_with('/'), "line {n}: leading slash `{line}`");
+        assert!(
+            !trimmed.starts_with('/'),
+            "line {n}: leading slash `{line}`"
+        );
         assert!(
             label_is_valid(trimmed),
             "line {n}: not a valid DNS label fragment: `{trimmed}`"
@@ -45,8 +48,14 @@ fn wordlist_has_no_leading_slashes_or_comments() {
         }
     }
     // Spot-check minimum size.
-    let total = WORDLIST.lines().filter(|l| !l.trim().is_empty() && !l.trim().starts_with('#')).count();
-    assert!(total >= 100, "wordlist is suspiciously small: {total} entries");
+    let total = WORDLIST
+        .lines()
+        .filter(|l| !l.trim().is_empty() && !l.trim().starts_with('#'))
+        .count();
+    assert!(
+        total >= 100,
+        "wordlist is suspiciously small: {total} entries"
+    );
 }
 
 #[test]

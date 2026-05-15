@@ -31,7 +31,11 @@ fn classify_handles_10mb_banner_no_oom_no_panic() {
     // dominate — production reads cap at 4 KiB so the production path
     // is unaffected. The point of this test is "does NOT OOM / does NOT
     // panic", not "is fast at 10 MiB". Gate at 30 s.
-    assert!(elapsed < Duration::from_secs(30), "10MB classify took {:?}", elapsed);
+    assert!(
+        elapsed < Duration::from_secs(30),
+        "10MB classify took {:?}",
+        elapsed
+    );
     assert!(
         hits.iter().any(|h| h.service == "nginx"),
         "nginx must still classify under adversarial padding"

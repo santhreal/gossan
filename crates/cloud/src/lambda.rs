@@ -31,7 +31,7 @@ impl CloudProvider for LambdaProvider {
             .filter(|c| c.is_ascii_alphanumeric())
             .collect::<String>()
             .to_lowercase();
-            
+
         if lambda_id.len() != 32 && name.len() != 32 {
             return Ok(vec![]);
         }
@@ -51,8 +51,10 @@ impl CloudProvider for LambdaProvider {
         // A non-existent lambda URL usually just doesn't resolve (DNS NXDOMAIN).
         match status {
             200 | 401 | 403 | 404 | 500 | 502 => {
-                let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await.unwrap_or_default();
-                
+                let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
+                    .await
+                    .unwrap_or_default();
+
                 gossan_core::try_push_finding(crate::finding_builder(target, Severity::Low,
                         format!("Lambda Function URL found: {}", name),
                         format!(

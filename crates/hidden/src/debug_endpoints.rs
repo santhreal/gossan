@@ -50,7 +50,10 @@ fn parse_severity(s: &str) -> Severity {
 
 fn load_toml_probes() -> Vec<DebugProbe> {
     let mut probes = Vec::new();
-    for path in &["src/debug_probes.toml", "crates/hidden/src/debug_probes.toml"] {
+    for path in &[
+        "src/debug_probes.toml",
+        "crates/hidden/src/debug_probes.toml",
+    ] {
         if let Ok(content) = std::fs::read_to_string(path) {
             if let Ok(parsed) = toml::from_str::<TomlDebugProbes>(&content) {
                 for p in parsed.probe {
@@ -63,7 +66,11 @@ fn load_toml_probes() -> Vec<DebugProbe> {
                     });
                 }
                 if !probes.is_empty() {
-                    tracing::info!(count = probes.len(), path = path, "loaded debug probes from TOML");
+                    tracing::info!(
+                        count = probes.len(),
+                        path = path,
+                        "loaded debug probes from TOML"
+                    );
                     return probes;
                 }
             }
@@ -290,10 +297,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
         };
 
         let confirmed = debug_probe.confirm_strings.is_empty()
-            || debug_probe
-                .confirm_strings
-                .iter()
-                .any(|s| body.contains(s));
+            || debug_probe.confirm_strings.iter().any(|s| body.contains(s));
 
         if confirmed {
             let excerpt = if body.len() > 200 {

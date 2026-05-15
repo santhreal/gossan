@@ -45,7 +45,9 @@ pub async fn probe(
         })
         .collect();
 
-    let body = bounded_text(resp, 2 * 1024 * 1024).await.unwrap_or_default();
+    let body = bounded_text(resp, 2 * 1024 * 1024)
+        .await
+        .unwrap_or_default();
     let title = truestack::html::extract_title(&body);
 
     // ── Technology detection via truestack ────────────────────────────────

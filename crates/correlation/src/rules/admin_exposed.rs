@@ -4,8 +4,8 @@
 use gossan_core::Target;
 use secfinding::{Evidence, Finding, FindingKind, Severity};
 
-use crate::CorrelationRule;
 use crate::utils::normalize_host;
+use crate::CorrelationRule;
 /// AdminExposedRule correlation rule — detects multi-signal attack chains.
 pub struct AdminExposedRule;
 
@@ -49,14 +49,14 @@ impl CorrelationRule for AdminExposedRule {
             let admin_findings: Vec<&Finding> = findings
                 .iter()
                 .filter(|f| {
-                    f.scanner() == "hidden" 
+                    f.scanner() == "hidden"
                         && normalize_host(f.target()) == *host
                         && (f.title().to_lowercase().contains("admin")
                             || f.title().to_lowercase().contains("dashboard")
                             || f.title().to_lowercase().contains("console"))
                 })
                 .collect();
-                
+
             let auth_findings: Vec<&Finding> = findings
                 .iter()
                 .filter(|f| {
@@ -66,7 +66,7 @@ impl CorrelationRule for AdminExposedRule {
                             || f.title().to_lowercase().contains("no authentication"))
                 })
                 .collect();
-            
+
             let mut evidence_ids = Vec::new();
             for finding in admin_findings.iter().chain(auth_findings.iter()) {
                 evidence_ids.push(finding.id().to_string());
@@ -82,7 +82,8 @@ impl CorrelationRule for AdminExposedRule {
                 .map(|f| f.target().to_string())
                 .unwrap_or_else(|| host.clone());
 
-            if let Some(finding) = Finding::builder("correlation", display_target, Severity::Critical)
+            if let Some(finding) =
+                Finding::builder("correlation", display_target, Severity::Critical)
                     .title(format!(
                         "Admin panel exposed without authentication: {}",
                         host
@@ -94,10 +95,12 @@ impl CorrelationRule for AdminExposedRule {
                         host
                     ))
                     .kind(FindingKind::Vulnerability)
-                        .tag("chain")
+                    .tag("chain")
                     .tag("admin")
                     .tag("auth-bypass")
-                    .evidence(Evidence::Raw(format!("Finding IDs: {}", evidence_string).into()))
+                    .evidence(Evidence::Raw(
+                        format!("Finding IDs: {}", evidence_string).into(),
+                    ))
                     .build_or_log()
             {
                 chains.push(finding);

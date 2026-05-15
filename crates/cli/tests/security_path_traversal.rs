@@ -30,7 +30,12 @@ fn out_path_with_dotdot_either_errors_or_resolves_safely() {
     // but that requires reading mtime; assume the kernel will block
     // an unprivileged write).
     let out = Command::new(cli_bin())
-        .args(["--out", "../../../../../../../etc/passwd-gossan-test", "subdomain", "127.0.0.1"])
+        .args([
+            "--out",
+            "../../../../../../../etc/passwd-gossan-test",
+            "subdomain",
+            "127.0.0.1",
+        ])
         .output();
     let Ok(out) = out else {
         // Spawn failure is itself acceptable — the path resolution
@@ -62,7 +67,10 @@ fn out_path_to_relative_dot_dot_either_errors_or_stays_in_cwd() {
     if let Some(p) = &escaped {
         if p.exists() {
             let _ = std::fs::remove_file(p);
-            panic!("--out ../escaped.txt landed at {} — should have been rejected or kept inside cwd", p.display());
+            panic!(
+                "--out ../escaped.txt landed at {} — should have been rejected or kept inside cwd",
+                p.display()
+            );
         }
     }
     assert!(out.status.code().is_some());

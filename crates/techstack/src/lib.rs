@@ -13,7 +13,7 @@
 #![allow(
     clippy::module_name_repetitions,
     clippy::must_use_candidate,
-    clippy::missing_errors_doc,
+    clippy::missing_errors_doc
 )]
 
 //! Panoram tech stack scanner — thin integration layer.
@@ -22,16 +22,13 @@
 //! lives in the standalone [`truestack`] crate. This module adapts
 //! `truestack` results into the panoram scanner pipeline.
 
-
 pub mod bridge;
 
-use std::sync::Arc;
 use async_trait::async_trait;
 use futures::StreamExt;
-use gossan_core::{
-    Config, ScanClient, ScanInput, Scanner, ServiceTarget, Target, WebAssetTarget,
-};
+use gossan_core::{Config, ScanClient, ScanInput, Scanner, ServiceTarget, Target, WebAssetTarget};
 use secfinding::Finding;
+use std::sync::Arc;
 /// Technology fingerprinting scanner — HTTP headers, HTML patterns, and JS frameworks.
 pub struct TechStackScanner;
 
@@ -84,7 +81,9 @@ impl Scanner for TechStackScanner {
                 tech = ?asset.tech.iter().map(|t| &t.name).collect::<Vec<_>>(),
                 "web asset"
             );
-            for f in header_findings { input.emit(f); }
+            for f in header_findings {
+                input.emit(f);
+            }
             input.emit_target(Target::Web(Box::new(asset)));
         }
 

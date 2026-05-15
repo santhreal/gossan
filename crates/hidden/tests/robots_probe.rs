@@ -77,5 +77,8 @@ async fn empty_robots_no_finding() {
     let client = Client::new();
     let target = web_target(&format!("{}/", server.uri()));
     let findings = robots::probe(&client, &target).await.unwrap();
-    assert!(findings.is_empty(), "empty robots.txt must yield no findings");
+    assert!(
+        findings.is_empty(),
+        "empty robots.txt must yield no findings"
+    );
 }

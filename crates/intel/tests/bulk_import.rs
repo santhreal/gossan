@@ -16,7 +16,11 @@ fn synthetic_records(n: usize) -> Vec<IntelRecord> {
             ip: format!("10.{}.{}.{}", (i >> 16) & 0xff, (i >> 8) & 0xff, i & 0xff),
             host: Some(format!("h{i}.example.com")),
             port: 80 + ((i % 1024) as u16),
-            protocol: if i % 2 == 0 { "tcp".into() } else { "udp".into() },
+            protocol: if i % 2 == 0 {
+                "tcp".into()
+            } else {
+                "udp".into()
+            },
             banner: Some(format!("synth banner {i}")),
             tech_stack: Vec::new(),
             last_seen: None,
@@ -36,7 +40,10 @@ fn bulk_import_100k_records_under_10s() {
     }
     let elapsed = start.elapsed();
     eprintln!("bulk_import: {BULK_N} in {elapsed:?}");
-    assert!(elapsed < BULK_MAX, "bulk import took {elapsed:?}, gate {BULK_MAX:?}");
+    assert!(
+        elapsed < BULK_MAX,
+        "bulk import took {elapsed:?}, gate {BULK_MAX:?}"
+    );
 }
 
 #[test]
@@ -58,7 +65,9 @@ fn query_by_host_returns_inserted_record() {
     db.insert_batch(&records).unwrap();
     let hits = db.query_by_host("h7.example.com").expect("query_by_host");
     assert!(!hits.is_empty(), "expected hit for h7.example.com");
-    assert!(hits.iter().any(|r| r.host.as_deref() == Some("h7.example.com")));
+    assert!(hits
+        .iter()
+        .any(|r| r.host.as_deref() == Some("h7.example.com")));
 }
 
 #[test]

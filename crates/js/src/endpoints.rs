@@ -41,13 +41,10 @@ impl Endpoint {
         if self.path.starts_with("http://") || self.path.starts_with("https://") {
             let url = url::Url::parse(&self.path).ok()?;
             let host = url.host_str()?;
-            
+
             // Check if it's an IP
             if let Ok(ip) = std::net::IpAddr::from_str(host) {
-                return Some(Target::Host(gossan_core::HostTarget {
-                    ip,
-                    domain: None,
-                }));
+                return Some(Target::Host(gossan_core::HostTarget { ip, domain: None }));
             }
 
             return Some(Target::Domain(DomainTarget {
@@ -125,4 +122,3 @@ pub fn extract(js_url: &str, body: &str) -> Vec<Endpoint> {
 
     endpoints
 }
-

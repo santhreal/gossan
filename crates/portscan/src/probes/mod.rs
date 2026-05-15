@@ -70,7 +70,11 @@ fn compiled_probes() -> &'static Vec<CompiledProbe> {
                         return None;
                     }
                 };
-                Some(CompiledProbe { def, payload, regex })
+                Some(CompiledProbe {
+                    def,
+                    payload,
+                    regex,
+                })
             })
             .collect()
     })
@@ -112,19 +116,18 @@ impl ProbeEngine {
     ) -> (Option<String>, Vec<String>) {
         // 1. Try passive banner first with a short timeout
         let mut buf = vec![0u8; 4096];
-        let banner = match tokio::time::timeout(Duration::from_millis(300), stream.read(&mut buf))
-            .await
-        {
-            Ok(Ok(n)) if n > 0 => {
-                let s = sanitize(&buf[..n]);
-                if !s.is_empty() {
-                    Some(s)
-                } else {
-                    None
+        let banner =
+            match tokio::time::timeout(Duration::from_millis(300), stream.read(&mut buf)).await {
+                Ok(Ok(n)) if n > 0 => {
+                    let s = sanitize(&buf[..n]);
+                    if !s.is_empty() {
+                        Some(s)
+                    } else {
+                        None
+                    }
                 }
-            }
-            _ => None,
-        };
+                _ => None,
+            };
 
         if banner.is_some() {
             // Still run probes to get richer identification
@@ -169,8 +172,9 @@ impl ProbeEngine {
                 if let Some(ref fallback) = probe.def.fallback_probe {
                     if let Some(&fb_idx) = by_name.get(fallback) {
                         if !seen.contains(&fb_idx) {
-                            if let Some(fm) =
-                                self.execute_probe(stream, &probes[fb_idx], initial_data).await
+                            if let Some(fm) = self
+                                .execute_probe(stream, &probes[fb_idx], initial_data)
+                                .await
                             {
                                 matches.push(fm);
                             }
@@ -231,7 +235,13 @@ impl ProbeEngine {
 
 fn sanitize(data: &[u8]) -> String {
     data.iter()
-        .map(|&b| if (0x20..0x7f).contains(&b) { b as char } else { '.' })
+        .map(|&b| {
+            if (0x20..0x7f).contains(&b) {
+                b as char
+            } else {
+                '.'
+            }
+        })
         .collect::<String>()
         .trim()
         .to_string()

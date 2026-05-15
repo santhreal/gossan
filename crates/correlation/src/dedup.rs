@@ -108,28 +108,26 @@ pub fn dedup_findings(findings: &[secfinding::Finding]) -> Vec<secfinding::Findi
         // is_wildcard_covered).
         let key = if norm.starts_with("*.") {
             strip_wildcard(&norm)
-        } else if let Some(wild) = wildcards.iter().find(|w| is_wildcard_covered(w, f.target())) {
+        } else if let Some(wild) = wildcards
+            .iter()
+            .find(|w| is_wildcard_covered(w, f.target()))
+        {
             strip_wildcard(wild)
         } else {
             norm.clone()
         };
 
         if seen.insert(key.clone()) {
-            let needs_tag = wildcards
-                .iter()
-                .any(|w| is_wildcard_covered(w, f.target()))
+            let needs_tag = wildcards.iter().any(|w| is_wildcard_covered(w, f.target()))
                 && !f.tags().iter().any(|t| t.as_ref() == "wildcard-origin");
             if needs_tag {
-                if let Ok(rebuilt) = secfinding::Finding::builder(
-                    f.scanner(),
-                    f.target(),
-                    f.severity(),
-                )
-                .title(f.title())
-                .detail(f.detail())
-                .add_tags(f.tags().iter().map(|t| t.to_string()))
-                .tag("wildcard-origin")
-                .build()
+                if let Ok(rebuilt) =
+                    secfinding::Finding::builder(f.scanner(), f.target(), f.severity())
+                        .title(f.title())
+                        .detail(f.detail())
+                        .add_tags(f.tags().iter().map(|t| t.to_string()))
+                        .tag("wildcard-origin")
+                        .build()
                 {
                     out.push(rebuilt);
                     continue;
@@ -206,24 +204,17 @@ mod tests {
 
     #[test]
     fn dedup_tags_wildcard_origin() {
-        let wildcard = secfinding::Finding::new(
-            "s",
-            "*.example.com",
-            secfinding::Severity::Info,
-            "t",
-            "",
-        )
-        .unwrap();
-        let concrete = secfinding::Finding::new(
-            "s",
-            "sub.example.com",
-            secfinding::Severity::Info,
-            "t",
-            "",
-        )
-        .unwrap();
+        let wildcard =
+            secfinding::Finding::new("s", "*.example.com", secfinding::Severity::Info, "t", "")
+                .unwrap();
+        let concrete =
+            secfinding::Finding::new("s", "sub.example.com", secfinding::Severity::Info, "t", "")
+                .unwrap();
         let deduped = dedup_findings(&[wildcard, concrete]);
         assert_eq!(deduped.len(), 1);
-        assert!(deduped[0].tags().iter().any(|t| t.as_ref() == "wildcard-origin"));
+        assert!(deduped[0]
+            .tags()
+            .iter()
+            .any(|t| t.as_ref() == "wildcard-origin"));
     }
 }

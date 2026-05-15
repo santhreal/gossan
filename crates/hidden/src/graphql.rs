@@ -30,8 +30,7 @@ const PATHS: &[&str] = &[
 const INTROSPECTION: &str =
     r#"{"query":"{ __schema { queryType { name } types { name kind fields { name } } } }"}"#;
 
-const INTROSPECTION_ALIAS: &str =
-    r#"{"query":"{ introspection: __schema { queryType { name } types { name kind fields { name } } } }"}"#;
+const INTROSPECTION_ALIAS: &str = r#"{"query":"{ introspection: __schema { queryType { name } types { name kind fields { name } } } }"}"#;
 
 const INTROSPECTION_FRAGMENT: &str =
     r#"{"query":"query { ... on __Schema { queryType { name } types { name kind } } }"}"#;
@@ -84,7 +83,9 @@ pub async fn probe(
             .await
         {
             if r.status().as_u16() == 200 {
-                let body = capped_text(r, crate::MAX_BODY_BYTES).await.unwrap_or_default();
+                let body = capped_text(r, crate::MAX_BODY_BYTES)
+                    .await
+                    .unwrap_or_default();
                 // Validate it's real GraphQL, not a catch-all SPA
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
                     if json.get("data").and_then(|d| d.get("__typename")).is_some() {
@@ -109,7 +110,9 @@ pub async fn probe(
         .await
     {
         if r.status().as_u16() == 200 {
-            let body = capped_text(r, crate::MAX_BODY_BYTES).await.unwrap_or_default();
+            let body = capped_text(r, crate::MAX_BODY_BYTES)
+                .await
+                .unwrap_or_default();
             if body.contains("__schema") || body.contains("queryType") {
                 gossan_core::try_push_finding(crate::vulnerability_finding(target, Severity::High,
                         "GraphQL introspection enabled — full schema exposed",
@@ -130,7 +133,10 @@ pub async fn probe(
     }
 
     // ── 2. Alias bypass ──────────────────────────────────────────────────────
-    if findings.iter().any(|f| f.title().contains("introspection enabled")) {
+    if findings
+        .iter()
+        .any(|f| f.title().contains("introspection enabled"))
+    {
         // Already found introspection, skip bypass probes
     } else if let Ok(r) = client
         .post(&ep)
@@ -140,7 +146,9 @@ pub async fn probe(
         .await
     {
         if r.status().as_u16() == 200 {
-            let body = capped_text(r, crate::MAX_BODY_BYTES).await.unwrap_or_default();
+            let body = capped_text(r, crate::MAX_BODY_BYTES)
+                .await
+                .unwrap_or_default();
             if body.contains("__schema") || body.contains("queryType") {
                 gossan_core::try_push_finding(crate::vulnerability_finding(target, Severity::High,
                         "GraphQL introspection bypassed via alias wrapping",
@@ -166,7 +174,9 @@ pub async fn probe(
         .await
     {
         if r.status().as_u16() == 200 {
-            let body = capped_text(r, crate::MAX_BODY_BYTES).await.unwrap_or_default();
+            let body = capped_text(r, crate::MAX_BODY_BYTES)
+                .await
+                .unwrap_or_default();
             if body.contains("__schema") || body.contains("queryType") {
                 gossan_core::try_push_finding(crate::vulnerability_finding(target, Severity::High,
                         "GraphQL introspection bypassed via fragment spreading",
@@ -192,7 +202,9 @@ pub async fn probe(
         .await
     {
         if r.status().as_u16() == 200 {
-            let body = capped_text(r, crate::MAX_BODY_BYTES).await.unwrap_or_default();
+            let body = capped_text(r, crate::MAX_BODY_BYTES)
+                .await
+                .unwrap_or_default();
             if body.contains("__type") && body.contains("fields") {
                 gossan_core::try_push_finding(crate::vulnerability_finding(target, Severity::Medium,
                         "GraphQL __type introspection enabled — partial schema disclosure",
@@ -215,7 +227,9 @@ pub async fn probe(
         .send()
         .await
     {
-        let body = capped_text(r, crate::MAX_BODY_BYTES).await.unwrap_or_default();
+        let body = capped_text(r, crate::MAX_BODY_BYTES)
+            .await
+            .unwrap_or_default();
         if body.contains("Did you mean") || body.contains("did you mean") {
             let suggestion = body
                 .lines()
@@ -248,9 +262,12 @@ pub async fn probe(
         .await
     {
         if r.status().as_u16() == 200 {
-            let body = capped_text(r, crate::MAX_BODY_BYTES).await.unwrap_or_default();
+            let body = capped_text(r, crate::MAX_BODY_BYTES)
+                .await
+                .unwrap_or_default();
             if body.trim_start().starts_with('[') {
-                gossan_core::try_push_finding(crate::vulnerability_finding(
+                gossan_core::try_push_finding(
+                    crate::vulnerability_finding(
                         target,
                         Severity::Medium,
                         "GraphQL query batching enabled — rate-limit bypass",
@@ -273,7 +290,9 @@ pub async fn probe(
                         "# Batch 100 login mutations in one request:\n\
                          python3 graphql-cop.py -t {} --test BATCH_LIMIT",
                         ep
-                    )), &mut findings);
+                    )),
+                    &mut findings,
+                );
             }
         }
     }
@@ -287,7 +306,9 @@ pub async fn probe(
         .await
     {
         if r.status().as_u16() == 200 {
-            let body = capped_text(r, crate::MAX_BODY_BYTES).await.unwrap_or_default();
+            let body = capped_text(r, crate::MAX_BODY_BYTES)
+                .await
+                .unwrap_or_default();
             let hits = body.matches("__typename").count();
             if hits >= 15 {
                 gossan_core::try_push_finding(crate::vulnerability_finding(target, Severity::Low,

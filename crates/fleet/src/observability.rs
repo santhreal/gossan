@@ -49,19 +49,31 @@ pub fn render_prometheus(snap: MetricsSnapshot) -> String {
     let mut out = String::with_capacity(512);
     out.push_str("# HELP gossan_fleet_active_workers Currently connected fleet workers.\n");
     out.push_str("# TYPE gossan_fleet_active_workers gauge\n");
-    out.push_str(&format!("gossan_fleet_active_workers {}\n", snap.active_workers));
+    out.push_str(&format!(
+        "gossan_fleet_active_workers {}\n",
+        snap.active_workers
+    ));
 
     out.push_str("# HELP gossan_fleet_in_flight_tasks Tasks currently in flight.\n");
     out.push_str("# TYPE gossan_fleet_in_flight_tasks gauge\n");
-    out.push_str(&format!("gossan_fleet_in_flight_tasks {}\n", snap.in_flight_tasks));
+    out.push_str(&format!(
+        "gossan_fleet_in_flight_tasks {}\n",
+        snap.in_flight_tasks
+    ));
 
     out.push_str("# HELP gossan_fleet_findings_total Cumulative findings collected.\n");
     out.push_str("# TYPE gossan_fleet_findings_total counter\n");
-    out.push_str(&format!("gossan_fleet_findings_total {}\n", snap.findings_total));
+    out.push_str(&format!(
+        "gossan_fleet_findings_total {}\n",
+        snap.findings_total
+    ));
 
     out.push_str("# HELP gossan_fleet_tasks_dispatched_total Cumulative tasks dispatched.\n");
     out.push_str("# TYPE gossan_fleet_tasks_dispatched_total counter\n");
-    out.push_str(&format!("gossan_fleet_tasks_dispatched_total {}\n", snap.tasks_dispatched_total));
+    out.push_str(&format!(
+        "gossan_fleet_tasks_dispatched_total {}\n",
+        snap.tasks_dispatched_total
+    ));
 
     out
 }
@@ -105,7 +117,11 @@ pub async fn serve(addr: &str, source: Arc<dyn MetricsSource>) -> std::io::Resul
                 .unwrap_or("/");
             let (status, body, ctype) = match path {
                 "/healthz" => (200, "ok\n".to_string(), "text/plain"),
-                "/metrics" => (200, render_prometheus(source.snapshot()), "text/plain; version=0.0.4"),
+                "/metrics" => (
+                    200,
+                    render_prometheus(source.snapshot()),
+                    "text/plain; version=0.0.4",
+                ),
                 _ => (404, "not found\n".to_string(), "text/plain"),
             };
             let resp = format!(

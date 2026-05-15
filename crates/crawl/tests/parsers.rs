@@ -23,7 +23,10 @@ Sitemap: https://example.com/sitemap.xml
     let r = parse_robots_txt(body, &base());
     assert!(r.disallowed.iter().any(|u| u.path() == "/admin/"));
     assert!(r.disallowed.iter().any(|u| u.path() == "/private/"));
-    assert!(r.sitemaps.iter().any(|u| u.as_str().contains("sitemap.xml")));
+    assert!(r
+        .sitemaps
+        .iter()
+        .any(|u| u.as_str().contains("sitemap.xml")));
 }
 
 #[test]

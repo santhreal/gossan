@@ -1,14 +1,14 @@
 //! gitlab_api::discover_org_assets emits a Repository target for
 //! every project returned by /api/v4/groups/:name/projects.
 
-use gossan_core::target::{Target, ScmService};
+use gossan_core::target::{ScmService, Target};
 use gossan_core::{Config, ScanInput};
 use gossan_scm::gitlab_api;
+use hickory_resolver::config::{ResolverConfig, ResolverOpts};
+use hickory_resolver::TokioAsyncResolver;
 use mockito::Server;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use hickory_resolver::config::{ResolverConfig, ResolverOpts};
-use hickory_resolver::TokioAsyncResolver;
 
 fn fresh_input() -> (ScanInput, mpsc::UnboundedReceiver<Target>) {
     let (tx, rx) = mpsc::unbounded_channel();
@@ -57,8 +57,7 @@ async fn emits_repository_target_per_project() {
         .await;
 
     let mut cfg = Config::default();
-    cfg.api_keys
-        .insert("gitlab_url".into(), server.url());
+    cfg.api_keys.insert("gitlab_url".into(), server.url());
 
     let (input, mut rx) = fresh_input();
 

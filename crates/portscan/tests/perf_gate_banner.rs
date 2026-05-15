@@ -73,9 +73,7 @@ async fn banner_grab_1k_loopback_under_10s() {
     server.abort();
 
     let rate = CONNECTIONS as f64 / elapsed.as_secs_f64();
-    eprintln!(
-        "banner grab: {CONNECTIONS} connections in {elapsed:?} ({rate:.0}/s)"
-    );
+    eprintln!("banner grab: {CONNECTIONS} connections in {elapsed:?} ({rate:.0}/s)");
     assert!(
         elapsed < MAX_ELAPSED,
         "banner grab: {CONNECTIONS} connections took {elapsed:?}, > {MAX_ELAPSED:?} regression gate"

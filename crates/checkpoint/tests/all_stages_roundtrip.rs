@@ -80,7 +80,9 @@ fn finding_fields_preserved_through_round_trip() {
     let store = store();
     let id = store.new_scan("example.com", "{}").unwrap();
     let original = rich_finding();
-    store.save_stage(id, "portscan", &[], &[original.clone()]).unwrap();
+    store
+        .save_stage(id, "portscan", &[], &[original.clone()])
+        .unwrap();
     let loaded = store.load(id).unwrap();
     let stage = loaded.stage("portscan").unwrap();
     assert_eq!(stage.findings.len(), 1);
@@ -89,7 +91,11 @@ fn finding_fields_preserved_through_round_trip() {
     assert_eq!(f.target(), original.target());
     assert_eq!(f.severity(), original.severity());
     assert_eq!(f.detail(), original.detail());
-    let original_tags: Vec<String> = original.tags().iter().map(|t| t.as_ref().to_string()).collect();
+    let original_tags: Vec<String> = original
+        .tags()
+        .iter()
+        .map(|t| t.as_ref().to_string())
+        .collect();
     let loaded_tags: Vec<String> = f.tags().iter().map(|t| t.as_ref().to_string()).collect();
     for t in &original_tags {
         assert!(loaded_tags.contains(t), "tag `{t}` lost in round-trip");
@@ -102,7 +108,9 @@ fn save_stage_is_idempotent_for_every_stage() {
     let id = store.new_scan("example.com", "{}").unwrap();
     for stage_name in STAGES {
         store.save_stage(id, stage_name, &[], &[]).unwrap();
-        store.save_stage(id, stage_name, &[target("a.example.com")], &[]).unwrap();
+        store
+            .save_stage(id, stage_name, &[target("a.example.com")], &[])
+            .unwrap();
         let loaded = store.load(id).unwrap();
         let stage = loaded
             .stage(stage_name)
