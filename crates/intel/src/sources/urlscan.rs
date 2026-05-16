@@ -34,8 +34,10 @@ impl IntelSource for UrlScanSource {
         if let Some(ref key) = self.api_key {
             req = req.header("API-Key", key);
         }
-        let resp = req.send().await?;
-        let body: UrlScanSearchResp = resp.error_for_status()?.json().await?;
+        let resp = req.send().await?.error_for_status()?;
+        // URLScan search responses can include hundreds of historical
+        // crawls per query; cap at 8 MiB.
+        let body: UrlScanSearchResp = gossan_core::net::bounded_json(resp, 8 * 1024 * 1024).await?;
 
         let mut enrichment = IntelEnrichment::new("urlscan", "ip", ip);
         enrichment.classification = body
@@ -63,8 +65,10 @@ impl IntelSource for UrlScanSource {
         if let Some(ref key) = self.api_key {
             req = req.header("API-Key", key);
         }
-        let resp = req.send().await?;
-        let body: UrlScanSearchResp = resp.error_for_status()?.json().await?;
+        let resp = req.send().await?.error_for_status()?;
+        // URLScan search responses can include hundreds of historical
+        // crawls per query; cap at 8 MiB.
+        let body: UrlScanSearchResp = gossan_core::net::bounded_json(resp, 8 * 1024 * 1024).await?;
 
         let mut enrichment = IntelEnrichment::new("urlscan", "domain", domain);
         for result in body.results.into_iter().take(10) {

@@ -51,8 +51,12 @@ impl IntelSource for CensysSource {
             .get(&url)
             .basic_auth(api_id, Some(api_secret))
             .send()
-            .await?;
-        let body: CensysResp = resp.error_for_status()?.json().await?;
+            .await?
+            .error_for_status()?;
+        // A Censys host record can carry hundreds of services; cap at
+        // 4 MiB to bound the worst-case payload while still admitting
+        // the legitimate large-host case.
+        let body: CensysResp = gossan_core::net::bounded_json(resp, 4 * 1024 * 1024).await?;
 
         let mut enrichment = IntelEnrichment::new("censys", "ip", ip);
 

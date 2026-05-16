@@ -302,7 +302,8 @@ regex = "x"
         // Adversarial: if any embedded TOML carries a regex that the
         // scanner refuses, the corpus is silently broken at runtime.
         let corpus = embedded_detectors();
-        let scanner = crate::CompiledScanner::compile(corpus).expect("embedded corpus must compile");
+        let scanner =
+            crate::CompiledScanner::compile(corpus).expect("embedded corpus must compile");
         // A non-placeholder AWS access key string. The scanner has a
         // placeholder filter that rejects literal "EXAMPLE" tails (the
         // canonical AWS docs key), so we pick an unrelated 16-char tail

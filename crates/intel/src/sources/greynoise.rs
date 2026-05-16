@@ -32,8 +32,10 @@ impl IntelSource for GreyNoiseSource {
         if let Some(ref key) = self.api_key {
             req = req.header("key", key);
         }
-        let resp = req.send().await?;
-        let body: GreyNoiseResp = resp.error_for_status()?.json().await?;
+        let resp = req.send().await?.error_for_status()?;
+        // GreyNoise community/v3 IP records are typically <8 KiB; cap
+        // at 256 KiB for headroom while bounding hostile responses.
+        let body: GreyNoiseResp = gossan_core::net::bounded_json(resp, 256 * 1024).await?;
 
         let mut enrichment = IntelEnrichment::new("greynoise", "ip", ip);
         enrichment.classification = body.classification.clone();

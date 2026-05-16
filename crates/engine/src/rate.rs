@@ -10,18 +10,29 @@ use std::time::Instant;
 ///
 /// Refills at `rate_pps` tokens per second. Each `consume()` call
 /// blocks until a token is available, providing smooth rate control.
+///
+/// Internal scaling: we represent both the bucket and the refill in
+/// units of `1 token = SCALE`. Since refill comes in tokens-per-μs
+/// (= rate_pps / 1_000_000), we pick `SCALE = 1_000_000` so the
+/// per-μs refill in scaled units equals `rate_pps` exactly — no
+/// truncation for rates below 1000 pps, no 1000× overshoot for
+/// rates at or above 1000 pps. Earlier scaling used `SCALE = 1000`
+/// and stored `rate_pps` in `refill_per_us_x1000` directly, which
+/// was 1000× too fast at every rate ≥ 1000 pps.
 pub struct RateLimiter {
-    /// Tokens available (scaled by 1000 for sub-token precision).
-    tokens_x1000: i64,
-    /// Maximum tokens (burst capacity).
-    max_tokens_x1000: i64,
-    /// Tokens added per microsecond (scaled by 1000).
-    refill_per_us_x1000: i64,
+    /// Tokens available (scaled by SCALE = 1_000_000 for sub-token precision).
+    tokens_x1m: i64,
+    /// Maximum tokens (burst capacity, in scaled units).
+    max_tokens_x1m: i64,
+    /// Tokens added per microsecond (scaled by SCALE).
+    refill_per_us_x1m: i64,
     /// Last refill time.
     last_refill: Instant,
     /// Target rate in packets per second.
     rate_pps: u64,
 }
+
+const TOKEN_SCALE: i64 = 1_000_000;
 
 impl RateLimiter {
     /// Create a new rate limiter.
@@ -30,19 +41,19 @@ impl RateLimiter {
     /// - `burst`: maximum burst size in packets
     #[must_use]
     pub fn new(rate_pps: u64, burst: u64) -> Self {
-        let burst = burst.max(1).min(i64::MAX as u64 / 1000);
-        let refill_per_us_x1000 = if rate_pps == 0 {
+        let burst = burst.max(1).min(i64::MAX as u64 / TOKEN_SCALE as u64);
+        let refill_per_us_x1m = if rate_pps == 0 {
             i64::MAX / 2 // Effectively unlimited
         } else {
-            // rate_pps tokens/sec = rate_pps/1_000_000 tokens/μs
-            // Scaled by 1000: rate_pps * 1000 / 1_000_000 = rate_pps / 1000
-            (rate_pps as i64).max(1) // At least 1 token per 1000μs
+            // rate_pps tokens/sec = rate_pps / 1_000_000 tokens/μs.
+            // In SCALE = 1_000_000 units that is exactly rate_pps.
+            (rate_pps as i64).max(1)
         };
 
         Self {
-            tokens_x1000: (burst as i64) * 1000,
-            max_tokens_x1000: (burst as i64) * 1000,
-            refill_per_us_x1000,
+            tokens_x1m: (burst as i64) * TOKEN_SCALE,
+            max_tokens_x1m: (burst as i64) * TOKEN_SCALE,
+            refill_per_us_x1m,
             last_refill: Instant::now(),
             rate_pps,
         }
@@ -58,8 +69,8 @@ impl RateLimiter {
     /// Does NOT block.
     pub fn try_consume(&mut self) -> bool {
         self.refill();
-        if self.tokens_x1000 >= 1000 {
-            self.tokens_x1000 -= 1000;
+        if self.tokens_x1m >= TOKEN_SCALE {
+            self.tokens_x1m -= TOKEN_SCALE;
             true
         } else {
             false
@@ -69,9 +80,9 @@ impl RateLimiter {
     /// Try to consume `n` tokens. Returns the number actually consumed.
     pub fn try_consume_batch(&mut self, n: u64) -> u64 {
         self.refill();
-        let available = (self.tokens_x1000 / 1000).max(0) as u64;
+        let available = (self.tokens_x1m / TOKEN_SCALE).max(0) as u64;
         let consumed = available.min(n);
-        self.tokens_x1000 -= (consumed as i64) * 1000;
+        self.tokens_x1m -= (consumed as i64) * TOKEN_SCALE;
         consumed
     }
 
@@ -82,14 +93,13 @@ impl RateLimiter {
     pub fn consume_blocking(&mut self) {
         loop {
             self.refill();
-            if self.tokens_x1000 >= 1000 {
-                self.tokens_x1000 -= 1000;
+            if self.tokens_x1m >= TOKEN_SCALE {
+                self.tokens_x1m -= TOKEN_SCALE;
                 return;
             }
-            // Estimate wait time
-            let deficit = 1000 - self.tokens_x1000;
-            if self.refill_per_us_x1000 > 0 {
-                let wait_us = deficit / self.refill_per_us_x1000.max(1);
+            let deficit = TOKEN_SCALE - self.tokens_x1m;
+            if self.refill_per_us_x1m > 0 {
+                let wait_us = deficit / self.refill_per_us_x1m.max(1);
                 if wait_us > 100 {
                     std::thread::yield_now();
                 } else {
@@ -118,7 +128,7 @@ impl RateLimiter {
     /// limiter (which would lose the bucket fill state and stutter).
     pub fn set_rate_pps(&mut self, rate_pps: u64) {
         self.rate_pps = rate_pps;
-        self.refill_per_us_x1000 = if rate_pps == 0 {
+        self.refill_per_us_x1m = if rate_pps == 0 {
             i64::MAX / 2
         } else {
             (rate_pps as i64).max(1)
@@ -129,11 +139,11 @@ impl RateLimiter {
         let now = Instant::now();
         let elapsed_us = now.duration_since(self.last_refill).as_micros() as i64;
         if elapsed_us > 0 {
-            let new_tokens = elapsed_us.saturating_mul(self.refill_per_us_x1000);
-            self.tokens_x1000 = self
-                .tokens_x1000
+            let new_tokens = elapsed_us.saturating_mul(self.refill_per_us_x1m);
+            self.tokens_x1m = self
+                .tokens_x1m
                 .saturating_add(new_tokens)
-                .min(self.max_tokens_x1000);
+                .min(self.max_tokens_x1m);
             self.last_refill = now;
         }
     }
@@ -388,6 +398,46 @@ mod tests {
         lo.tick(1000, 100);
         lo.apply(&mut limiter);
         assert_eq!(limiter.rate_pps(), lo.current_pps());
+    }
+
+    /// Real-rate test: configure a known rate, drain the bucket, then
+    /// measure how many tokens we can claim over a short window. Pre-
+    /// fix the math left `refill_per_us_x1000 = rate_pps` instead of
+    /// `rate_pps / 1000`, which means at e.g. 10_000 pps configured
+    /// we actually let through ~10 million pps.
+    #[test]
+    fn rate_limiter_actually_throttles_to_configured_rate() {
+        use std::time::{Duration, Instant};
+        const CONFIGURED_PPS: u64 = 10_000;
+        // Tiny burst so the bucket drains quickly — we want to
+        // measure the steady-state refill rate, not burst capacity.
+        let mut rl = RateLimiter::new(CONFIGURED_PPS, 32);
+
+        // Drain the burst so subsequent consume calls are bounded by
+        // refill alone.
+        while rl.try_consume() {}
+
+        let start = Instant::now();
+        let mut consumed: u64 = 0;
+        while start.elapsed() < Duration::from_millis(100) {
+            if rl.try_consume() {
+                consumed += 1;
+            } else {
+                std::hint::spin_loop();
+            }
+        }
+        let elapsed_ms = start.elapsed().as_millis().max(1) as u64;
+        let observed_pps = consumed.saturating_mul(1000) / elapsed_ms;
+
+        // Allow 4× headroom for jitter / timer slop. If the observed
+        // rate is more than 4× the configured rate the math is wrong.
+        let upper_bound = CONFIGURED_PPS * 4;
+        assert!(
+            observed_pps <= upper_bound,
+            "RateLimiter configured at {CONFIGURED_PPS} pps achieved \
+             {observed_pps} pps (consumed {consumed} in {elapsed_ms}ms) — \
+             refill scaling regressed"
+        );
     }
 
     #[test]

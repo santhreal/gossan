@@ -39,8 +39,16 @@ impl IntelSource for PassiveDnsSource {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Passive DNS requires an API key"))?;
         let url = format!("{}/lookup/rdata/{ip}", self.endpoint);
-        let resp = self.client.get(&url).bearer_auth(api_key).send().await?;
-        let body: PdnsResp = resp.error_for_status()?.json().await?;
+        let resp = self
+            .client
+            .get(&url)
+            .bearer_auth(api_key)
+            .send()
+            .await?
+            .error_for_status()?;
+        // Passive-DNS history for a busy hostname can run into many
+        // thousand records; cap at 8 MiB to bound the worst case.
+        let body: PdnsResp = gossan_core::net::bounded_json(resp, 8 * 1024 * 1024).await?;
 
         let mut enrichment = IntelEnrichment::new("passive_dns", "ip", ip);
         for rec in body.records {
@@ -61,8 +69,16 @@ impl IntelSource for PassiveDnsSource {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Passive DNS requires an API key"))?;
         let url = format!("{}/lookup/rrset/name/{domain}", self.endpoint);
-        let resp = self.client.get(&url).bearer_auth(api_key).send().await?;
-        let body: PdnsResp = resp.error_for_status()?.json().await?;
+        let resp = self
+            .client
+            .get(&url)
+            .bearer_auth(api_key)
+            .send()
+            .await?
+            .error_for_status()?;
+        // Passive-DNS history for a busy hostname can run into many
+        // thousand records; cap at 8 MiB to bound the worst case.
+        let body: PdnsResp = gossan_core::net::bounded_json(resp, 8 * 1024 * 1024).await?;
 
         let mut enrichment = IntelEnrichment::new("passive_dns", "domain", domain);
         for rec in body.records {

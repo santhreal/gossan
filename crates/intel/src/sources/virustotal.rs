@@ -33,8 +33,16 @@ impl IntelSource for VirusTotalSource {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("VirusTotal requires an API key"))?;
         let url = format!("{BASE_URL}/ip_addresses/{ip}");
-        let resp = self.client.get(&url).header("x-apikey", key).send().await?;
-        let body: VtResp = resp.error_for_status()?.json().await?;
+        let resp = self
+            .client
+            .get(&url)
+            .header("x-apikey", key)
+            .send()
+            .await?
+            .error_for_status()?;
+        // VT IP/domain payloads can include hundreds of vendor verdict
+        // entries plus historical analysis blobs; cap at 8 MiB.
+        let body: VtResp = gossan_core::net::bounded_json(resp, 8 * 1024 * 1024).await?;
 
         let mut enrichment = IntelEnrichment::new("virustotal", "ip", ip);
         if let Some(stats) = body.data.attributes.last_analysis_stats {
@@ -81,8 +89,16 @@ impl IntelSource for VirusTotalSource {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("VirusTotal requires an API key"))?;
         let url = format!("{BASE_URL}/domains/{domain}");
-        let resp = self.client.get(&url).header("x-apikey", key).send().await?;
-        let body: VtResp = resp.error_for_status()?.json().await?;
+        let resp = self
+            .client
+            .get(&url)
+            .header("x-apikey", key)
+            .send()
+            .await?
+            .error_for_status()?;
+        // VT IP/domain payloads can include hundreds of vendor verdict
+        // entries plus historical analysis blobs; cap at 8 MiB.
+        let body: VtResp = gossan_core::net::bounded_json(resp, 8 * 1024 * 1024).await?;
 
         let mut enrichment = IntelEnrichment::new("virustotal", "domain", domain);
         if let Some(stats) = body.data.attributes.last_analysis_stats {

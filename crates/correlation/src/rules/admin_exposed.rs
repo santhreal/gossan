@@ -33,14 +33,34 @@ impl CorrelationRule for AdminExposedRule {
             return chains;
         }
 
-        // Same hosts missing WWW-Authenticate / auth headers
+        // Same hosts missing WWW-Authenticate / auth headers. The
+        // filter is deliberately auth-specific: a generic "Missing"
+        // substring (e.g. "Missing HSTS header") would chain with any
+        // admin panel finding and emit a false-positive Critical
+        // "admin without auth" chain. Match only titles that name
+        // authentication directly.
+        let is_unauth_finding = |f: &Finding| -> bool {
+            let scanner_ok = f.scanner() == "techstack" || f.scanner() == "hidden";
+            if !scanner_ok {
+                return false;
+            }
+            let t = f.title().to_lowercase();
+            t.contains("no authentication")
+                || t.contains("missing authentication")
+                || t.contains("authentication missing")
+                || t.contains("authentication required")
+                || t.contains("auth bypass")
+                || t.contains("auth-bypass")
+                || t.contains("www-authenticate")
+                || t.contains("unauthenticated")
+                || f.tags().iter().any(|tag| {
+                    let ts = tag.as_ref();
+                    ts == "auth-bypass" || ts == "no-auth" || ts == "unauthenticated"
+                })
+        };
         let unauth_hosts: std::collections::HashSet<String> = findings
             .iter()
-            .filter(|f| {
-                (f.scanner() == "techstack" || f.scanner() == "hidden")
-                    && (f.title().to_lowercase().contains("missing")
-                        || f.title().to_lowercase().contains("no authentication"))
-            })
+            .filter(|f| is_unauth_finding(f))
             .filter_map(|f| Some(f.target()).map(|d| normalize_host(d)))
             .collect();
 
@@ -59,12 +79,7 @@ impl CorrelationRule for AdminExposedRule {
 
             let auth_findings: Vec<&Finding> = findings
                 .iter()
-                .filter(|f| {
-                    (f.scanner() == "techstack" || f.scanner() == "hidden")
-                        && normalize_host(f.target()) == *host
-                        && (f.title().to_lowercase().contains("missing")
-                            || f.title().to_lowercase().contains("no authentication"))
-                })
+                .filter(|f| normalize_host(f.target()) == *host && is_unauth_finding(f))
                 .collect();
 
             let mut evidence_ids = Vec::new();
@@ -140,5 +155,50 @@ mod tests {
         assert_eq!(chains.len(), 1);
         assert_eq!(chains[0].severity(), Severity::Critical);
         assert!(chains[0].title().contains("without authentication"));
+    }
+
+    /// Adversarial: a host with an admin panel finding *and* a
+    /// generic "Missing X header" finding (HSTS, CSP, X-Frame-Options)
+    /// MUST NOT trigger the auth-bypass chain. Pre-fix, the substring
+    /// match `.contains("missing")` fired on every security-headers
+    /// finding and produced false-positive Critical chains.
+    #[test]
+    fn admin_exposed_rule_does_not_chain_on_unrelated_missing_header() {
+        let findings = vec![
+            finding("hidden", "admin.example.com", "Admin dashboard exposed"),
+            finding("hidden", "admin.example.com", "Missing HSTS header"),
+            finding(
+                "hidden",
+                "admin.example.com",
+                "Missing X-Frame-Options header",
+            ),
+            finding(
+                "hidden",
+                "admin.example.com",
+                "Missing Content-Security-Policy header",
+            ),
+        ];
+        let chains = AdminExposedRule.check(&findings, &[]);
+        assert!(
+            chains.is_empty(),
+            "missing-header findings produced a false-positive admin-no-auth chain: {:?}",
+            chains.iter().map(Finding::title).collect::<Vec<_>>()
+        );
+    }
+
+    /// The auth-bypass chain still fires for a real auth-related
+    /// title — proving the tightened filter didn't over-correct.
+    #[test]
+    fn admin_exposed_rule_chains_on_explicit_auth_bypass_signal() {
+        let findings = vec![
+            finding("hidden", "admin.example.com", "Admin dashboard exposed"),
+            finding(
+                "hidden",
+                "admin.example.com",
+                "Authentication missing on /admin",
+            ),
+        ];
+        let chains = AdminExposedRule.check(&findings, &[]);
+        assert_eq!(chains.len(), 1);
     }
 }
