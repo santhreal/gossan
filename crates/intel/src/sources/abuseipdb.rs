@@ -39,8 +39,12 @@ impl IntelSource for AbuseIpdbSource {
             .header("Accept", "application/json")
             .query(&[("ipAddress", ip), ("maxAgeInDays", "90")])
             .send()
-            .await?;
-        let body: AbuseIpdbResp = resp.error_for_status()?.json().await?;
+            .await?
+            .error_for_status()?;
+        // 256 KiB is well above the largest legitimate AbuseIPDB
+        // response observed in production; bounding here protects
+        // against a hostile MITM injecting a giant body.
+        let body: AbuseIpdbResp = gossan_core::net::bounded_json(resp, 256 * 1024).await?;
 
         let mut enrichment = IntelEnrichment::new("abuseipdb", "ip", ip);
         enrichment.classification = if body.data.abuse_confidence_score > 75 {

@@ -102,16 +102,38 @@ impl JsonBackend {
             }
             let val: serde_json::Value = serde_json::from_str(&raw)?;
             if val.get("format").and_then(|v| v.as_str()) == Some("jsonl") {
-                let nodes_file = val
-                    .get("nodes_file")
-                    .and_then(|v| v.as_str())
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| self.path.with_extension("nodes.jsonl"));
-                let edges_file = val
-                    .get("edges_file")
-                    .and_then(|v| v.as_str())
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| self.path.with_extension("edges.jsonl"));
+                // The manifest *names* the sibling jsonl files. A
+                // malicious manifest could try to point those names at
+                // /etc/passwd, ~/.ssh/id_rsa, etc., and surface their
+                // contents via serde parse-error messages. Constrain
+                // both to the manifest's parent directory and reject
+                // any path that escapes via .. or absolute prefix.
+                let parent = self
+                    .path
+                    .parent()
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|| PathBuf::from("."));
+                let resolve_sibling = |raw: Option<&str>, default: PathBuf| -> PathBuf {
+                    let Some(raw) = raw else { return default };
+                    let candidate = PathBuf::from(raw);
+                    let file_name = candidate.file_name();
+                    let stays_in_parent = !candidate.is_absolute()
+                        && !candidate
+                            .components()
+                            .any(|c| matches!(c, std::path::Component::ParentDir));
+                    match (file_name, stays_in_parent) {
+                        (Some(name), true) => parent.join(name),
+                        _ => default,
+                    }
+                };
+                let nodes_file = resolve_sibling(
+                    val.get("nodes_file").and_then(|v| v.as_str()),
+                    self.path.with_extension("nodes.jsonl"),
+                );
+                let edges_file = resolve_sibling(
+                    val.get("edges_file").and_then(|v| v.as_str()),
+                    self.path.with_extension("edges.jsonl"),
+                );
                 self.nodes = read_jsonl(&nodes_file)?;
                 self.edges = read_jsonl(&edges_file)?;
                 return Ok(());
@@ -267,6 +289,45 @@ mod tests {
         let edges = backend2.read_edges().unwrap();
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].source_id, "n1");
+    }
+
+    /// Adversarial: a malicious manifest that names an absolute or
+    /// `..`-escaped path for `nodes_file` / `edges_file` MUST be
+    /// silently ignored — the loader falls back to the safe sibling
+    /// default — so we never read /etc/passwd or surface its content
+    /// through serde parse-error messages.
+    #[test]
+    fn json_load_rejects_path_traversal_in_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = dir.path().join("scan.json");
+
+        // Drop a benign sibling so the safe default load resolves to
+        // an empty corpus rather than an "no such file" error.
+        std::fs::write(manifest.with_extension("nodes.jsonl"), "").unwrap();
+        std::fs::write(manifest.with_extension("edges.jsonl"), "").unwrap();
+
+        // Sentinel target the attacker would love to leak.
+        let sentinel = dir.path().join("secret.jsonl");
+        std::fs::write(&sentinel, r#"{"id":"leaked","kind":"Domain","label":"x"}"#).unwrap();
+
+        let manifest_body = serde_json::json!({
+            "format": "jsonl",
+            "schema": crate::schema::GraphSchema::current(),
+            "nodes_file": sentinel.to_string_lossy(),
+            "edges_file": "../../../etc/passwd",
+            "node_count": 0,
+            "edge_count": 0,
+        });
+        std::fs::write(&manifest, serde_json::to_string(&manifest_body).unwrap()).unwrap();
+
+        let mut backend = JsonBackend::open(&manifest);
+        backend.init().expect("safe fallback load should succeed");
+
+        let nodes = backend.read_nodes().unwrap();
+        assert!(
+            !nodes.iter().any(|n| n.id == "leaked"),
+            "manifest-named absolute path was followed — path-traversal guard regressed"
+        );
     }
 
     #[test]

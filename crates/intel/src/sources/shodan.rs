@@ -33,8 +33,10 @@ impl IntelSource for ShodanSource {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Shodan requires an API key"))?;
         let url = format!("{BASE_URL}/shodan/host/{ip}?key={key}");
-        let resp = self.client.get(&url).send().await?;
-        let body: ShodanResp = resp.error_for_status()?.json().await?;
+        let resp = self.client.get(&url).send().await?.error_for_status()?;
+        // Shodan host records for busy hosts can carry many ports +
+        // banners; 8 MiB bounds the realistic upper case.
+        let body: ShodanResp = gossan_core::net::bounded_json(resp, 8 * 1024 * 1024).await?;
 
         let mut enrichment = IntelEnrichment::new("shodan", "ip", ip);
 
@@ -85,8 +87,10 @@ impl IntelSource for ShodanSource {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Shodan requires an API key"))?;
         let url = format!("{BASE_URL}/dns/domain/{domain}?key={key}");
-        let resp = self.client.get(&url).send().await?;
-        let body: ShodanDnsResp = resp.error_for_status()?.json().await?;
+        let resp = self.client.get(&url).send().await?.error_for_status()?;
+        // DNS records for a popular apex can include thousands of
+        // subdomains; cap at 8 MiB to bound the worst case.
+        let body: ShodanDnsResp = gossan_core::net::bounded_json(resp, 8 * 1024 * 1024).await?;
 
         let mut enrichment = IntelEnrichment::new("shodan", "domain", domain);
         for sub in body.subdomains.unwrap_or_default() {

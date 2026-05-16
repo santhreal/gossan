@@ -32,8 +32,10 @@ impl IntelSource for AsnSource {
         if let Some(ref token) = self.token {
             url.push_str(&format!("?token={token}"));
         }
-        let resp = self.client.get(&url).send().await?;
-        let body: IpInfoResp = resp.error_for_status()?.json().await?;
+        let resp = self.client.get(&url).send().await?.error_for_status()?;
+        // ipinfo.io payloads are <16 KiB; 64 KiB is generous headroom
+        // while bounding malformed/hostile responses.
+        let body: IpInfoResp = gossan_core::net::bounded_json(resp, 64 * 1024).await?;
 
         let mut enrichment = IntelEnrichment::new("asn", "ip", ip);
         enrichment.asn = Some(AsnInfo {
@@ -60,8 +62,10 @@ impl IntelSource for AsnSource {
         if let Some(ref token) = self.token {
             url.push_str(&format!("?token={token}"));
         }
-        let resp = self.client.get(&url).send().await?;
-        let body: IpInfoResp = resp.error_for_status()?.json().await?;
+        let resp = self.client.get(&url).send().await?.error_for_status()?;
+        // ipinfo.io payloads are <16 KiB; 64 KiB is generous headroom
+        // while bounding malformed/hostile responses.
+        let body: IpInfoResp = gossan_core::net::bounded_json(resp, 64 * 1024).await?;
 
         let mut enrichment = IntelEnrichment::new("asn", "domain", domain);
         enrichment.asn = Some(AsnInfo {

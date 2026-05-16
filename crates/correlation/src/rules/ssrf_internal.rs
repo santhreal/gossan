@@ -10,6 +10,20 @@
 use gossan_core::Target;
 use secfinding::{Finding, FindingKind, Severity};
 
+use crate::utils::normalize_host;
+
+fn parent_domain(host: &str) -> String {
+    // Coarse "registrable parent" heuristic — last two labels. Good
+    // enough for the same-blast-radius check; a public-suffix-list
+    // implementation would be more precise but pulls in publicsuffix
+    // crate weight for marginal gain.
+    let labels: Vec<&str> = host.split('.').filter(|s| !s.is_empty()).collect();
+    if labels.len() < 2 {
+        return host.to_string();
+    }
+    labels[labels.len() - 2..].join(".")
+}
+
 /// SSRF patterns we look for in existing finding titles.
 const SSRF_SIGNALS: &[&str] = &[
     "ssrf",
@@ -44,20 +58,37 @@ impl super::super::CorrelationRule for SsrfInternalRule {
     }
 
     fn check(&self, findings: &[Finding], _targets: &[Target]) -> Vec<Finding> {
-        let has_ssrf = findings.iter().any(|f| {
-            let lower = f.title().to_lowercase();
-            SSRF_SIGNALS.iter().any(|sig| lower.contains(sig))
-        });
+        let ssrf_parents: std::collections::HashSet<String> = findings
+            .iter()
+            .filter(|f| {
+                let lower = f.title().to_lowercase();
+                SSRF_SIGNALS.iter().any(|sig| lower.contains(sig))
+            })
+            .map(|f| parent_domain(&normalize_host(f.target())))
+            .collect();
 
+        if ssrf_parents.is_empty() {
+            return vec![];
+        }
+
+        // Internal services only count when they live under the same
+        // registrable parent as a known SSRF — otherwise an SSRF on
+        // example.com and an exposed Redis on totally-unrelated.com
+        // (both legitimately in the scan target list) would emit a
+        // false-positive Critical chain claiming attacker pivot.
         let internal_services: Vec<&Finding> = findings
             .iter()
             .filter(|f| {
                 let lower = f.title().to_lowercase();
-                INTERNAL_SIGNALS.iter().any(|sig| lower.contains(sig))
+                if !INTERNAL_SIGNALS.iter().any(|sig| lower.contains(sig)) {
+                    return false;
+                }
+                let parent = parent_domain(&normalize_host(f.target()));
+                ssrf_parents.contains(&parent)
             })
             .collect();
 
-        if !has_ssrf || internal_services.is_empty() {
+        if internal_services.is_empty() {
             return vec![];
         }
 
@@ -69,18 +100,16 @@ impl super::super::CorrelationRule for SsrfInternalRule {
 
         let chain = Finding::builder(
             "correlation",
-            internal_services
-                .first()
-                .map(|f| f.target())
-                .unwrap_or("unknown"),
+            internal_services[0].target(),
             Severity::Critical,
         )
         .title("SSRF → Internal Service Access Chain")
         .detail(format!(
-            "An SSRF-capable endpoint was found alongside {} exposed internal service(s). \
-             An attacker can chain the SSRF to reach internal services that are not exposed \
-             to the internet, potentially leading to data exfiltration, command execution, \
-             or full infrastructure compromise. Services at risk: {}",
+            "An SSRF-capable endpoint was found alongside {} exposed internal service(s) \
+                 under the same parent domain. An attacker can chain the SSRF to reach internal \
+                 services that are not exposed to the internet, potentially leading to data \
+                 exfiltration, command execution, or full infrastructure compromise. Services \
+                 at risk: {}",
             internal_services.len(),
             service_names.join(", ")
         ))
@@ -138,5 +167,42 @@ mod tests {
         let rule = SsrfInternalRule;
         let findings = vec![finding("hidden", "example.com", "Open redirect detected")];
         assert!(rule.check(&findings, &[]).is_empty());
+    }
+
+    /// Adversarial: SSRF on host A and internal service on unrelated
+    /// host B MUST NOT chain — they don't share a parent domain.
+    /// Pre-fix the rule chained any SSRF anywhere with any internal
+    /// service anywhere.
+    #[test]
+    fn ssrf_internal_does_not_fire_across_unrelated_parent_domains() {
+        let rule = SsrfInternalRule;
+        let findings = vec![
+            finding("hidden", "app.example.com", "Open redirect detected"),
+            finding(
+                "portscan",
+                "redis.unrelated-target.com",
+                "Redis exposed without authentication",
+            ),
+        ];
+        assert!(
+            rule.check(&findings, &[]).is_empty(),
+            "cross-parent ssrf+internal chain emitted as false positive"
+        );
+    }
+
+    /// Same parent → still chains. The fix didn't over-correct.
+    #[test]
+    fn ssrf_internal_fires_when_parent_domain_matches() {
+        let rule = SsrfInternalRule;
+        let findings = vec![
+            finding("hidden", "app.example.com", "Open redirect detected"),
+            finding(
+                "portscan",
+                "redis.example.com",
+                "Redis exposed without authentication",
+            ),
+        ];
+        let chains = rule.check(&findings, &[]);
+        assert_eq!(chains.len(), 1);
     }
 }
