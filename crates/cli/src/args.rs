@@ -209,6 +209,15 @@ pub struct Cli {
     pub checkpoint: Option<String>,
     #[arg(long, global = true, help = "Resume a previous scan by UUID")]
     pub resume: Option<String>,
+
+    #[cfg(feature = "portscan")]
+    #[arg(
+        long,
+        global = true,
+        env = "NVD_DB_PATH",
+        help = "Path to NVD CVE database (default: ~/.cache/nvd/nvd.sqlite3)"
+    )]
+    pub nvd_db: Option<String>,
 }
 /// Available gossan subcommands.
 
