@@ -39,6 +39,7 @@ rand         = "0.8"
 md5          = "0.7"
 hex          = { workspace = true }
 hickory-resolver = { workspace = true }
+rusqlite = { workspace = true }
 
 [dev-dependencies]
 proptest = "1.0"

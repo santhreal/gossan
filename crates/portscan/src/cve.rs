@@ -20,6 +20,8 @@
 //! description = "OpenSSH 9.5 — example vulnerability."
 //! exploit = "ssh -o ... TARGET"
 //! ```
+pub mod nvd;
+
 use gossan_core::{ServiceTarget, Target};
 use secfinding::{Evidence, Finding, Severity};
 use serde::Deserialize;
@@ -344,6 +346,8 @@ pub fn correlate_with_rules(banner: &str, svc: &ServiceTarget, rules: &[CveRule]
                 ),
                 &rule.description,
             )
+            .cve(&rule.cve)
+            .confidence((rule.cvss / 10.0) as f64)
             .evidence(Evidence::Banner {
                 raw: banner.chars().take(120).collect::<String>().into(),
             })

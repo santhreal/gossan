@@ -671,6 +671,18 @@ async fn probe_port(
     };
     if !banner_for_cve.is_empty() {
         findings.extend(cve::correlate(&banner_for_cve, &svc));
+
+        // NVD CVE database lookup (optional, needs pre-synced cache)
+        #[cfg(feature = "nvd")]
+        {
+            let b = banner_for_cve.clone();
+            let s = svc.clone();
+            if let Ok(nvd_findings) =
+                tokio::task::spawn_blocking(move || cve::nvd::try_search(&b, &s)).await
+            {
+                findings.extend(nvd_findings);
+            }
+        }
     }
 
     Some((svc, findings, extra_targets))

@@ -40,6 +40,16 @@ async fn main() -> anyhow::Result<()> {
 
     let mut config = cli.build_config();
 
+    #[cfg(feature = "portscan")]
+    {
+        let nvd_path = cli
+            .nvd_db
+            .clone()
+            .or_else(|| std::env::var("NVD_DB_PATH").ok())
+            .map(std::path::PathBuf::from);
+        gossan_portscan::cve::nvd::init(nvd_path);
+    }
+
     match cli.command {
         Command::Scan {
             target,
