@@ -1,0 +1,22 @@
+# GENERATED from csp::LEGACY_DANGEROUS_SCRIPT_VALUES  -  DO NOT hand-edit.
+# Regenerate: GOSSAN_GEN_HIDDEN=1 cargo test -p gossan-hidden emit_csp_pack
+# Tier-B recall FLOOR; extend via community *.toml under a
+# `hidden-csp/` rules dir (see rules/hidden-csp/community/).
+
+[[rule]]
+value = "'unsafe-inline'"
+severity = "high"
+title = "CSP: unsafe-inline in script-src"
+detail = "script-src allows 'unsafe-inline'  -  inline <script> tags and event handlers bypass CSP entirely. Any XSS injection point becomes exploitable. Fix: remove 'unsafe-inline' and use nonces or hashes for legitimate inline scripts."
+
+[[rule]]
+value = "'unsafe-eval'"
+severity = "medium"
+title = "CSP: unsafe-eval in script-src"
+detail = "script-src allows 'unsafe-eval'  -  eval(), Function(), and setTimeout(string) are permitted. Attackers with a DOM injection can execute arbitrary JS. Fix: remove 'unsafe-eval' and refactor code to avoid eval-like patterns."
+
+[[rule]]
+value = "data:"
+severity = "high"
+title = "CSP: data: URI in script-src"
+detail = """script-src allows data: URIs  -  attackers can inject scripts via <script src="data:text/javascript,...">. Fix: remove 'data:' from script-src."""

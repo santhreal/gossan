@@ -1,0 +1,195 @@
+# GENERATED from error_disclosure::LEGACY_*  -  DO NOT hand-edit.
+# Regenerate: GOSSAN_GEN_HIDDEN=1 cargo test -p gossan-hidden emit_error_disc_pack
+# PRECISION-TUNED (task #22). Tier-B recall FLOOR; extend via
+# community *.toml under `hidden-error-disc/` (see that README).
+
+[[trigger]]
+suffix = "/gossan-error-probe-9z3k2p"
+desc = "random 404"
+
+[[trigger]]
+suffix = "/?__gossan__=<script>x</script>"
+desc = "XSS reflection / error"
+
+[[trigger]]
+suffix = "/?q={{473*337}}"
+desc = "SSTI probe {{473*337}} → 159401"
+
+[[trigger]]
+suffix = "/?q=${473*337}"
+desc = "SSTI probe ${473*337} (Java EL)"
+
+[[trigger]]
+suffix = "/?q=<%=473*337%>"
+desc = "SSTI probe <%=473*337%> (ERB)"
+
+[[trigger]]
+suffix = "/?q=<%= 473*337 %>"
+desc = "SSTI probe ERB with spaces"
+
+[[trigger]]
+suffix = "/?id=1'"
+desc = "SQL injection probe"
+
+[[trigger]]
+suffix = '/?id=1"'
+desc = "SQL injection probe (double quote)"
+
+[[trigger]]
+suffix = "/?page[]=1&page[]=2"
+desc = "PHP array confusion"
+
+[[pattern]]
+pattern = "Traceback (most recent call last)"
+name = "Python traceback in error response"
+severity = "high"
+
+[[pattern]]
+pattern = "django.core.exceptions"
+name = "Django exception in error response"
+severity = "high"
+
+[[pattern]]
+pattern = "java.lang."
+name = "Java exception in error response"
+severity = "high"
+
+[[pattern]]
+pattern = "org.springframework"
+name = "Spring framework exception"
+severity = "high"
+
+[[pattern]]
+pattern = "at com."
+name = "Java stack frame in error response"
+severity = "medium"
+
+[[pattern]]
+pattern = "Caused by:"
+name = "Java exception chain in response"
+severity = "medium"
+
+[[pattern]]
+pattern = "Fatal error:"
+name = "PHP fatal error in response"
+severity = "high"
+
+[[pattern]]
+pattern = "Stack trace:"
+name = "PHP stack trace in response"
+severity = "high"
+
+[[pattern]]
+pattern = "app/controllers/"
+name = "Rails controller path in response"
+severity = "high"
+
+[[pattern]]
+pattern = "ActionController::"
+name = "Rails ActionController exception"
+severity = "high"
+
+[[pattern]]
+pattern = "at Object.<anonymous>"
+name = "Node.js stack frame in response"
+severity = "high"
+
+[[pattern]]
+pattern = "at Module._compile"
+name = "Node.js module stack in response"
+severity = "high"
+
+[[pattern]]
+pattern = "syntax error near"
+name = "SQL syntax error in response"
+severity = "high"
+
+[[pattern]]
+pattern = "ORA-"
+name = "Oracle SQL error in response"
+severity = "high"
+
+[[pattern]]
+pattern = "mysql_error"
+name = "MySQL error in response"
+severity = "high"
+
+[[pattern]]
+pattern = "pg_query"
+name = "PostgreSQL error in response"
+severity = "high"
+
+[[pattern]]
+pattern = "SQLSTATE["
+name = "PDO SQL error in response"
+severity = "high"
+
+[[pattern]]
+pattern = "Unclosed quotation mark"
+name = "MSSQL error in response"
+severity = "high"
+
+[[pattern]]
+pattern = "/home/"
+name = "Internal Unix path in response"
+severity = "medium"
+
+[[pattern]]
+pattern = "/var/www/"
+name = "Web root path in response"
+severity = "medium"
+
+[[pattern]]
+pattern = 'C:\inetpub'
+name = "IIS path in response"
+severity = "medium"
+
+[[pattern]]
+pattern = 'C:\Users\'
+name = "Windows user path in response"
+severity = "medium"
+
+[[pattern]]
+pattern = "159401"
+name = "SSTI confirmed  -  arithmetic expression evaluated to 159401"
+severity = "critical"
+
+[[pattern]]
+pattern = "Whoops! There was an error."
+name = "Laravel Whoops debug page"
+severity = "high"
+
+[[pattern]]
+pattern = "DEBUG = True"
+name = "Django DEBUG mode active"
+severity = "high"
+
+[[debug_header]]
+header = "x-debug-token"
+name = "Symfony debug token leaked"
+severity = "medium"
+
+[[debug_header]]
+header = "x-debug-token-link"
+name = "Symfony Profiler URL exposed"
+severity = "medium"
+
+[[debug_header]]
+header = "x-debugbar-id"
+name = "PHP DebugBar active"
+severity = "medium"
+
+[[debug_header]]
+header = "x-powered-cgi"
+name = "CGI mode exposed"
+severity = "low"
+
+[[debug_header]]
+header = "x-application-context"
+name = "Spring app context exposed"
+severity = "medium"
+
+[[debug_header]]
+header = "x-envoy-upstream-service-time"
+name = "Envoy/Istio internal timing"
+severity = "low"

@@ -1,0 +1,15 @@
+# GENERATED from methods::LEGACY_PROBE_PATHS  -  DO NOT hand-edit.
+# Regenerate: GOSSAN_GEN_HIDDEN=1 cargo test -p gossan-hidden emit_methods_pack
+# Tier-B recall FLOOR (paths only; TRACE/PUT/DELETE verbs are
+# RFC-fixed in code). Extend via community *.txt under a
+# `hidden-methods/` rules dir (see rules/hidden-methods/community/).
+
+/
+/api
+/api/v1
+/upload
+/files
+/data
+/api/v1/users
+/api/v1/files
+/admin

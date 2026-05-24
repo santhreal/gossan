@@ -1,0 +1,194 @@
+# Tier-B: HTTP "unclaimed-resource" body fingerprints for subdomain
+# takeover confirmation. Keyed by the exact service name used in
+# `takeovers.txt`. A CNAME-suffix match alone is NOT proof  -  the
+# canonical takeover-able state is that the host STILL RESOLVES (to the
+# provider's shared infra) but the provider serves an "unclaimed" page.
+# These signatures are the widely-cited can-i-take-over-xyz / subjack
+# vulnerable strings; a substring match in the fetched body confirms a
+# claimable hostname. Only high-confidence, low-false-positive
+# signatures are listed  -  adding one is 2 lines of data, no Rust.
+#
+# `dns_only` lists services whose CNAME-suffix is a real takeover
+# fingerprint but whose only reliable, low-false-positive confirmation
+# is an authoritative NXDOMAIN/NODATA on the CNAME target (the
+# DNS-dangling path)  -  there is no canonical unclaimed-PAGE body string
+# for them (e.g. Azure Traffic Manager, Bounceme, Fly.io go NXDOMAIN
+# when unclaimed; others have no stable body marker). This is an
+# explicit classification, not a gap: the coverage-contract test
+# (`every_takeover_service_is_classified`) FAILS the build if any
+# service in `takeovers.txt` is in neither `[[service]]` nor `dns_only`,
+# so the two files can never silently drift again.
+dns_only = [
+  "AgileCRM",
+  "Apigee",
+  "Azure Cloud App",
+  "Azure Traffic Manager",
+  "Azure Web App",
+  "Besy",
+  "BigCartel",
+  "Bounceme",
+  "Desk",
+  "Fly.io",
+  "Freshdesk",
+  "GetResponse",
+  "HubSpot",
+  "Kustomer",
+  "Mashery",
+  "Netlify",
+  "Render",
+  "Retool",
+  "SendGrid",
+  "SmugMug",
+  "Squarespace",
+  "StatusPage",
+  "Visual Website Optimizer",
+  "Wix",
+  "WordPress",
+]
+
+[[service]]
+name = "GitHub Pages"
+fingerprints = [
+  "There isn't a GitHub Pages site here.",
+  "For root URLs (like http://example.com/) you must provide an index.html file",
+]
+
+[[service]]
+name = "Heroku"
+fingerprints = [
+  "No such app",
+  "herokucdn.com/error-pages/no-such-app.html",
+]
+
+[[service]]
+name = "AWS S3/Elastic Beanstalk"
+fingerprints = [
+  "<Code>NoSuchBucket</Code>",
+  "The specified bucket does not exist",
+]
+
+[[service]]
+name = "Bitbucket Pages"
+fingerprints = ["Repository not found"]
+
+[[service]]
+name = "Surge"
+fingerprints = ["project not found"]
+
+[[service]]
+name = "Cargo Collective"
+fingerprints = ["<title>404 &mdash; File not found</title>"]
+
+[[service]]
+name = "Webflow"
+fingerprints = [
+  "The page you are looking for doesn't exist or has been moved.",
+]
+
+[[service]]
+name = "HelpScout"
+fingerprints = ["No settings were found for this company:"]
+
+[[service]]
+name = "Unbounce"
+fingerprints = ["The requested URL was not found on this server."]
+
+[[service]]
+name = "UserVoice"
+fingerprints = ["This UserVoice subdomain is currently available!"]
+
+[[service]]
+name = "Strikingly"
+fingerprints = [
+  "page not found",
+  "But if you're looking to build your own website,",
+]
+
+[[service]]
+name = "Pantheon"
+fingerprints = ["The gods are wise, but do not know of the site which you seek."]
+
+[[service]]
+name = "Ghost"
+fingerprints = [
+  "The thing you were looking for is no longer here, or never was",
+]
+
+[[service]]
+name = "Tilda"
+fingerprints = ["Please renew your subscription"]
+
+[[service]]
+name = "Intercom"
+fingerprints = ["This page is reserved for artistic dogs.","Uh oh. That page doesn't exist."]
+
+[[service]]
+name = "Campaign Monitor"
+fingerprints = ["Trying to access your account?","'Trying to access your account?'"]
+
+[[service]]
+name = "Wufoo"
+fingerprints = ["Profile not found"]
+
+[[service]]
+name = "Landingi"
+fingerprints = ["It looks like you're lost...","The page you are looking for doesn't exist."]
+
+[[service]]
+name = "Launchrock"
+fingerprints = ["It looks like you may have taken a wrong turn somewhere. Don't worry...it happens to all of us."]
+
+[[service]]
+name = "Thinkific"
+fingerprints = ["You may have mistyped the address or the page may have moved."]
+
+[[service]]
+name = "Readme.io"
+fingerprints = ["Project doesnt exist... yet!"]
+
+[[service]]
+name = "Frontify"
+fingerprints = ["404 - Page not found"]
+
+# ── Added: the resolves-but-unclaimed services that previously had a
+# CNAME fingerprint but NO HTTP signature, so the common (non-NXDOMAIN)
+# takeover state was silently missed. Strings are the canonical
+# can-i-take-over-xyz / nuclei / subjack vulnerable markers.
+
+[[service]]
+name = "Shopify"
+fingerprints = ["Sorry, this shop is currently unavailable."]
+
+[[service]]
+name = "Fastly CDN"
+fingerprints = ["Fastly error: unknown domain:"]
+
+[[service]]
+name = "Vercel"
+fingerprints = [
+  "The deployment could not be found on Vercel.",
+  "DEPLOYMENT_NOT_FOUND",
+]
+
+[[service]]
+name = "Zendesk"
+fingerprints = ["Help Center Closed"]
+
+[[service]]
+name = "Pingdom"
+fingerprints = ["This public report page has not been activated by the user"]
+
+[[service]]
+name = "Canny"
+fingerprints = [
+  "Company Not Found",
+  "There is no such company. Did you enter the right URL?",
+]
+
+[[service]]
+name = "Kinsta"
+fingerprints = ["No Site For Domain"]
+
+[[service]]
+name = "Uberflip"
+fingerprints = ["The URL you've accessed does not provide a hub."]

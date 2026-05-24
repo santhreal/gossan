@@ -1,0 +1,36 @@
+[package]
+name = "gossan-secret-verify"
+# Shared glue between `secfinding::Finding` and the
+# `gossan-keyhog-lite` verification engine: the process-local
+# raw-credential store + the Finding<->RawMatch<->VerifiedFinding
+# orchestration. Lives in ONE crate so `gossan-js` and `gossan-scm`
+# (and any future secret-emitting scanner) verify identically instead
+# of duplicating a security-sensitive raw-secret path. Internal to the
+# gossan tool  -  not published (same posture as keyhog-lite /
+# correlation vendor slices; CLAUDE.md: don't flood crates.io with
+# wrappers).
+publish = false
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository = "https://github.com/santhsecurity/gossan"
+description = "Internal: shared secret-verification orchestration (raw-credential store + Finding<->keyhog re-stamp) for gossan's js/scm scanners. Not published."
+
+[package.metadata.santh]
+status = "internal-glue"
+
+[dependencies]
+secfinding = { workspace = true }
+gossan-keyhog-lite = { version = "0.3", path = "../keyhog-lite" }
+sha2 = { workspace = true }
+hex = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time"] }
+wiremock = { workspace = true }
+
+[lints]
+workspace = true

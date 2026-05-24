@@ -1,0 +1,11 @@
+# GENERATED from oauth::LEGACY_*  -  DO NOT hand-edit.
+# Regenerate: GOSSAN_GEN_HIDDEN=1 cargo test -p gossan-hidden emit_oauth_pack
+# Tier-B recall FLOOR; extend via community *.txt drop-ins.
+
+/authorize
+/oauth/authorize
+/oauth2/authorize
+/auth/authorize
+/connect/authorize
+/oauth/auth
+/api/oauth/authorize

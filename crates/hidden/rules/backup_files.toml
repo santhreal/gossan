@@ -1,0 +1,354 @@
+# GENERATED from backup_files::LEGACY_BACKUP_CHECKS  -  DO NOT hand-edit.
+# Regenerate: GOSSAN_GEN_HIDDEN=1 cargo test -p gossan-hidden emit_backup_files_pack
+# Tier-B recall FLOOR; `magic` = byte arrays. Extend via community
+# *.toml under a `hidden-backup/` rules dir (see that README).
+
+[[check]]
+path = "/backup.zip"
+title = "Backup archive (zip) exposed"
+severity = "critical"
+magic = [[
+    80,
+    75,
+    3,
+    4,
+]]
+
+[[check]]
+path = "/backup.tar"
+title = "Backup archive (tar) exposed"
+severity = "critical"
+magic = [
+    [
+    31,
+    139,
+],
+    [
+    117,
+    115,
+    116,
+    97,
+    114,
+],
+]
+
+[[check]]
+path = "/backup.tar.gz"
+title = "Backup archive (tar.gz) exposed"
+severity = "critical"
+magic = [[
+    31,
+    139,
+]]
+
+[[check]]
+path = "/site.zip"
+title = "Site snapshot exposed"
+severity = "critical"
+magic = [[
+    80,
+    75,
+    3,
+    4,
+]]
+
+[[check]]
+path = "/website.zip"
+title = "Website snapshot exposed"
+severity = "critical"
+magic = [[
+    80,
+    75,
+    3,
+    4,
+]]
+
+[[check]]
+path = "/www.zip"
+title = "wwwroot snapshot exposed"
+severity = "critical"
+magic = [[
+    80,
+    75,
+    3,
+    4,
+]]
+
+[[check]]
+path = "/htdocs.zip"
+title = "htdocs snapshot exposed"
+severity = "critical"
+magic = [[
+    80,
+    75,
+    3,
+    4,
+]]
+
+[[check]]
+path = "/public_html.zip"
+title = "public_html snapshot exposed"
+severity = "critical"
+magic = [[
+    80,
+    75,
+    3,
+    4,
+]]
+
+[[check]]
+path = "/admin.zip"
+title = "/admin snapshot exposed"
+severity = "critical"
+magic = [[
+    80,
+    75,
+    3,
+    4,
+]]
+
+[[check]]
+path = "/db.sql"
+title = "SQL dump exposed"
+severity = "critical"
+content_probe = "CREATE TABLE"
+magic = []
+
+[[check]]
+path = "/dump.sql"
+title = "SQL dump exposed"
+severity = "critical"
+content_probe = "INSERT INTO"
+magic = []
+
+[[check]]
+path = "/dump.sql.gz"
+title = "Gzipped SQL dump exposed"
+severity = "critical"
+magic = [[
+    31,
+    139,
+]]
+
+[[check]]
+path = "/data.sql"
+title = "SQL dump exposed"
+severity = "critical"
+content_probe = "INSERT INTO"
+magic = []
+
+[[check]]
+path = "/database.sql"
+title = "SQL dump exposed"
+severity = "critical"
+content_probe = "CREATE TABLE"
+magic = []
+
+[[check]]
+path = "/backup.sql"
+title = "SQL dump exposed"
+severity = "critical"
+content_probe = "CREATE TABLE"
+magic = []
+
+[[check]]
+path = "/mysql.sql"
+title = "MySQL dump exposed"
+severity = "critical"
+content_probe = "INSERT INTO"
+magic = []
+
+[[check]]
+path = "/postgres.sql"
+title = "Postgres dump exposed"
+severity = "critical"
+content_probe = "CREATE TABLE"
+magic = []
+
+[[check]]
+path = "/.swp"
+title = "Vim swap file exposed"
+severity = "high"
+magic = [[
+    98,
+    48,
+    86,
+    73,
+    77,
+]]
+
+[[check]]
+path = "/index.php.swp"
+title = "Vim swap (index.php) exposed"
+severity = "high"
+magic = [[
+    98,
+    48,
+    86,
+    73,
+    77,
+]]
+
+[[check]]
+path = "/index.html.swp"
+title = "Vim swap (index.html) exposed"
+severity = "high"
+magic = [[
+    98,
+    48,
+    86,
+    73,
+    77,
+]]
+
+[[check]]
+path = "/wp-config.php.swp"
+title = "Vim swap (wp-config.php) exposed"
+severity = "critical"
+magic = [[
+    98,
+    48,
+    86,
+    73,
+    77,
+]]
+
+[[check]]
+path = "/.DS_Store"
+title = ".DS_Store exposed"
+severity = "low"
+magic = [
+    [
+    66,
+    85,
+    68,
+    49,
+],
+    [
+    98,
+    112,
+    108,
+    105,
+    115,
+    116,
+],
+]
+
+[[check]]
+path = "/index.php.bak"
+title = "index.php backup exposed"
+severity = "high"
+content_probe = "<?"
+magic = []
+
+[[check]]
+path = "/index.html.bak"
+title = "index.html backup exposed"
+severity = "medium"
+magic = []
+
+[[check]]
+path = "/index.php~"
+title = "index.php~ backup exposed"
+severity = "high"
+content_probe = "<?"
+magic = []
+
+[[check]]
+path = "/index.php.old"
+title = "index.php.old backup exposed"
+severity = "high"
+content_probe = "<?"
+magic = []
+
+[[check]]
+path = "/index.php.orig"
+title = "index.php.orig backup exposed"
+severity = "high"
+content_probe = "<?"
+magic = []
+
+[[check]]
+path = "/web.config.bak"
+title = "web.config backup exposed"
+severity = "high"
+content_probe = "<configuration"
+magic = []
+
+[[check]]
+path = "/config.php.bak"
+title = "config.php backup exposed"
+severity = "critical"
+content_probe = "<?"
+magic = []
+
+[[check]]
+path = "/settings.py.bak"
+title = "settings.py backup exposed"
+severity = "critical"
+content_probe = "SECRET_KEY"
+magic = []
+
+[[check]]
+path = "/application.yml.bak"
+title = "application.yml backup exposed"
+severity = "high"
+content_probe = ":"
+magic = []
+
+[[check]]
+path = "/database.yml.bak"
+title = "database.yml backup exposed"
+severity = "critical"
+content_probe = "password"
+magic = []
+
+[[check]]
+path = "/.idea/workspace.xml"
+title = "JetBrains IDE workspace exposed"
+severity = "medium"
+content_probe = "<project"
+magic = []
+
+[[check]]
+path = "/.vscode/settings.json"
+title = "VSCode settings exposed"
+severity = "low"
+content_probe = "{"
+magic = []
+
+[[check]]
+path = "/.project"
+title = "Eclipse .project exposed"
+severity = "low"
+content_probe = "<projectDescription"
+magic = []
+
+[[check]]
+path = "/logs.zip"
+title = "Logs archive exposed"
+severity = "high"
+magic = [[
+    80,
+    75,
+    3,
+    4,
+]]
+
+[[check]]
+path = "/access.log.gz"
+title = "Access-log archive exposed"
+severity = "medium"
+magic = [[
+    31,
+    139,
+]]
+
+[[check]]
+path = "/error.log.gz"
+title = "Error-log archive exposed"
+severity = "medium"
+magic = [[
+    31,
+    139,
+]]

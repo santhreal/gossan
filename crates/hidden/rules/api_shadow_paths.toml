@@ -1,0 +1,83 @@
+# GENERATED from api_versions::LEGACY_SHADOW_PATHS  -  DO NOT hand-edit.
+# Regenerate: GOSSAN_GEN_HIDDEN=1 cargo test -p gossan-hidden emit_api_versions_pack
+# Tier-B recall FLOOR; extend via community *.toml drop-ins.
+
+[[shadow]]
+path = "/dev"
+description = "Development API endpoint"
+severity = "high"
+
+[[shadow]]
+path = "/development"
+description = "Development API endpoint"
+severity = "high"
+
+[[shadow]]
+path = "/staging"
+description = "Staging API endpoint"
+severity = "high"
+
+[[shadow]]
+path = "/stage"
+description = "Staging API endpoint"
+severity = "high"
+
+[[shadow]]
+path = "/beta"
+description = "Beta API endpoint"
+severity = "medium"
+
+[[shadow]]
+path = "/alpha"
+description = "Alpha API endpoint"
+severity = "medium"
+
+[[shadow]]
+path = "/internal"
+description = "Internal API endpoint"
+severity = "high"
+
+[[shadow]]
+path = "/private"
+description = "Private API endpoint"
+severity = "high"
+
+[[shadow]]
+path = "/debug"
+description = "Debug API endpoint"
+severity = "high"
+
+[[shadow]]
+path = "/test"
+description = "Test API endpoint"
+severity = "medium"
+
+[[shadow]]
+path = "/sandbox"
+description = "Sandbox API endpoint"
+severity = "medium"
+
+[[shadow]]
+path = "/preview"
+description = "Preview API endpoint"
+severity = "low"
+
+[[shadow]]
+path = "/canary"
+description = "Canary release endpoint"
+severity = "low"
+
+[[shadow]]
+path = "/api-test"
+description = "API test endpoint"
+severity = "medium"
+
+[[shadow]]
+path = "/api-dev"
+description = "API dev endpoint"
+severity = "high"
+
+[[shadow]]
+path = "/api-internal"
+description = "Internal API endpoint"
+severity = "high"

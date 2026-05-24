@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc d3d0827b16b15085887b4ef47d0b7274b698ffa38b9bd46eb71eb2145cca3f85 # shrinks to nodes = [Node { id: "u", kind: Domain, label: "u", payload: None, first_seen_ms: 1779437490873, last_seen_ms: 1779437490873 }, Node { id: "u", kind: Domain, label: "u", payload: None, first_seen_ms: 1779437490873, last_seen_ms: 1779437490873 }], edges = []

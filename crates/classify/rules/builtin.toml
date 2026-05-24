@@ -1,0 +1,2002 @@
+# GENERATED from legacy_builtin_rules()  -  DO NOT hand-edit.
+# Regenerate: GOSSAN_GEN_BUILTIN=1 cargo test -p gossan-classify emit_builtin_pack
+# This is the Tier-B recall FLOOR; extend via community *.toml
+# drop-ins under a `classify/` rules dir (see rules/community/).
+
+[[rule]]
+id = "http-apache"
+service = "Apache HTTP Server"
+protocol = "tcp"
+common_ports = [
+    80,
+    443,
+    8080,
+    8443,
+]
+patterns = [
+    "Apache/",
+    "Server: Apache",
+]
+version_pattern = 'Apache/(\d+\.\d+\.\d+)'
+security_signals = ["server-version-disclosure"]
+priority = 10
+
+[[rule]]
+id = "http-nginx"
+service = "nginx"
+protocol = "tcp"
+common_ports = [
+    80,
+    443,
+    8080,
+    8443,
+]
+patterns = [
+    "nginx/",
+    "Server: nginx",
+]
+version_pattern = 'nginx/(\d+\.\d+\.\d+)'
+security_signals = ["server-version-disclosure"]
+priority = 10
+
+[[rule]]
+id = "http-iis"
+service = "Microsoft IIS"
+protocol = "tcp"
+common_ports = [
+    80,
+    443,
+    8080,
+]
+patterns = [
+    "Microsoft-IIS/",
+    "Server: Microsoft-IIS",
+]
+version_pattern = 'Microsoft-IIS/(\d+\.\d+)'
+security_signals = ["server-version-disclosure"]
+priority = 10
+
+[[rule]]
+id = "ssh-openssh"
+service = "OpenSSH"
+protocol = "tcp"
+common_ports = [
+    22,
+    2222,
+]
+patterns = [
+    "SSH-2.0-OpenSSH",
+    "SSH-1.99-OpenSSH",
+]
+version_pattern = 'OpenSSH[_\s](\d+\.\d+\S*)'
+security_signals = ["ssh-version-disclosure"]
+priority = 10
+
+[[rule]]
+id = "ssh-dropbear"
+service = "Dropbear SSH"
+protocol = "tcp"
+common_ports = [
+    22,
+    2222,
+]
+patterns = ["dropbear"]
+version_pattern = 'dropbear[_\s](\d+\.\d+)'
+security_signals = ["ssh-version-disclosure"]
+priority = 8
+
+[[rule]]
+id = "ftp-vsftpd"
+service = "vsftpd"
+protocol = "tcp"
+common_ports = [21]
+patterns = [
+    "vsftpd",
+    "vsFTPd",
+]
+version_pattern = 'vsftpd\s+(\d+\.\d+\.\d+)'
+security_signals = ["ftp-version-disclosure"]
+priority = 10
+
+[[rule]]
+id = "ftp-proftpd"
+service = "ProFTPD"
+protocol = "tcp"
+common_ports = [21]
+patterns = ["ProFTPD"]
+version_pattern = 'ProFTPD\s+(\d+\.\d+\.\d+\S*)'
+security_signals = ["ftp-version-disclosure"]
+priority = 10
+
+[[rule]]
+id = "mysql"
+service = "MySQL"
+protocol = "tcp"
+common_ports = [3306]
+patterns = [
+    "mysql_native_password",
+    "MariaDB",
+    """
+\u0000\u0000\u0000
+""",
+]
+version_pattern = '(\d+\.\d+\.\d+)'
+security_signals = [
+    "database-exposed",
+    "version-disclosure",
+]
+priority = 10
+
+[[rule]]
+id = "postgresql"
+service = "PostgreSQL"
+protocol = "tcp"
+common_ports = [5432]
+patterns = ["PostgreSQL"]
+version_pattern = 'PostgreSQL\s+(\d+\.\d+)'
+security_signals = ["database-exposed"]
+priority = 10
+
+[[rule]]
+id = "redis"
+service = "Redis"
+protocol = "tcp"
+common_ports = [6379]
+patterns = [
+    "-ERR",
+    "+PONG",
+    "-NOAUTH",
+    "redis_version:",
+]
+version_pattern = 'redis_version:(\d+\.\d+\.\d+)'
+security_signals = [
+    "redis-unauthenticated",
+    "database-exposed",
+]
+priority = 10
+
+[[rule]]
+id = "mongodb"
+service = "MongoDB"
+protocol = "tcp"
+common_ports = [27017]
+patterns = [
+    "ismaster",
+    "MongoDB",
+]
+version_pattern = '(\d+\.\d+\.\d+)'
+security_signals = ["database-exposed"]
+priority = 10
+
+[[rule]]
+id = "smtp"
+service = "SMTP"
+protocol = "tcp"
+common_ports = [
+    25,
+    465,
+    587,
+]
+patterns = [
+    "220 ",
+    "ESMTP",
+    "Postfix",
+    "Exim",
+]
+version_pattern = '(?:Postfix|Exim|Sendmail)\s*(\d+\.\d+\S*)'
+security_signals = ["smtp-open-relay-check"]
+priority = 8
+
+[[rule]]
+id = "elasticsearch"
+service = "Elasticsearch"
+protocol = "tcp"
+common_ports = [
+    9200,
+    9300,
+]
+patterns = [
+    '"cluster_name"',
+    '"tagline" : "You Know, for Search"',
+]
+version_pattern = '"number"\s*:\s*"(\d+\.\d+\.\d+)"'
+security_signals = [
+    "elasticsearch-unauthenticated",
+    "search-engine-exposed",
+]
+priority = 10
+
+[[rule]]
+id = "rdp"
+service = "RDP"
+protocol = "tcp"
+common_ports = [3389]
+patterns = ["\u0003\u0000"]
+security_signals = ["rdp-exposed"]
+priority = 10
+
+[[rule]]
+id = "http-haproxy"
+service = "HAProxy"
+protocol = "tcp"
+common_ports = [
+    80,
+    443,
+    8080,
+    8443,
+]
+patterns = [
+    "Server: HAProxy",
+    "HAProxy",
+    "X-Haproxy",
+]
+version_pattern = 'HAProxy[/\s]+(\d+\.\d+(?:\.\d+)?)'
+security_signals = ["server-version-disclosure"]
+priority = 9
+
+[[rule]]
+id = "http-caddy"
+service = "Caddy"
+protocol = "tcp"
+common_ports = [
+    80,
+    443,
+    2015,
+    2019,
+]
+patterns = ["Server: Caddy"]
+version_pattern = 'Caddy/(\d+\.\d+\.\d+)'
+security_signals = ["server-version-disclosure"]
+priority = 10
+
+[[rule]]
+id = "http-litespeed"
+service = "LiteSpeed"
+protocol = "tcp"
+common_ports = [
+    80,
+    443,
+    7080,
+]
+patterns = [
+    "Server: LiteSpeed",
+    "LiteSpeed/",
+]
+version_pattern = 'LiteSpeed[/\s](\d+\.\d+\.\d+)'
+security_signals = ["server-version-disclosure"]
+priority = 9
+
+[[rule]]
+id = "http-tomcat"
+service = "Apache Tomcat"
+protocol = "tcp"
+common_ports = [
+    8080,
+    8443,
+    8005,
+    8009,
+]
+patterns = [
+    "Apache-Coyote/",
+    "Apache Tomcat",
+]
+version_pattern = 'Apache Tomcat/?(\d+\.\d+\.\d+)'
+security_signals = [
+    "servlet-container-exposed",
+    "server-version-disclosure",
+]
+priority = 10
+
+[[rule]]
+id = "http-jetty"
+service = "Eclipse Jetty"
+protocol = "tcp"
+common_ports = [
+    8080,
+    8443,
+]
+patterns = [
+    "Server: Jetty",
+    "Jetty(",
+]
+version_pattern = 'Jetty\(?(\d+\.\d+\.\d+)'
+security_signals = ["server-version-disclosure"]
+priority = 9
+
+[[rule]]
+id = "http-tornado"
+service = "Tornado"
+protocol = "tcp"
+common_ports = [
+    8888,
+    8080,
+]
+patterns = ["Server: TornadoServer"]
+version_pattern = 'TornadoServer/(\d+\.\d+\.\d+)'
+security_signals = ["server-version-disclosure"]
+priority = 8
+
+[[rule]]
+id = "http-gunicorn"
+service = "Gunicorn"
+protocol = "tcp"
+common_ports = [
+    8000,
+    8080,
+]
+patterns = ["Server: gunicorn"]
+version_pattern = 'gunicorn/(\d+\.\d+\.\d+)'
+security_signals = ["server-version-disclosure"]
+priority = 8
+
+[[rule]]
+id = "http-werkzeug"
+service = "Werkzeug"
+protocol = "tcp"
+common_ports = [
+    5000,
+    8000,
+]
+patterns = ["Werkzeug/"]
+version_pattern = 'Werkzeug/(\d+\.\d+\.\d+)'
+security_signals = [
+    "debug-server-exposed",
+    "server-version-disclosure",
+]
+priority = 9
+
+[[rule]]
+id = "http-uvicorn"
+service = "Uvicorn"
+protocol = "tcp"
+common_ports = [
+    8000,
+    8080,
+]
+patterns = ["Server: uvicorn"]
+version_pattern = "uvicorn"
+security_signals = ["server-version-disclosure"]
+priority = 7
+
+[[rule]]
+id = "http-puma"
+service = "Puma"
+protocol = "tcp"
+common_ports = [
+    3000,
+    9292,
+]
+patterns = ["Server: puma"]
+version_pattern = 'puma\s+(\d+\.\d+\.\d+)'
+security_signals = ["server-version-disclosure"]
+priority = 8
+
+[[rule]]
+id = "http-unicorn"
+service = "Unicorn"
+protocol = "tcp"
+common_ports = [
+    3000,
+    8080,
+]
+patterns = ["Server: Unicorn"]
+version_pattern = 'Unicorn\s+(\d+\.\d+\.\d+)'
+security_signals = ["server-version-disclosure"]
+priority = 7
+
+[[rule]]
+id = "http-node-express"
+service = "Express (Node)"
+protocol = "tcp"
+common_ports = [
+    3000,
+    8080,
+]
+patterns = ["X-Powered-By: Express"]
+security_signals = ["framework-disclosure"]
+priority = 8
+
+[[rule]]
+id = "http-aws-elb"
+service = "AWS ELB"
+protocol = "tcp"
+common_ports = [
+    80,
+    443,
+]
+patterns = ["Server: awselb"]
+version_pattern = 'awselb/(\d+\.\d+)'
+security_signals = []
+priority = 7
+
+[[rule]]
+id = "http-cloudflare"
+service = "Cloudflare"
+protocol = "tcp"
+common_ports = [
+    80,
+    443,
+]
+patterns = [
+    "Server: cloudflare",
+    "CF-Ray:",
+]
+security_signals = ["cdn-fronted"]
+priority = 6
+
+[[rule]]
+id = "http-akamai"
+service = "Akamai"
+protocol = "tcp"
+common_ports = [
+    80,
+    443,
+]
+patterns = [
+    "Server: AkamaiGHost",
+    "AkamaiGHost",
+]
+security_signals = ["cdn-fronted"]
+priority = 6
+
+[[rule]]
+id = "http-fastly"
+service = "Fastly"
+protocol = "tcp"
+common_ports = [
+    80,
+    443,
+]
+patterns = [
+    "X-Served-By: cache-",
+    "Via: 1.1 varnish",
+    "Fastly-Debug",
+]
+security_signals = ["cdn-fronted"]
+priority = 5
+
+[[rule]]
+id = "http-varnish"
+service = "Varnish"
+protocol = "tcp"
+common_ports = [
+    80,
+    443,
+    6081,
+    6082,
+]
+patterns = [
+    "Via: 1.1 varnish",
+    "X-Varnish:",
+]
+version_pattern = 'varnish\s+v?(\d+\.\d+\.\d+)'
+security_signals = []
+priority = 7
+
+[[rule]]
+id = "http-traefik"
+service = "Traefik"
+protocol = "tcp"
+common_ports = [
+    80,
+    443,
+    8080,
+]
+patterns = ["Server: Traefik"]
+version_pattern = 'Traefik/(\d+\.\d+\.\d+)'
+security_signals = ["server-version-disclosure"]
+priority = 8
+
+[[rule]]
+id = "http-envoy"
+service = "Envoy"
+protocol = "tcp"
+common_ports = [
+    80,
+    443,
+    9901,
+]
+patterns = [
+    "Server: envoy",
+    "X-Envoy-Upstream-Service-Time",
+]
+security_signals = []
+priority = 7
+
+[[rule]]
+id = "memcached"
+service = "Memcached"
+protocol = "tcp"
+common_ports = [11211]
+patterns = [
+    "VERSION ",
+    "STAT pid",
+]
+version_pattern = 'VERSION\s+(\d+\.\d+\.\d+)'
+security_signals = [
+    "memcached-unauthenticated",
+    "database-exposed",
+]
+priority = 10
+
+[[rule]]
+id = "etcd"
+service = "etcd"
+protocol = "tcp"
+common_ports = [
+    2379,
+    2380,
+]
+patterns = [
+    "etcdserver",
+    "/v2/keys",
+    "/version",
+]
+version_pattern = '"etcdserver"\s*:\s*"(\d+\.\d+\.\d+)"'
+security_signals = ["etcd-exposed"]
+priority = 10
+
+[[rule]]
+id = "consul"
+service = "Consul"
+protocol = "tcp"
+common_ports = [
+    8500,
+    8501,
+    8600,
+]
+patterns = [
+    "X-Consul-Index",
+    "Consul Agent",
+]
+version_pattern = 'Consul/(\d+\.\d+\.\d+)'
+security_signals = ["consul-exposed"]
+priority = 10
+
+[[rule]]
+id = "vault"
+service = "HashiCorp Vault"
+protocol = "tcp"
+common_ports = [
+    8200,
+    8201,
+]
+patterns = [
+    "X-Vault-",
+    "vault/",
+]
+version_pattern = 'vault/(\d+\.\d+\.\d+)'
+security_signals = ["vault-api-exposed"]
+priority = 10
+
+[[rule]]
+id = "couchdb"
+service = "CouchDB"
+protocol = "tcp"
+common_ports = [
+    5984,
+    6984,
+]
+patterns = [
+    "Welcome to Apache CouchDB",
+    "couchdb",
+]
+version_pattern = '"version"\s*:\s*"(\d+\.\d+\.\d+)"'
+security_signals = ["database-exposed"]
+priority = 10
+
+[[rule]]
+id = "cassandra"
+service = "Cassandra"
+protocol = "tcp"
+common_ports = [
+    9042,
+    7000,
+    7199,
+]
+patterns = ["Apache Cassandra"]
+version_pattern = 'Cassandra\s+(\d+\.\d+\.\d+)'
+security_signals = ["database-exposed"]
+priority = 9
+
+[[rule]]
+id = "clickhouse"
+service = "ClickHouse"
+protocol = "tcp"
+common_ports = [
+    8123,
+    9000,
+    9009,
+]
+patterns = ["X-ClickHouse-Server-Display-Name"]
+version_pattern = 'ClickHouse/(\d+\.\d+\.\d+)'
+security_signals = ["database-exposed"]
+priority = 9
+
+[[rule]]
+id = "influxdb"
+service = "InfluxDB"
+protocol = "tcp"
+common_ports = [
+    8086,
+    8088,
+]
+patterns = ["X-Influxdb-Version"]
+version_pattern = 'X-Influxdb-Version:\s*(\d+\.\d+\.\d+)'
+security_signals = ["database-exposed"]
+priority = 9
+
+[[rule]]
+id = "rabbitmq"
+service = "RabbitMQ"
+protocol = "tcp"
+common_ports = [
+    5672,
+    15672,
+    25672,
+]
+patterns = [
+    "RabbitMQ",
+    "AMQP\u0000\u0000",
+]
+version_pattern = 'RabbitMQ[/\s](\d+\.\d+\.\d+)'
+security_signals = ["message-broker-exposed"]
+priority = 10
+
+[[rule]]
+id = "rabbitmq-mgmt"
+service = "RabbitMQ Management"
+protocol = "tcp"
+common_ports = [15672]
+patterns = ["RabbitMQ Management"]
+version_pattern = 'RabbitMQ\s+(\d+\.\d+\.\d+)'
+security_signals = ["mgmt-ui-exposed"]
+priority = 9
+
+[[rule]]
+id = "kafka"
+service = "Kafka"
+protocol = "tcp"
+common_ports = [
+    9092,
+    9093,
+    9094,
+]
+patterns = [
+    "org.apache.kafka",
+    "broker.id",
+]
+security_signals = ["broker-exposed"]
+priority = 9
+
+[[rule]]
+id = "zookeeper"
+service = "ZooKeeper"
+protocol = "tcp"
+common_ports = [
+    2181,
+    2888,
+    3888,
+]
+patterns = [
+    "zookeeper.version",
+    "ZooKeeper",
+]
+version_pattern = 'version=(\d+\.\d+\.\d+)'
+security_signals = ["zookeeper-exposed"]
+priority = 10
+
+[[rule]]
+id = "nats"
+service = "NATS"
+protocol = "tcp"
+common_ports = [
+    4222,
+    6222,
+    8222,
+]
+patterns = [
+    "INFO {",
+    '"server_name"',
+]
+version_pattern = '"version"\s*:\s*"(\d+\.\d+\.\d+)"'
+security_signals = ["nats-exposed"]
+priority = 9
+
+[[rule]]
+id = "mosquitto"
+service = "Mosquitto MQTT"
+protocol = "tcp"
+common_ports = [
+    1883,
+    8883,
+    9001,
+]
+patterns = ["mosquitto"]
+version_pattern = 'mosquitto\s+version\s+(\d+\.\d+\.\d+)'
+security_signals = ["mqtt-exposed"]
+priority = 9
+
+[[rule]]
+id = "pulsar"
+service = "Apache Pulsar"
+protocol = "tcp"
+common_ports = [
+    6650,
+    8080,
+    6651,
+]
+patterns = [
+    "pulsar://",
+    "Pulsar",
+]
+version_pattern = 'Pulsar\s+(\d+\.\d+\.\d+)'
+security_signals = ["broker-exposed"]
+priority = 8
+
+[[rule]]
+id = "docker-daemon"
+service = "Docker daemon"
+protocol = "tcp"
+common_ports = [
+    2375,
+    2376,
+]
+patterns = [
+    "Docker/",
+    "ApiVersion",
+    '"DockerRootDir"',
+]
+version_pattern = 'Docker/(\d+\.\d+\.\d+)'
+security_signals = [
+    "docker-api-exposed",
+    "rce-on-unauth",
+]
+priority = 10
+
+[[rule]]
+id = "kubernetes-api"
+service = "Kubernetes API"
+protocol = "tcp"
+common_ports = [
+    6443,
+    8443,
+    10250,
+]
+patterns = [
+    "k8s.io",
+    "/api/v1",
+    '"kind":"APIVersions"',
+]
+version_pattern = '"gitVersion"\s*:\s*"v(\d+\.\d+\.\d+)"'
+security_signals = ["k8s-api-exposed"]
+priority = 10
+
+[[rule]]
+id = "portainer"
+service = "Portainer"
+protocol = "tcp"
+common_ports = [
+    9000,
+    9443,
+]
+patterns = [
+    "Portainer",
+    "X-Portainer",
+]
+version_pattern = 'Portainer-(\d+\.\d+\.\d+)'
+security_signals = ["mgmt-ui-exposed"]
+priority = 9
+
+[[rule]]
+id = "rancher"
+service = "Rancher"
+protocol = "tcp"
+common_ports = [
+    8443,
+    80,
+    443,
+]
+patterns = [
+    "X-Rancher-",
+    "rancher",
+]
+version_pattern = 'rancher/(\d+\.\d+\.\d+)'
+security_signals = ["mgmt-ui-exposed"]
+priority = 8
+
+[[rule]]
+id = "kubelet"
+service = "kubelet"
+protocol = "tcp"
+common_ports = [
+    10250,
+    10255,
+    10256,
+]
+patterns = [
+    "/runningpods",
+    "/healthz",
+    "kubelet",
+]
+security_signals = [
+    "kubelet-exposed",
+    "rce-on-unauth",
+]
+priority = 10
+
+[[rule]]
+id = "jenkins"
+service = "Jenkins"
+protocol = "tcp"
+common_ports = [
+    8080,
+    50000,
+    8443,
+]
+patterns = [
+    "X-Jenkins:",
+    "Jenkins-Version",
+]
+version_pattern = 'X-Jenkins:\s*(\d+\.\d+(?:\.\d+)?)'
+security_signals = ["ci-server-exposed"]
+priority = 10
+
+[[rule]]
+id = "gitlab"
+service = "GitLab"
+protocol = "tcp"
+common_ports = [
+    80,
+    443,
+    8081,
+]
+patterns = [
+    "GitLab",
+    "X-Gitlab-Meta",
+]
+version_pattern = 'GitLab/(\d+\.\d+\.\d+)'
+security_signals = ["scm-server-exposed"]
+priority = 9
+
+[[rule]]
+id = "gitea"
+service = "Gitea"
+protocol = "tcp"
+common_ports = [
+    3000,
+    80,
+    443,
+]
+patterns = [
+    "Gitea",
+    "X-Gitea-",
+]
+version_pattern = 'Gitea/(\d+\.\d+\.\d+)'
+security_signals = ["scm-server-exposed"]
+priority = 9
+
+[[rule]]
+id = "gerrit"
+service = "Gerrit"
+protocol = "tcp"
+common_ports = [
+    8080,
+    29418,
+]
+patterns = [
+    "Gerrit-",
+    "X-Gerrit-",
+]
+version_pattern = 'Gerrit/(\d+\.\d+\.\d+)'
+security_signals = ["scm-server-exposed"]
+priority = 8
+
+[[rule]]
+id = "sonarqube"
+service = "SonarQube"
+protocol = "tcp"
+common_ports = [
+    9000,
+    9001,
+]
+patterns = [
+    "SonarQube",
+    "x-sonar-",
+]
+version_pattern = 'SonarQube/(\d+\.\d+\.\d+)'
+security_signals = ["mgmt-ui-exposed"]
+priority = 8
+
+[[rule]]
+id = "nexus"
+service = "Sonatype Nexus"
+protocol = "tcp"
+common_ports = [
+    8081,
+    8443,
+]
+patterns = [
+    "X-Nexus-",
+    "Server: Nexus",
+]
+version_pattern = 'Nexus/(\d+\.\d+\.\d+)'
+security_signals = ["registry-exposed"]
+priority = 9
+
+[[rule]]
+id = "artifactory"
+service = "JFrog Artifactory"
+protocol = "tcp"
+common_ports = [
+    8081,
+    8082,
+]
+patterns = [
+    "X-JFrog-Art-",
+    "X-Artifactory-",
+]
+version_pattern = 'Artifactory/(\d+\.\d+\.\d+)'
+security_signals = ["registry-exposed"]
+priority = 9
+
+[[rule]]
+id = "teamcity"
+service = "JetBrains TeamCity"
+protocol = "tcp"
+common_ports = [
+    8111,
+    80,
+    443,
+]
+patterns = [
+    "TeamCity",
+    "X-TeamCity-",
+]
+version_pattern = 'TeamCity (\d+\.\d+\.\d+)'
+security_signals = ["ci-server-exposed"]
+priority = 8
+
+[[rule]]
+id = "concourse"
+service = "Concourse CI"
+protocol = "tcp"
+common_ports = [8080]
+patterns = [
+    "X-Concourse-",
+    "concourse-version",
+]
+version_pattern = 'v(\d+\.\d+\.\d+)'
+security_signals = ["ci-server-exposed"]
+priority = 7
+
+[[rule]]
+id = "drone-ci"
+service = "Drone CI"
+protocol = "tcp"
+common_ports = [
+    80,
+    443,
+    8000,
+]
+patterns = [
+    "X-Drone",
+    "drone/",
+]
+security_signals = ["ci-server-exposed"]
+priority = 7
+
+[[rule]]
+id = "argocd"
+service = "ArgoCD"
+protocol = "tcp"
+common_ports = [
+    80,
+    443,
+    8080,
+]
+patterns = [
+    "X-ArgoCD-",
+    "Argo CD",
+]
+security_signals = ["mgmt-ui-exposed"]
+priority = 8
+
+[[rule]]
+id = "spinnaker"
+service = "Spinnaker"
+protocol = "tcp"
+common_ports = [
+    8084,
+    9000,
+]
+patterns = ["X-Spinnaker-"]
+security_signals = ["mgmt-ui-exposed"]
+priority = 7
+
+[[rule]]
+id = "harbor"
+service = "Harbor"
+protocol = "tcp"
+common_ports = [
+    80,
+    443,
+    4443,
+]
+patterns = [
+    "X-Harbor-Version",
+    "Harbor-Api-Version",
+]
+version_pattern = 'X-Harbor-Version:\s*v?(\d+\.\d+\.\d+)'
+security_signals = ["registry-exposed"]
+priority = 9
+
+[[rule]]
+id = "quay"
+service = "Quay"
+protocol = "tcp"
+common_ports = [
+    80,
+    443,
+    8443,
+]
+patterns = [
+    "X-Quay-",
+    "quay-version",
+]
+security_signals = ["registry-exposed"]
+priority = 8
+
+[[rule]]
+id = "bamboo"
+service = "Atlassian Bamboo"
+protocol = "tcp"
+common_ports = [
+    8085,
+    80,
+    443,
+]
+patterns = [
+    "X-AUSERNAME",
+    "Bamboo",
+]
+security_signals = ["ci-server-exposed"]
+priority = 7
+
+[[rule]]
+id = "bitbucket"
+service = "Atlassian Bitbucket"
+protocol = "tcp"
+common_ports = [
+    7990,
+    7999,
+]
+patterns = [
+    "X-AUSERNAME",
+    "atl_bitbucket_session",
+]
+security_signals = ["scm-server-exposed"]
+priority = 7
+
+[[rule]]
+id = "confluence"
+service = "Confluence"
+protocol = "tcp"
+common_ports = [
+    8090,
+    80,
+    443,
+]
+patterns = ["X-Confluence-Request-Time"]
+security_signals = ["wiki-exposed"]
+priority = 7
+
+[[rule]]
+id = "jira"
+service = "Jira"
+protocol = "tcp"
+common_ports = [
+    8080,
+    80,
+    443,
+]
+patterns = [
+    "X-AREQUESTID",
+    "JSESSIONID",
+    "atlassian.xsrf.token",
+]
+security_signals = ["issue-tracker-exposed"]
+priority = 7
+
+[[rule]]
+id = "grafana"
+service = "Grafana"
+protocol = "tcp"
+common_ports = [
+    3000,
+    80,
+    443,
+]
+patterns = [
+    "grafana_session",
+    "X-Grafana-",
+]
+version_pattern = 'Grafana v(\d+\.\d+\.\d+)'
+security_signals = ["mgmt-ui-exposed"]
+priority = 9
+
+[[rule]]
+id = "prometheus"
+service = "Prometheus"
+protocol = "tcp"
+common_ports = [
+    9090,
+    9093,
+    9100,
+]
+patterns = [
+    "prometheus_build_info",
+    "/api/v1/query",
+    "Prometheus",
+]
+version_pattern = 'version="(\d+\.\d+\.\d+)"'
+security_signals = ["metrics-exposed"]
+priority = 9
+
+[[rule]]
+id = "alertmanager"
+service = "Alertmanager"
+protocol = "tcp"
+common_ports = [
+    9093,
+    9094,
+]
+patterns = ["Alertmanager"]
+version_pattern = 'Alertmanager/(\d+\.\d+\.\d+)'
+security_signals = ["mgmt-ui-exposed"]
+priority = 7
+
+[[rule]]
+id = "loki"
+service = "Grafana Loki"
+protocol = "tcp"
+common_ports = [3100]
+patterns = [
+    "loki",
+    "/loki/api/v1",
+]
+version_pattern = 'loki/(\d+\.\d+\.\d+)'
+security_signals = ["log-server-exposed"]
+priority = 7
+
+[[rule]]
+id = "tempo"
+service = "Grafana Tempo"
+protocol = "tcp"
+common_ports = [
+    3200,
+    4317,
+    9411,
+]
+patterns = [
+    "tempo",
+    "/api/traces",
+]
+security_signals = ["trace-server-exposed"]
+priority = 6
+
+[[rule]]
+id = "kibana"
+service = "Kibana"
+protocol = "tcp"
+common_ports = [5601]
+patterns = [
+    "kbn-name",
+    "kibana",
+]
+version_pattern = '"version"\s*:\s*"(\d+\.\d+\.\d+)"'
+security_signals = ["mgmt-ui-exposed"]
+priority = 9
+
+[[rule]]
+id = "fluentd"
+service = "Fluentd"
+protocol = "tcp"
+common_ports = [
+    24224,
+    9880,
+]
+patterns = ["fluentd"]
+version_pattern = 'fluentd[/-](\d+\.\d+\.\d+)'
+security_signals = ["log-server-exposed"]
+priority = 7
+
+[[rule]]
+id = "logstash"
+service = "Logstash"
+protocol = "tcp"
+common_ports = [
+    5044,
+    9600,
+]
+patterns = ["logstash"]
+version_pattern = 'logstash[/-](\d+\.\d+\.\d+)'
+security_signals = ["log-server-exposed"]
+priority = 7
+
+[[rule]]
+id = "keycloak"
+service = "Keycloak"
+protocol = "tcp"
+common_ports = [
+    8080,
+    8443,
+]
+patterns = [
+    "X-Keycloak-",
+    "kc_restart",
+    "keycloak",
+]
+version_pattern = 'Keycloak/(\d+\.\d+\.\d+)'
+security_signals = ["auth-server-exposed"]
+priority = 8
+
+[[rule]]
+id = "openldap"
+service = "OpenLDAP"
+protocol = "tcp"
+common_ports = [
+    389,
+    636,
+]
+patterns = [
+    "LDAP",
+    "objectClass",
+]
+security_signals = ["directory-exposed"]
+priority = 8
+
+[[rule]]
+id = "freeradius"
+service = "FreeRADIUS"
+protocol = "udp"
+common_ports = [
+    1812,
+    1813,
+]
+patterns = ["FreeRADIUS"]
+version_pattern = 'FreeRADIUS\s+Version\s+(\d+\.\d+\.\d+)'
+security_signals = ["radius-exposed"]
+priority = 7
+
+[[rule]]
+id = "dovecot"
+service = "Dovecot"
+protocol = "tcp"
+common_ports = [
+    110,
+    143,
+    993,
+    995,
+]
+patterns = [
+    "Dovecot ready",
+    "+OK Dovecot",
+]
+version_pattern = 'Dovecot\s+\(?(\d+\.\d+\.\d+)'
+security_signals = ["mail-version-disclosure"]
+priority = 9
+
+[[rule]]
+id = "courier-imap"
+service = "Courier IMAP"
+protocol = "tcp"
+common_ports = [
+    143,
+    993,
+]
+patterns = ["Courier-IMAP"]
+version_pattern = 'Courier-IMAP\s+(\d+\.\d+\.\d+)'
+security_signals = ["mail-version-disclosure"]
+priority = 7
+
+[[rule]]
+id = "sendmail"
+service = "Sendmail"
+protocol = "tcp"
+common_ports = [
+    25,
+    587,
+]
+patterns = ["Sendmail"]
+version_pattern = 'Sendmail\s+(\d+\.\d+\.\d+)'
+security_signals = ["mail-version-disclosure"]
+priority = 7
+
+[[rule]]
+id = "filezilla-server"
+service = "FileZilla Server"
+protocol = "tcp"
+common_ports = [
+    21,
+    990,
+]
+patterns = ["FileZilla Server"]
+version_pattern = 'FileZilla Server\s+(\d+\.\d+\.\d+)'
+security_signals = ["ftp-version-disclosure"]
+priority = 8
+
+[[rule]]
+id = "pure-ftpd"
+service = "Pure-FTPd"
+protocol = "tcp"
+common_ports = [21]
+patterns = ["Pure-FTPd"]
+version_pattern = 'Pure-FTPd\s+(\d+\.\d+\S*)'
+security_signals = ["ftp-version-disclosure"]
+priority = 8
+
+[[rule]]
+id = "samba"
+service = "Samba"
+protocol = "tcp"
+common_ports = [
+    139,
+    445,
+]
+patterns = [
+    "Samba",
+    "SMB",
+]
+version_pattern = 'Samba\s+(\d+\.\d+\.\d+)'
+security_signals = ["smb-exposed"]
+priority = 9
+
+[[rule]]
+id = "nfs"
+service = "NFS"
+protocol = "tcp"
+common_ports = [2049]
+patterns = ["NFS_PROGRAM"]
+security_signals = ["nfs-exposed"]
+priority = 8
+
+[[rule]]
+id = "ipmi"
+service = "IPMI"
+protocol = "udp"
+common_ports = [623]
+patterns = ["IPMI"]
+security_signals = [
+    "ipmi-exposed",
+    "remote-mgmt-exposed",
+]
+priority = 10
+
+[[rule]]
+id = "ilo"
+service = "HP iLO"
+protocol = "tcp"
+common_ports = [
+    80,
+    443,
+    17988,
+]
+patterns = [
+    "Server: HP-iLO",
+    "iLO",
+]
+version_pattern = 'HP-iLO/(\d+\.\d+)'
+security_signals = ["remote-mgmt-exposed"]
+priority = 10
+
+[[rule]]
+id = "idrac"
+service = "Dell iDRAC"
+protocol = "tcp"
+common_ports = [
+    80,
+    443,
+    5900,
+]
+patterns = [
+    "iDRAC",
+    "Dell Inc.",
+]
+version_pattern = 'iDRAC[/\s](\d+)'
+security_signals = ["remote-mgmt-exposed"]
+priority = 10
+
+[[rule]]
+id = "supermicro-ipmi"
+service = "Supermicro BMC"
+protocol = "tcp"
+common_ports = [
+    80,
+    443,
+]
+patterns = [
+    "ATEN International",
+    "Supermicro",
+]
+security_signals = ["remote-mgmt-exposed"]
+priority = 9
+
+[[rule]]
+id = "ipp-cups"
+service = "IPP/CUPS"
+protocol = "tcp"
+common_ports = [631]
+patterns = [
+    "IPP/",
+    "CUPS",
+]
+version_pattern = 'CUPS/(\d+\.\d+\.\d+)'
+security_signals = ["printer-exposed"]
+priority = 7
+
+[[rule]]
+id = "jetdirect"
+service = "HP JetDirect"
+protocol = "tcp"
+common_ports = [9100]
+patterns = [
+    "@PJL",
+    "HP JetDirect",
+]
+security_signals = ["printer-exposed"]
+priority = 7
+
+[[rule]]
+id = "telnet"
+service = "Telnet"
+protocol = "tcp"
+common_ports = [
+    23,
+    2323,
+]
+patterns = [
+    "login: ",
+    "Password: ",
+    "Welcome to ",
+]
+security_signals = [
+    "cleartext-protocol",
+    "telnet-exposed",
+]
+priority = 10
+
+[[rule]]
+id = "snmp"
+service = "SNMP"
+protocol = "udp"
+common_ports = [
+    161,
+    162,
+]
+patterns = [
+    "1.3.6.1",
+    "snmp",
+]
+security_signals = ["snmp-exposed"]
+priority = 9
+
+[[rule]]
+id = "rpcbind"
+service = "rpcbind/portmap"
+protocol = "tcp"
+common_ports = [111]
+patterns = [
+    "rpcbind",
+    "program vers",
+]
+security_signals = ["rpc-exposed"]
+priority = 7
+
+[[rule]]
+id = "powerdns"
+service = "PowerDNS"
+protocol = "udp"
+common_ports = [
+    53,
+    8081,
+]
+patterns = ["PowerDNS"]
+version_pattern = 'PowerDNS\s+Authoritative\s+Server\s+(\d+\.\d+\.\d+)'
+security_signals = ["dns-version-disclosure"]
+priority = 9
+
+[[rule]]
+id = "nsd"
+service = "NLnet NSD"
+protocol = "udp"
+common_ports = [53]
+patterns = ["NSD "]
+version_pattern = 'NSD\s+(\d+\.\d+\.\d+)'
+security_signals = ["dns-version-disclosure"]
+priority = 8
+
+[[rule]]
+id = "knot-dns"
+service = "Knot DNS"
+protocol = "udp"
+common_ports = [53]
+patterns = ["Knot DNS"]
+version_pattern = 'Knot DNS\s+(\d+\.\d+\.\d+)'
+security_signals = ["dns-version-disclosure"]
+priority = 8
+
+[[rule]]
+id = "unbound"
+service = "Unbound"
+protocol = "udp"
+common_ports = [53]
+patterns = ["unbound"]
+version_pattern = 'unbound\s+(\d+\.\d+\.\d+)'
+security_signals = ["dns-version-disclosure"]
+priority = 7
+
+[[rule]]
+id = "dnsdist"
+service = "dnsdist"
+protocol = "tcp"
+common_ports = [
+    53,
+    5199,
+]
+patterns = ["dnsdist"]
+version_pattern = 'dnsdist\s+(\d+\.\d+\.\d+)'
+security_signals = ["dns-version-disclosure"]
+priority = 7
+
+[[rule]]
+id = "ntp"
+service = "NTP"
+protocol = "udp"
+common_ports = [123]
+patterns = ["\u001C"]
+security_signals = []
+priority = 6
+
+[[rule]]
+id = "openvpn"
+service = "OpenVPN"
+protocol = "udp"
+common_ports = [
+    1194,
+    443,
+]
+patterns = [
+    "P_CONTROL",
+    "OpenVPN",
+]
+security_signals = ["vpn-exposed"]
+priority = 8
+
+[[rule]]
+id = "wireguard"
+service = "WireGuard"
+protocol = "udp"
+common_ports = [
+    51820,
+    443,
+]
+patterns = ["WireGuard"]
+security_signals = ["vpn-exposed"]
+priority = 7
+
+[[rule]]
+id = "pptp"
+service = "PPTP"
+protocol = "tcp"
+common_ports = [1723]
+patterns = ["pptp"]
+security_signals = ["legacy-vpn-exposed"]
+priority = 8
+
+[[rule]]
+id = "strongswan"
+service = "strongSwan IPsec"
+protocol = "udp"
+common_ports = [
+    500,
+    4500,
+]
+patterns = ["strongSwan"]
+version_pattern = 'strongSwan\s+(\d+\.\d+\.\d+)'
+security_signals = ["vpn-exposed"]
+priority = 7
+
+[[rule]]
+id = "xrdp"
+service = "xrdp"
+protocol = "tcp"
+common_ports = [3389]
+patterns = ["xrdp"]
+version_pattern = 'xrdp\s+(\d+\.\d+\.\d+)'
+security_signals = ["rdp-exposed"]
+priority = 8
+
+[[rule]]
+id = "vnc"
+service = "VNC"
+protocol = "tcp"
+common_ports = [
+    5900,
+    5901,
+    5902,
+]
+patterns = [
+    "RFB 003.",
+    "RFB",
+]
+version_pattern = 'RFB 003\.(\d+)'
+security_signals = [
+    "vnc-exposed",
+    "remote-desktop-exposed",
+]
+priority = 9
+
+[[rule]]
+id = "minecraft"
+service = "Minecraft Server"
+protocol = "tcp"
+common_ports = [25565]
+patterns = [
+    "Minecraft Server",
+    "minecraft.net",
+    "Vanilla 1.",
+    "Bukkit on",
+]
+security_signals = ["game-server-exposed"]
+priority = 5
+
+[[rule]]
+id = "ts3"
+service = "TeamSpeak 3"
+protocol = "udp"
+common_ports = [
+    9987,
+    10011,
+    30033,
+]
+patterns = [
+    "TS3",
+    "TeaSpeak",
+]
+security_signals = []
+priority = 5
+
+[[rule]]
+id = "plex"
+service = "Plex Media Server"
+protocol = "tcp"
+common_ports = [32400]
+patterns = [
+    "X-Plex-",
+    "Plex Media Server",
+]
+version_pattern = 'X-Plex-Version:\s*(\d+\.\d+\.\d+)'
+security_signals = ["media-server-exposed"]
+priority = 6
+
+[[rule]]
+id = "jellyfin"
+service = "Jellyfin"
+protocol = "tcp"
+common_ports = [
+    8096,
+    8920,
+]
+patterns = [
+    "X-Application",
+    "Jellyfin",
+]
+version_pattern = 'Jellyfin/(\d+\.\d+\.\d+)'
+security_signals = ["media-server-exposed"]
+priority = 6
+
+[[rule]]
+id = "modbus"
+service = "Modbus TCP"
+protocol = "tcp"
+common_ports = [502]
+patterns = ["\u0000\u0000\u0000\u0000\u0000\u0006\u0001"]
+security_signals = [
+    "ics-exposed",
+    "modbus-exposed",
+]
+priority = 10
+
+[[rule]]
+id = "siemens-s7"
+service = "Siemens S7"
+protocol = "tcp"
+common_ports = [102]
+patterns = [
+    "S7",
+    "ISO-on-TCP",
+]
+security_signals = ["ics-exposed"]
+priority = 10
+
+[[rule]]
+id = "iscsi"
+service = "iSCSI"
+protocol = "tcp"
+common_ports = [3260]
+patterns = [
+    "iSCSI",
+    "iqn.",
+]
+security_signals = ["storage-exposed"]
+priority = 8
+
+[[rule]]
+id = "minio"
+service = "MinIO"
+protocol = "tcp"
+common_ports = [
+    9000,
+    9001,
+]
+patterns = [
+    "X-Amz-Bucket-Region",
+    "MinIO",
+    "MinIO Console",
+]
+version_pattern = 'MinIO/(\S+)'
+security_signals = ["object-storage-exposed"]
+priority = 9
+
+[[rule]]
+id = "solr"
+service = "Apache Solr"
+protocol = "tcp"
+common_ports = [
+    8983,
+    7574,
+]
+patterns = [
+    "Solr",
+    "X-Solr-",
+]
+version_pattern = 'Solr/(\d+\.\d+\.\d+)'
+security_signals = ["search-engine-exposed"]
+priority = 9
+
+[[rule]]
+id = "opensearch"
+service = "OpenSearch"
+protocol = "tcp"
+common_ports = [9200]
+patterns = [
+    "opensearch",
+    "OpenSearch",
+]
+version_pattern = '"number"\s*:\s*"(\d+\.\d+\.\d+)"'
+security_signals = ["search-engine-exposed"]
+priority = 9
+
+[[rule]]
+id = "milvus"
+service = "Milvus"
+protocol = "tcp"
+common_ports = [
+    19530,
+    9091,
+]
+patterns = ["milvus"]
+version_pattern = 'milvus[/\s](\d+\.\d+\.\d+)'
+security_signals = ["vector-db-exposed"]
+priority = 7
+
+[[rule]]
+id = "qdrant"
+service = "Qdrant"
+protocol = "tcp"
+common_ports = [
+    6333,
+    6334,
+]
+patterns = [
+    "qdrant",
+    "Qdrant",
+]
+version_pattern = 'Qdrant/(\d+\.\d+\.\d+)'
+security_signals = ["vector-db-exposed"]
+priority = 7
+
+[[rule]]
+id = "weaviate"
+service = "Weaviate"
+protocol = "tcp"
+common_ports = [
+    8080,
+    50051,
+]
+patterns = ["weaviate"]
+version_pattern = 'weaviate[/\s](\d+\.\d+\.\d+)'
+security_signals = ["vector-db-exposed"]
+priority = 7
+
+[[rule]]
+id = "smb1"
+service = "SMBv1"
+protocol = "tcp"
+common_ports = [
+    139,
+    445,
+]
+patterns = ["SMB 1.0"]
+security_signals = [
+    "smbv1-exposed",
+    "deprecated-protocol",
+]
+priority = 10
+
+[[rule]]
+id = "rsync"
+service = "rsync"
+protocol = "tcp"
+common_ports = [873]
+patterns = ["@RSYNCD:"]
+version_pattern = '@RSYNCD:\s*(\d+\.\d+)'
+security_signals = ["rsync-exposed"]
+priority = 8
+
+[[rule]]
+id = "smtp-postfix"
+service = "Postfix"
+protocol = "tcp"
+common_ports = [
+    25,
+    587,
+    465,
+]
+patterns = ["ESMTP Postfix"]
+security_signals = []
+priority = 14
+
+[[rule]]
+id = "smtp-exim"
+service = "Exim"
+protocol = "tcp"
+common_ports = [
+    25,
+    587,
+    465,
+]
+patterns = ["ESMTP Exim"]
+version_pattern = 'Exim (\d+\.\d+)'
+security_signals = ["mail-version-disclosure"]
+priority = 14
+
+[[rule]]
+id = "smtp-opensmtpd"
+service = "OpenSMTPD"
+protocol = "tcp"
+common_ports = [
+    25,
+    587,
+]
+patterns = ["ESMTP OpenSMTPD"]
+security_signals = []
+priority = 14
+
+[[rule]]
+id = "http-lighttpd"
+service = "lighttpd"
+protocol = "tcp"
+common_ports = [
+    80,
+    443,
+    8080,
+]
+patterns = [
+    "lighttpd/",
+    "Server: lighttpd",
+]
+version_pattern = 'lighttpd/(\d+\.\d+\.\d+)'
+security_signals = ["server-version-disclosure"]
+priority = 10
+
+[[rule]]
+id = "http-undertow"
+service = "Undertow"
+protocol = "tcp"
+common_ports = [
+    80,
+    443,
+    8080,
+]
+patterns = [
+    "Undertow/",
+    "Server: Undertow",
+]
+version_pattern = 'Undertow/(\d+)'
+security_signals = ["servlet-container-exposed"]
+priority = 10
+
+[[rule]]
+id = "http-squid"
+service = "Squid"
+protocol = "tcp"
+common_ports = [
+    3128,
+    8080,
+]
+patterns = [
+    "squid/",
+    "X-Squid-Error",
+]
+version_pattern = 'squid/(\d+\.\d+)'
+security_signals = ["server-version-disclosure"]
+priority = 10
+
+[[rule]]
+id = "http-apache-traffic-server"
+service = "Apache Traffic Server"
+protocol = "tcp"
+common_ports = [
+    80,
+    443,
+    8080,
+]
+patterns = [
+    "ATS/",
+    "Server: ATS",
+]
+version_pattern = 'ATS/(\d+\.\d+\.\d+)'
+security_signals = ["server-version-disclosure"]
+priority = 9
+
+[[rule]]
+id = "mariadb"
+service = "MariaDB"
+protocol = "tcp"
+common_ports = [3306]
+patterns = ["-MariaDB-"]
+version_pattern = '(\d+\.\d+\.\d+)-MariaDB'
+security_signals = ["database-exposed"]
+priority = 12
+
+[[rule]]
+id = "ftp-microsoft"
+service = "Microsoft FTP Service"
+protocol = "tcp"
+common_ports = [21]
+patterns = ["Microsoft FTP Service"]
+security_signals = []
+priority = 12
+
+[[rule]]
+id = "webmin"
+service = "Webmin"
+protocol = "tcp"
+common_ports = [10000]
+patterns = [
+    "MiniServ/",
+    "Server: MiniServ",
+]
+version_pattern = 'MiniServ/(\d+\.\d+)'
+security_signals = ["mgmt-ui-exposed"]
+priority = 12
+
+[[rule]]
+id = "cpanel"
+service = "cPanel"
+protocol = "tcp"
+common_ports = [
+    2082,
+    2083,
+    2086,
+    2087,
+]
+patterns = [
+    "cpsrvd/",
+    "Server: cpsrvd",
+]
+version_pattern = 'cpsrvd/(\d+\.\d+)'
+security_signals = ["mgmt-ui-exposed"]
+priority = 12
