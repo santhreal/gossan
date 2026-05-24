@@ -1,0 +1,756 @@
+# GENERATED from git_env::rules::LEGACY_CHECKS  -  DO NOT hand-edit.
+# Regenerate: GOSSAN_GEN_HIDDEN=1 cargo test -p gossan-hidden emit_git_env_pack
+# Tier-B recall FLOOR; extend via community *.toml under a
+# `hidden-git-env/` rules dir (see rules/hidden-git-env/community/).
+
+[[checks]]
+path = "/.git/HEAD"
+title = "Git repository exposed"
+severity = "critical"
+detail = "The .git directory is publicly accessible  -  full source reconstruction possible."
+tag = "git"
+content_probe = "ref:"
+
+[[checks]]
+path = "/.git/config"
+title = "Git config exposed"
+severity = "critical"
+detail = ".git/config leaked  -  remote URLs, credentials, branch names."
+tag = "git"
+content_probe = "[core]"
+
+[[checks]]
+path = "/.git/index"
+title = "Git index exposed"
+severity = "critical"
+detail = ".git/index readable  -  source reconstruction possible via object enumeration."
+tag = "git"
+content_probe = "DIRC"
+
+[[checks]]
+path = "/.git/COMMIT_EDITMSG"
+title = "Git commit message exposed"
+severity = "high"
+detail = ".git/COMMIT_EDITMSG readable  -  recent commit messages visible."
+tag = "git"
+content_probe = " "
+
+[[checks]]
+path = "/.git/logs/HEAD"
+title = "Git reflog exposed"
+severity = "high"
+detail = ".git/logs/HEAD readable  -  full commit history visible."
+tag = "git"
+content_probe = "commit"
+
+[[checks]]
+path = "/.svn/entries"
+title = "SVN repository exposed"
+severity = "critical"
+detail = ".svn/entries readable  -  Subversion repository layout disclosed."
+tag = "git"
+content_probe = "dir"
+
+[[checks]]
+path = "/.hg/hgrc"
+title = "Mercurial repository exposed"
+severity = "critical"
+detail = ".hg/hgrc readable  -  Mercurial repository config disclosed."
+tag = "git"
+content_probe = "["
+
+[[checks]]
+path = "/.bzr/branch/format"
+title = "Bazaar repository exposed"
+severity = "high"
+detail = ".bzr repository metadata accessible."
+tag = "git"
+content_probe = "Bazaar"
+
+[[checks]]
+path = "/.ssh/id_rsa"
+title = "SSH private key exposed"
+severity = "critical"
+detail = "SSH RSA private key publicly accessible  -  full server compromise."
+tag = "keys"
+content_probe = "PRIVATE KEY"
+
+[[checks]]
+path = "/.ssh/id_ed25519"
+title = "SSH private key exposed"
+severity = "critical"
+detail = "SSH Ed25519 private key publicly accessible."
+tag = "keys"
+content_probe = "PRIVATE KEY"
+
+[[checks]]
+path = "/.ssh/id_ecdsa"
+title = "SSH private key exposed"
+severity = "critical"
+detail = "SSH ECDSA private key publicly accessible."
+tag = "keys"
+content_probe = "PRIVATE KEY"
+
+[[checks]]
+path = "/id_rsa"
+title = "SSH private key exposed"
+severity = "critical"
+detail = "SSH private key at root  -  full server compromise."
+tag = "keys"
+content_probe = "PRIVATE KEY"
+
+[[checks]]
+path = "/.git-credentials"
+title = "Git credentials exposed"
+severity = "critical"
+detail = ".git-credentials contains stored username:password for git remotes."
+tag = "keys"
+content_probe = "http"
+
+[[checks]]
+path = "/.npmrc"
+title = "npm auth token exposed"
+severity = "high"
+detail = ".npmrc contains npm registry auth token  -  allows package publishing."
+tag = "keys"
+content_probe = "_authToken"
+
+[[checks]]
+path = "/.pypirc"
+title = "PyPI credentials exposed"
+severity = "high"
+detail = ".pypirc contains PyPI credentials  -  allows package publishing."
+tag = "keys"
+content_probe = "[distutils]"
+
+[[checks]]
+path = "/.bash_history"
+title = "Shell history exposed"
+severity = "high"
+detail = ".bash_history accessible  -  contains executed commands, may reveal secrets."
+tag = "keys"
+
+[[checks]]
+path = "/.aws/credentials"
+title = "AWS credentials exposed"
+severity = "critical"
+detail = ".aws/credentials accessible  -  AWS access key and secret readable."
+tag = "cloud"
+content_probe = "aws_access_key_id"
+
+[[checks]]
+path = "/.aws/config"
+title = "AWS config exposed"
+severity = "high"
+detail = ".aws/config accessible  -  reveals AWS region and role configuration."
+tag = "cloud"
+content_probe = "[default]"
+
+[[checks]]
+path = "/.kube/config"
+title = "Kubernetes config exposed"
+severity = "critical"
+detail = ".kube/config accessible  -  Kubernetes cluster credentials leaked."
+tag = "cloud"
+content_probe = "apiVersion"
+
+[[checks]]
+path = "/.gcloud/application_default_credentials.json"
+title = "GCP credentials exposed"
+severity = "critical"
+detail = "GCP application default credentials accessible  -  cloud access token leaked."
+tag = "cloud"
+content_probe = "client_id"
+
+[[checks]]
+path = "/.env"
+title = ".env file exposed"
+severity = "critical"
+detail = ".env publicly accessible  -  database creds, API keys, secrets."
+tag = "env"
+content_probe = "="
+
+[[checks]]
+path = "/.env.local"
+title = ".env.local exposed"
+severity = "critical"
+detail = ".env.local exposed  -  local development secrets."
+tag = "env"
+content_probe = "="
+
+[[checks]]
+path = "/.env.production"
+title = "Production .env exposed"
+severity = "critical"
+detail = ".env.production exposed  -  production credentials compromised."
+tag = "env"
+content_probe = "="
+
+[[checks]]
+path = "/.env.staging"
+title = "Staging .env exposed"
+severity = "high"
+detail = ".env.staging exposed  -  staging secrets readable."
+tag = "env"
+content_probe = "="
+
+[[checks]]
+path = "/.env.development"
+title = "Development .env exposed"
+severity = "high"
+detail = ".env.development exposed  -  development secrets readable."
+tag = "env"
+content_probe = "="
+
+[[checks]]
+path = "/.env.test"
+title = "Test .env exposed"
+severity = "medium"
+detail = ".env.test exposed  -  test environment secrets readable."
+tag = "env"
+content_probe = "="
+
+[[checks]]
+path = "/.env.backup"
+title = ".env backup exposed"
+severity = "high"
+detail = "Backup .env file accessible."
+tag = "env"
+content_probe = "="
+
+[[checks]]
+path = "/.env.old"
+title = ".env.old exposed"
+severity = "high"
+detail = "Old .env backup accessible."
+tag = "env"
+content_probe = "="
+
+[[checks]]
+path = "/.env.example"
+title = ".env.example exposed"
+severity = "low"
+detail = ".env.example reveals expected secret variable names."
+tag = "env"
+content_probe = "="
+
+[[checks]]
+path = "/src/.env"
+title = "Source .env exposed"
+severity = "critical"
+detail = "Source directory .env accessible."
+tag = "env"
+content_probe = "="
+
+[[checks]]
+path = "/config.php"
+title = "PHP config exposed"
+severity = "high"
+detail = "config.php accessible  -  may contain database credentials."
+tag = "config"
+
+[[checks]]
+path = "/wp-config.php.bak"
+title = "WordPress config backup exposed"
+severity = "critical"
+detail = "wp-config.php backup exposed  -  database credentials compromised."
+tag = "config"
+content_probe = "DB_"
+
+[[checks]]
+path = "/wp-config.php~"
+title = "WordPress config backup exposed"
+severity = "critical"
+detail = "wp-config.php~ backup exposed  -  database credentials compromised."
+tag = "config"
+content_probe = "DB_"
+
+[[checks]]
+path = "/settings.py"
+title = "Django settings exposed"
+severity = "high"
+detail = "settings.py accessible  -  SECRET_KEY and db credentials."
+tag = "config"
+content_probe = "SECRET_KEY"
+
+[[checks]]
+path = "/_config.yml"
+title = "Jekyll config exposed"
+severity = "low"
+detail = "_config.yml reveals site config, may contain API keys."
+tag = "config"
+
+[[checks]]
+path = "/config.yml"
+title = "Config YAML exposed"
+severity = "medium"
+detail = "config.yml accessible  -  may contain application secrets."
+tag = "config"
+
+[[checks]]
+path = "/config.yaml"
+title = "Config YAML exposed"
+severity = "medium"
+detail = "config.yaml accessible."
+tag = "config"
+
+[[checks]]
+path = "/.htpasswd"
+title = ".htpasswd exposed"
+severity = "high"
+detail = "Password file exposed  -  hashed credentials readable."
+tag = "config"
+content_probe = ":"
+
+[[checks]]
+path = "/web.config"
+title = "web.config exposed"
+severity = "high"
+detail = "web.config accessible  -  connection strings and app config."
+tag = "config"
+content_probe = "<"
+
+[[checks]]
+path = "/package.json"
+title = "package.json exposed"
+severity = "low"
+detail = "package.json readable  -  all npm deps and versions disclosed."
+tag = "disclosure"
+content_probe = "dependencies"
+
+[[checks]]
+path = "/composer.json"
+title = "composer.json exposed"
+severity = "low"
+detail = "composer.json readable  -  all PHP deps disclosed."
+tag = "disclosure"
+content_probe = "require"
+
+[[checks]]
+path = "/requirements.txt"
+title = "requirements.txt exposed"
+severity = "low"
+detail = "Python deps disclosed."
+tag = "disclosure"
+
+[[checks]]
+path = "/Gemfile"
+title = "Gemfile exposed"
+severity = "low"
+detail = "Ruby deps disclosed."
+tag = "disclosure"
+content_probe = "gem"
+
+[[checks]]
+path = "/go.mod"
+title = "go.mod exposed"
+severity = "low"
+detail = "Go module deps disclosed."
+tag = "disclosure"
+content_probe = "module"
+
+[[checks]]
+path = "/Dockerfile"
+title = "Dockerfile exposed"
+severity = "medium"
+detail = "Container build process exposed  -  may reveal internal paths and secrets."
+tag = "disclosure"
+content_probe = "FROM"
+
+[[checks]]
+path = "/docker-compose.yml"
+title = "docker-compose.yml exposed"
+severity = "medium"
+detail = "docker-compose.yml  -  service configs and ports disclosed."
+tag = "disclosure"
+content_probe = "services"
+
+[[checks]]
+path = "/docker-compose.yaml"
+title = "docker-compose.yaml exposed"
+severity = "medium"
+detail = "docker-compose.yaml  -  service configs disclosed."
+tag = "disclosure"
+content_probe = "services"
+
+[[checks]]
+path = "/backup.zip"
+title = "Backup archive exposed"
+severity = "critical"
+detail = "backup.zip accessible  -  may contain full application source."
+tag = "backup"
+
+[[checks]]
+path = "/backup.tar.gz"
+title = "Backup archive exposed"
+severity = "critical"
+detail = "backup.tar.gz accessible  -  may contain full application source."
+tag = "backup"
+
+[[checks]]
+path = "/backup.tar"
+title = "Backup archive exposed"
+severity = "critical"
+detail = "backup.tar accessible."
+tag = "backup"
+
+[[checks]]
+path = "/dump.sql"
+title = "SQL dump exposed"
+severity = "critical"
+detail = "dump.sql accessible  -  full database dump readable."
+tag = "backup"
+content_probe = "INSERT INTO"
+
+[[checks]]
+path = "/db.sql"
+title = "SQL dump exposed"
+severity = "critical"
+detail = "db.sql accessible  -  full database dump."
+tag = "backup"
+content_probe = "CREATE TABLE"
+
+[[checks]]
+path = "/database.sql"
+title = "SQL dump exposed"
+severity = "critical"
+detail = "database.sql accessible."
+tag = "backup"
+content_probe = "CREATE TABLE"
+
+[[checks]]
+path = "/backup.sql"
+title = "SQL dump exposed"
+severity = "critical"
+detail = "backup.sql accessible."
+tag = "backup"
+content_probe = "CREATE TABLE"
+
+[[checks]]
+path = "/data.sql"
+title = "SQL dump exposed"
+severity = "critical"
+detail = "data.sql accessible."
+tag = "backup"
+content_probe = "INSERT INTO"
+
+[[checks]]
+path = "/actuator"
+title = "Spring Boot Actuator exposed"
+severity = "high"
+detail = "/actuator exposed  -  application internals revealed."
+tag = "actuator"
+content_probe = "_links"
+
+[[checks]]
+path = "/actuator/env"
+title = "Spring Boot env actuator"
+severity = "critical"
+detail = "/actuator/env exposed  -  env vars and config properties readable."
+tag = "actuator"
+content_probe = "activeProfiles"
+
+[[checks]]
+path = "/actuator/health"
+title = "Spring Boot health actuator"
+severity = "low"
+detail = "/actuator/health exposed."
+tag = "actuator"
+content_probe = "status"
+
+[[checks]]
+path = "/actuator/info"
+title = "Spring Boot info actuator"
+severity = "low"
+detail = "/actuator/info exposed."
+tag = "actuator"
+
+[[checks]]
+path = "/actuator/beans"
+title = "Spring Boot beans actuator"
+severity = "medium"
+detail = "/actuator/beans exposed  -  Spring bean list readable."
+tag = "actuator"
+
+[[checks]]
+path = "/actuator/heapdump"
+title = "Spring Boot heap dump exposed"
+severity = "critical"
+detail = "/actuator/heapdump  -  JVM heap dump may contain plaintext secrets."
+tag = "actuator"
+
+[[checks]]
+path = "/actuator/logfile"
+title = "Spring Boot log file exposed"
+severity = "high"
+detail = "/actuator/logfile  -  application logs readable."
+tag = "actuator"
+
+[[checks]]
+path = "/actuator/metrics"
+title = "Spring Boot metrics actuator"
+severity = "medium"
+detail = "/actuator/metrics exposed."
+tag = "actuator"
+
+[[checks]]
+path = "/actuator/threaddump"
+title = "Spring Boot thread dump"
+severity = "medium"
+detail = "/actuator/threaddump exposed."
+tag = "actuator"
+
+[[checks]]
+path = "/admin"
+title = "Admin panel exposed"
+severity = "medium"
+detail = "/admin accessible  -  may expose admin interface."
+tag = "admin"
+
+[[checks]]
+path = "/administrator"
+title = "Admin panel exposed"
+severity = "medium"
+detail = "/administrator accessible."
+tag = "admin"
+
+[[checks]]
+path = "/wp-admin/"
+title = "WordPress admin exposed"
+severity = "medium"
+detail = "/wp-admin/ accessible  -  WordPress admin panel."
+tag = "admin"
+
+[[checks]]
+path = "/manager/html"
+title = "Tomcat Manager exposed"
+severity = "high"
+detail = "Tomcat Manager  -  may allow WAR deployment."
+tag = "admin"
+
+[[checks]]
+path = "/phpmyadmin/"
+title = "phpMyAdmin exposed"
+severity = "high"
+detail = "phpMyAdmin  -  database management UI."
+tag = "admin"
+
+[[checks]]
+path = "/adminer.php"
+title = "Adminer exposed"
+severity = "high"
+detail = "Adminer database tool accessible."
+tag = "admin"
+
+[[checks]]
+path = "/phpinfo.php"
+title = "phpinfo() exposed"
+severity = "high"
+detail = "phpinfo()  -  full PHP config and env vars."
+tag = "debug"
+content_probe = "phpinfo()"
+
+[[checks]]
+path = "/info.php"
+title = "PHP info exposed"
+severity = "high"
+detail = "PHP info page accessible."
+tag = "debug"
+content_probe = "phpinfo()"
+
+[[checks]]
+path = "/server-status"
+title = "Apache mod_status exposed"
+severity = "medium"
+detail = "Apache server-status  -  request counts, load, client IPs."
+tag = "debug"
+content_probe = "Apache"
+
+[[checks]]
+path = "/server-info"
+title = "Apache mod_info exposed"
+severity = "medium"
+detail = "Apache server-info  -  full server config."
+tag = "debug"
+
+[[checks]]
+path = "/console"
+title = "Console endpoint exposed"
+severity = "high"
+detail = "/console accessible  -  may be H2 console, Groovy REPL, or debug console."
+tag = "debug"
+
+[[checks]]
+path = "/trace.axd"
+title = "ASP.NET trace exposed"
+severity = "high"
+detail = "ASP.NET trace.axd  -  detailed request/response trace with session data."
+tag = "debug"
+
+[[checks]]
+path = "/elmah.axd"
+title = "ELMAH error log exposed"
+severity = "high"
+detail = "ELMAH error log  -  full ASP.NET exception detail with stack traces."
+tag = "debug"
+content_probe = "Error"
+
+[[checks]]
+path = "/_profiler/"
+title = "Symfony profiler exposed"
+severity = "high"
+detail = "Symfony Web Profiler  -  full request debug info including DB queries, logs."
+tag = "debug"
+
+[[checks]]
+path = "/__debug_toolbar__/"
+title = "Django debug toolbar exposed"
+severity = "medium"
+detail = "Django Debug Toolbar endpoints  -  may expose SQL queries and request data."
+tag = "debug"
+
+[[checks]]
+path = "/rails/info/properties"
+title = "Rails info exposed"
+severity = "high"
+detail = "/rails/info/properties  -  Ruby on Rails server info and environment."
+tag = "debug"
+content_probe = "Rails"
+
+[[checks]]
+path = "/rails/info/routes"
+title = "Rails routes exposed"
+severity = "high"
+detail = "/rails/info/routes  -  full URL routing table."
+tag = "debug"
+content_probe = "helper"
+
+[[checks]]
+path = "/telescope/requests"
+title = "Laravel Telescope exposed"
+severity = "high"
+detail = "Laravel Telescope  -  request/query/exception log with full payloads."
+tag = "debug"
+
+[[checks]]
+path = "/horizon/dashboard"
+title = "Laravel Horizon exposed"
+severity = "medium"
+detail = "Laravel Horizon  -  queue monitoring dashboard."
+tag = "debug"
+
+[[checks]]
+path = "/api/swagger.json"
+title = "Swagger API spec exposed"
+severity = "medium"
+detail = "Swagger/OpenAPI spec  -  full API surface with parameters disclosed."
+tag = "api-docs"
+content_probe = "swagger"
+
+[[checks]]
+path = "/api/openapi.json"
+title = "OpenAPI spec exposed"
+severity = "medium"
+detail = "OpenAPI spec exposed."
+tag = "api-docs"
+content_probe = "openapi"
+
+[[checks]]
+path = "/v1/swagger.json"
+title = "Swagger v1 spec exposed"
+severity = "medium"
+detail = "Swagger API spec v1."
+tag = "api-docs"
+content_probe = "swagger"
+
+[[checks]]
+path = "/v2/api-docs"
+title = "SpringFox API docs exposed"
+severity = "medium"
+detail = "SpringFox Swagger2 API docs  -  full Spring Boot API surface."
+tag = "api-docs"
+content_probe = "swagger"
+
+[[checks]]
+path = "/openapi.yaml"
+title = "OpenAPI YAML exposed"
+severity = "medium"
+detail = "OpenAPI YAML spec exposed."
+tag = "api-docs"
+content_probe = "openapi"
+
+[[checks]]
+path = "/swagger-ui/"
+title = "Swagger UI exposed"
+severity = "medium"
+detail = "Swagger UI  -  interactive API browser."
+tag = "api-docs"
+
+[[checks]]
+path = "/redoc/"
+title = "ReDoc API docs exposed"
+severity = "low"
+detail = "ReDoc API documentation UI."
+tag = "api-docs"
+
+[[checks]]
+path = "/WEB-INF/web.xml"
+title = "Java web.xml exposed"
+severity = "high"
+detail = "WEB-INF/web.xml  -  servlet mappings and filter config."
+tag = "java"
+content_probe = "web-app"
+
+[[checks]]
+path = "/WEB-INF/applicationContext.xml"
+title = "Spring context exposed"
+severity = "high"
+detail = "Spring applicationContext.xml  -  bean definitions and data sources."
+tag = "java"
+content_probe = "beans"
+
+[[checks]]
+path = "/.DS_Store"
+title = ".DS_Store exposed"
+severity = "medium"
+detail = ".DS_Store file  -  reveals directory structure and file names on macOS-hosted server."
+tag = "disclosure"
+
+[[checks]]
+path = "/crossdomain.xml"
+title = "crossdomain.xml exposed"
+severity = "low"
+detail = "Flash crossdomain policy  -  reveals allowed cross-origin access rules."
+tag = "disclosure"
+content_probe = "<cross"
+
+[[checks]]
+path = "/metrics"
+title = "Prometheus metrics exposed"
+severity = "medium"
+detail = "/metrics endpoint  -  Prometheus metrics reveal service internals, versions, and infra."
+tag = "metrics"
+content_probe = "# HELP"
+
+[[checks]]
+path = "/prometheus"
+title = "Prometheus UI exposed"
+severity = "medium"
+detail = "Prometheus dashboard accessible."
+tag = "metrics"
+
+[[checks]]
+path = "/security.txt"
+title = "security.txt present"
+severity = "info"
+detail = "/security.txt found  -  review contact and disclosure policy."
+tag = "security-txt"
+content_probe = "Contact"
+
+[[checks]]
+path = "/.well-known/security.txt"
+title = "security.txt present"
+severity = "info"
+detail = "/.well-known/security.txt found."
+tag = "security-txt"
+content_probe = "Contact"

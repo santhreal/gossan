@@ -1,0 +1,52 @@
+# GENERATED from jarm::LEGACY_KNOWN  -  DO NOT hand-edit.
+# Regenerate: GOSSAN_GEN_JARM=1 cargo test -p gossan-portscan emit_jarm_pack
+# Tier-B recall FLOOR; extend via community *.toml drop-ins
+# under a `jarm/` rules dir (see rules/jarm/community/).
+
+[[fingerprint]]
+hash = "07d14d16d21d21d07c42d41d00041d24a458a375eef0c576d23a7bab9a9fb1"
+name = "Cobalt Strike C2"
+
+[[fingerprint]]
+hash = "07d14d16d21d21d00042d43d000000aa99ce74e2c1d013c5d6b9d73bf6d5bc3"
+name = "Cobalt Strike C2 (beacon)"
+
+[[fingerprint]]
+hash = "07d19d1ad21d21d07c42d43d000000f50d155305214cf247147c43c0f1a823"
+name = "Metasploit Framework"
+
+[[fingerprint]]
+hash = "00000000000000000042d42d000000eba85c7a7a12b4a41a1a7b43614fe5b6"
+name = "Sliver C2"
+
+[[fingerprint]]
+hash = "29d29d00029d29d00042d41d00041d2aa5ce6a70de7ba95aef77a77b00a0af"
+name = "Covenant C2"
+
+[[fingerprint]]
+hash = "00000000000000000022d22d000000baf7a1a8a4a4a4a4a4a4a4a4a4a4a4a4"
+name = "Havoc C2 (likely)"
+
+[[fingerprint]]
+hash = "1dd28d28d00028d1dc41d41d00041d07e3b6b8b6b8b6b8b6b8b6b8b6b8b6b8"
+name = "BruteRatel C4"
+
+[[fingerprint]]
+hash = "29d29d00029d29d21c42d43d000000032e1f2e4f19ca1bb9e16fa0c4e8b6a76"
+name = "nginx (default config)"
+
+[[fingerprint]]
+hash = "2ad2ad0002ad2ad0042d42d000000e4b9f96bd97ae1b67fa98e59f073af41d"
+name = "Apache httpd 2.x"
+
+[[fingerprint]]
+hash = "29d29d15d29d29d21c29d29d29d29dc0b6f3e93a028d8c6f7bca9f24ab6da5"
+name = "IIS 10 / Windows Server"
+
+[[fingerprint]]
+hash = "27d27d27d27d27d00027d27d27d27de6d36b0c8ef5a0c870a93b84b8e90a45f"
+name = "Cloudflare"
+
+[[fingerprint]]
+hash = "2ad2ad0002ad2ad22c2ad2ad2ad2ad1f05fe55bb4bfea1c504aef0440892b5b"
+name = "AWS ALB / CloudFront"

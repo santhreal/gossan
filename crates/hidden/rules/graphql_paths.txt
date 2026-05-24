@@ -1,0 +1,16 @@
+# GENERATED from graphql::LEGACY_PATHS  -  DO NOT hand-edit.
+# Regenerate: GOSSAN_GEN_HIDDEN=1 cargo test -p gossan-hidden emit_graphql_pack
+# Tier-B recall FLOOR; extend via community *.txt under
+# a `hidden-graphql/` rules dir (see rules/hidden-graphql/community/).
+
+/graphql
+/api/graphql
+/v1/graphql
+/v2/graphql
+/query
+/gql
+/graphiql
+/playground
+/graph
+/api/graph
+/api/query

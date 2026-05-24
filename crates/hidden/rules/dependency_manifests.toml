@@ -1,0 +1,68 @@
+# GENERATED from dependency_confusion::LEGACY_MANIFESTS  -  DO NOT hand-edit.
+# Regenerate: GOSSAN_GEN_HIDDEN=1 cargo test -p gossan-hidden emit_depconf_pack
+# Tier-B recall FLOOR; extend via community *.toml under a
+# `hidden-depconf/` rules dir (see rules/hidden-depconf/community/).
+
+[[manifest]]
+path = "/package.json"
+title = "npm package.json exposed"
+confirms = [
+    "dependencies",
+    "devDependencies",
+    "name",
+    "version",
+]
+
+[[manifest]]
+path = "/composer.json"
+title = "PHP composer.json exposed"
+confirms = [
+    "require",
+    "require-dev",
+    "name",
+]
+
+[[manifest]]
+path = "/requirements.txt"
+title = "Python requirements.txt exposed"
+confirms = []
+
+[[manifest]]
+path = "/Gemfile"
+title = "Ruby Gemfile exposed"
+confirms = [
+    "gem",
+    "source",
+]
+
+[[manifest]]
+path = "/go.mod"
+title = "Go go.mod exposed"
+confirms = [
+    "module",
+    "require",
+]
+
+[[manifest]]
+path = "/pom.xml"
+title = "Maven pom.xml exposed"
+confirms = [
+    "<project",
+    "<dependency>",
+]
+
+[[manifest]]
+path = "/build.gradle"
+title = "Gradle build.gradle exposed"
+confirms = [
+    "dependencies",
+    "repositories",
+]
+
+[[manifest]]
+path = "/Cargo.toml"
+title = "Rust Cargo.toml exposed"
+confirms = [
+    "[package]",
+    "[dependencies]",
+]

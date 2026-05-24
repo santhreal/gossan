@@ -1,0 +1,16 @@
+# GENERATED from bypass403::LEGACY_SENSITIVE_PATHS  -  DO NOT hand-edit.
+# Regenerate: GOSSAN_GEN_HIDDEN=1 cargo test -p gossan-hidden emit_bypass403_pack
+# Tier-B recall FLOOR; extend via community *.txt drop-ins.
+
+/admin
+/admin/
+/api/admin
+/api/v1/admin
+/dashboard
+/console
+/manager
+/.env
+/server-status
+/actuator
+/actuator/env
+/wp-admin

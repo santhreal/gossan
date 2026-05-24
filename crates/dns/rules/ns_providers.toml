@@ -1,0 +1,55 @@
+# GENERATED from posture::LEGACY_NS_PROVIDERS  -  DO NOT hand-edit.
+# Regenerate: GOSSAN_GEN_DNS_PROV=1 cargo test -p gossan-dns emit_provider_packs
+# Tier-B DNS-provider fingerprints (nameserver-hostname substrings →
+# display name). ORDER IS SIGNIFICANT: first rule whose `match_any`
+# matches a lowercased nameserver wins (exactly the legacy if-chain).
+# Extend with community *.toml under a `dns-ns-provider/` rules dir
+# (see that README)  -  appended AFTER this baseline, never shadowing it.
+
+[[rule]]
+match_any = ["awsdns"]
+name = "AWS Route 53"
+
+[[rule]]
+match_any = ["cloudflare"]
+name = "Cloudflare"
+
+[[rule]]
+match_any = ["googledomains", "google.com"]
+name = "Google DNS"
+
+[[rule]]
+match_any = ["azure-dns"]
+name = "Azure DNS"
+
+[[rule]]
+match_any = ["cscdns"]
+name = "CSC Digital Brand Services"
+
+[[rule]]
+match_any = ["ultradns"]
+name = "Vercara (UltraDNS)"
+
+[[rule]]
+match_any = ["dynect"]
+name = "Oracle Dyn"
+
+[[rule]]
+match_any = ["akam"]
+name = "Akamai"
+
+[[rule]]
+match_any = ["dnsmadeeasy"]
+name = "DigiCert (DNS Made Easy)"
+
+[[rule]]
+match_any = ["nsone"]
+name = "IBM NS1"
+
+[[rule]]
+match_any = ["digitalocean"]
+name = "DigitalOcean"
+
+[[rule]]
+match_any = ["linode"]
+name = "Linode"

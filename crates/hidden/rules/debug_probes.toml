@@ -1,0 +1,167 @@
+# GENERATED from debug_endpoints::LEGACY_PROBES  -  DO NOT hand-edit.
+# Regenerate: GOSSAN_GEN_HIDDEN=1 cargo test -p gossan-hidden emit_debug_endpoints_pack
+# Tier-B recall FLOOR; extend via community *.toml under a
+# `hidden-debug/` rules dir (see rules/hidden-debug/community/).
+
+[[probe]]
+path = "/actuator"
+name = "Spring Boot Actuator Index"
+framework = "Spring Boot"
+severity = "high"
+confirm_strings = [
+    "_links",
+    "actuator",
+]
+
+[[probe]]
+path = "/actuator/env"
+name = "Spring Boot Environment Variables"
+framework = "Spring Boot"
+severity = "critical"
+confirm_strings = [
+    "propertySources",
+    "systemProperties",
+]
+
+[[probe]]
+path = "/actuator/heapdump"
+name = "Spring Boot Heap Dump"
+framework = "Spring Boot"
+severity = "critical"
+confirm_strings = []
+
+[[probe]]
+path = "/actuator/configprops"
+name = "Spring Boot Config Properties"
+framework = "Spring Boot"
+severity = "high"
+confirm_strings = [
+    "beans",
+    "prefix",
+]
+
+[[probe]]
+path = "/actuator/mappings"
+name = "Spring Boot Request Mappings"
+framework = "Spring Boot"
+severity = "medium"
+confirm_strings = [
+    "dispatcherServlets",
+    "requestMappingConditions",
+]
+
+[[probe]]
+path = "/__debug__/"
+name = "Django Debug Toolbar"
+framework = "Django"
+severity = "critical"
+confirm_strings = [
+    "djDebug",
+    "debug toolbar",
+]
+
+[[probe]]
+path = "/debug/pprof/"
+name = "Go pprof Profiler"
+framework = "Go net/http/pprof"
+severity = "high"
+confirm_strings = [
+    "goroutine",
+    "heap",
+    "profile",
+]
+
+[[probe]]
+path = "/metrics"
+name = "Prometheus Metrics Endpoint"
+framework = "Prometheus"
+severity = "medium"
+confirm_strings = [
+    "# HELP",
+    "# TYPE",
+    "process_",
+]
+
+[[probe]]
+path = "/healthz"
+name = "Kubernetes Health Check"
+framework = "Kubernetes"
+severity = "info"
+confirm_strings = []
+
+[[probe]]
+path = "/server-status"
+name = "Apache Server Status"
+framework = "Apache httpd"
+severity = "medium"
+confirm_strings = [
+    "Apache Server Status",
+    "Total Accesses",
+]
+
+[[probe]]
+path = "/server-info"
+name = "Apache Server Info"
+framework = "Apache httpd"
+severity = "high"
+confirm_strings = [
+    "Server Settings",
+    "Module Name",
+]
+
+[[probe]]
+path = "/_profiler/"
+name = "Symfony Web Profiler"
+framework = "Symfony"
+severity = "high"
+confirm_strings = [
+    "sf-toolbar",
+    "profiler",
+]
+
+[[probe]]
+path = "/elmah.axd"
+name = "ELMAH Error Log"
+framework = "ASP.NET ELMAH"
+severity = "high"
+confirm_strings = [
+    "Error Log for",
+    "ELMAH",
+]
+
+[[probe]]
+path = "/trace.axd"
+name = "ASP.NET Trace"
+framework = "ASP.NET"
+severity = "high"
+confirm_strings = [
+    "Application Trace",
+    "Request Details",
+]
+
+[[probe]]
+path = "/info.php"
+name = "PHP Info Page"
+framework = "PHP"
+severity = "medium"
+confirm_strings = [
+    "phpinfo()",
+    "PHP Version",
+]
+
+[[probe]]
+path = "/graphiql"
+name = "GraphiQL IDE Exposed"
+framework = "GraphQL"
+severity = "medium"
+confirm_strings = [
+    "graphiql",
+    "GraphiQL",
+]
+
+[[probe]]
+path = "/__webpack_hmr"
+name = "Webpack HMR Endpoint"
+framework = "Webpack Dev Server"
+severity = "medium"
+confirm_strings = []

@@ -1,0 +1,46 @@
+# GENERATED from swagger::LEGACY_PATHS  -  DO NOT hand-edit.
+# Regenerate: GOSSAN_GEN_HIDDEN=1 cargo test -p gossan-hidden emit_swagger_pack
+# Tier-B recall FLOOR; extend via community *.txt drop-ins
+# under a `hidden-swagger/` rules dir (see rules/hidden-swagger/community/).
+
+/swagger.json
+/swagger.yaml
+/swagger/v1/swagger.json
+/openapi.json
+/openapi.yaml
+/openapi/v3/api-docs
+/api-docs
+/api-docs/
+/api/swagger.json
+/api/openapi.json
+/v1/swagger.json
+/v2/swagger.json
+/v2/api-docs
+/v3/api-docs
+/v3/openapi.json
+/docs
+/redoc
+/swagger-ui
+/swagger-ui.html
+/swagger-ui/index.html
+/api/v1/swagger.json
+/api/v2/openapi.json
+/.well-known/openapi.json
+/swagger-resources
+/swagger-ui/springfox.js
+/api/swagger-ui.html
+/api/v3/api-docs
+/rest/v1/swagger.json
+/api/swagger/v1/swagger.json
+/actuator
+/actuator/info
+/actuator/health
+/actuator/env
+/actuator/mappings
+/swagger/index.html
+/swagger/v1/swagger.json
+/openapi.json
+/docs
+/redoc
+/graphql/schema
+/api/graphql/schema

@@ -1,0 +1,47 @@
+# GENERATED from posture::LEGACY_MAIL_PROVIDERS  -  DO NOT hand-edit.
+# Regenerate: GOSSAN_GEN_DNS_PROV=1 cargo test -p gossan-dns emit_provider_packs
+# Tier-B mail-provider fingerprints (MX-host substrings → display
+# name). ORDER IS SIGNIFICANT: first rule whose `match_any` matches a
+# lowercased MX exchange wins (exactly the legacy if-chain). Extend
+# with community *.toml under a `dns-mail-provider/` rules dir (see
+# that README)  -  appended AFTER this baseline, never shadowing it.
+
+[[rule]]
+match_any = ["google", "aspmx", "googlemail"]
+name = "Google Workspace"
+
+[[rule]]
+match_any = ["outlook", "microsoft", "office365"]
+name = "Microsoft 365"
+
+[[rule]]
+match_any = ["pphosted", "proofpoint"]
+name = "Proofpoint"
+
+[[rule]]
+match_any = ["mimecast"]
+name = "Mimecast"
+
+[[rule]]
+match_any = ["barracuda"]
+name = "Barracuda"
+
+[[rule]]
+match_any = ["zoho"]
+name = "Zoho Mail"
+
+[[rule]]
+match_any = ["fastmail"]
+name = "Fastmail"
+
+[[rule]]
+match_any = ["mailgun"]
+name = "Mailgun"
+
+[[rule]]
+match_any = ["sendgrid"]
+name = "SendGrid"
+
+[[rule]]
+match_any = ["amazonses", "ses.amazonaws"]
+name = "Amazon SES"

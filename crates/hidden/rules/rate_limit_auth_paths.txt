@@ -1,0 +1,24 @@
+# GENERATED from rate_limit::LEGACY_AUTH_PATHS  -  DO NOT hand-edit.
+# Regenerate: GOSSAN_GEN_HIDDEN=1 cargo test -p gossan-hidden emit_rate_limit_pack
+# Tier-B recall FLOOR; extend via community *.txt under a
+# `hidden-rate-limit/` rules dir (see rules/hidden-rate-limit/community/).
+
+/login
+/signin
+/sign-in
+/api/login
+/api/signin
+/api/auth
+/api/auth/login
+/api/v1/login
+/api/v1/auth
+/api/v1/auth/login
+/auth/login
+/auth/token
+/user/login
+/users/login
+/account/login
+/session
+/sessions
+/token
+/oauth/token

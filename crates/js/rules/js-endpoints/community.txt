@@ -1,0 +1,44 @@
+# Community-extensible JS endpoint-extraction patterns (Tier-B).
+#
+# Gossan ships a compiled-in baseline (fetch/axios/URL/api-prefix) as
+# the recall FLOOR. This file is the community moat: additional call
+# shapes that real apps use but the seven baseline patterns miss.
+# It is unioned IN VERBATIM with the baseline (no case/slash
+# rewriting  -  these are regexes), then each line is compiled.
+#
+# CONTRACT  -  to add a pattern, append ONE line (zero Rust):
+#   * one regex per line; `#`-comment and blank lines ignored;
+#   * CAPTURE GROUP 1 is the endpoint path. Need other sub-matches?
+#     make them non-capturing `(?:…)` so group 1 stays the endpoint.
+#   * an invalid regex is logged and skipped, never fatal.
+#
+# Drop more files next to the binary (or under
+# $GOSSAN_RULES_DIR/js-endpoints/) and they extend this set the same
+# way  -  clones can copy the seven baseline patterns; they cannot copy
+# the community catalogue.
+
+# XMLHttpRequest.open(method, url)  -  the pre-fetch() workhorse, still
+# everywhere in legacy bundles and analytics SDKs.
+\.open\(\s*["'`][A-Za-z]+["'`]\s*,\s*["'`]([^"'`\s<>{}\[\]]{1,200})["'`]
+
+# jQuery: $.ajax({url:…}) / $.getJSON(…) / $.get(…) / $.post(…)
+\$\.(?:ajax|getJSON)\(\s*\{[^}]*?url\s*:\s*["'`]([^"'`\s<>{}\[\]]{1,200})["'`]
+\$\.(?:get|post|getJSON)\(\s*["'`]([^"'`\s<>{}\[\]]{1,200})["'`]
+
+# Axios/Apollo/SDK config bases  -  frequently the only place the API
+# origin appears (calls then use relative paths off it).
+(?:baseURL|baseUrl|basePath|apiBase|API_BASE|uri|endpoint)\s*[:=]\s*["'`]([^"'`\s<>{}\[\]]{1,200})["'`]
+
+# Next.js incremental-data routes (leak the page/data API surface).
+["'`](/_next/data/[^"'`\s<>{}\[\]]{1,200})["'`]
+
+# Realtime transports  -  WebSocket / SSE endpoints are endpoints too.
+new\s+WebSocket\(["'`]((?:wss?:)?//[^"'`\s<>{}\[\]]{1,200})["'`]
+new\s+EventSource\(["'`]([^"'`\s<>{}\[\]]{1,200})["'`]
+
+# Beacon / telemetry exfil sinks.
+\.sendBeacon\(\s*["'`]([^"'`\s<>{}\[\]]{1,200})["'`]
+
+# htmx / Alpine / Unpoly declarative attributes inlined in JS
+# template strings (SPA shells emit these into the DOM).
+\b(?:hx-(?:get|post|put|patch|delete)|up-href|data-url)=["'`]([^"'`\s<>{}\[\]]{1,200})["'`]

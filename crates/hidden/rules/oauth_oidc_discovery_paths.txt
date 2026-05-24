@@ -1,0 +1,10 @@
+# GENERATED from oauth::LEGACY_*  -  DO NOT hand-edit.
+# Regenerate: GOSSAN_GEN_HIDDEN=1 cargo test -p gossan-hidden emit_oauth_pack
+# Tier-B recall FLOOR; extend via community *.txt drop-ins.
+
+/.well-known/openid-configuration
+/.well-known/oauth-authorization-server
+/oauth/.well-known/openid-configuration
+/auth/.well-known/openid-configuration
+/realms/master/.well-known/openid-configuration
+/.well-known/openid-configuration/
