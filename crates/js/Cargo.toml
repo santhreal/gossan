@@ -2,7 +2,7 @@
 name = "gossan-js"
 version.workspace = true
 edition.workspace = true
-authors = ["Santh Project <contact@santh.dev>"]
+authors = ["Santh Project <security@santh.dev>"]
 license.workspace = true
 homepage = "https://santh.dev"
 repository = "https://github.com/santhsecurity/gossan"
