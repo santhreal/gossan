@@ -135,7 +135,7 @@ impl Error {
     }
 
     /// Convenience: create a network error from a reqwest error.
-    pub fn from_reqwest(target: &str, err: reqwest::Error) -> Self {
+    pub fn from_reqwest(target: &str, err: crate::reqwest::Error) -> Self {
         if err.is_timeout() {
             Self::Timeout {
                 target: target.to_string(),

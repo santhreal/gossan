@@ -190,7 +190,7 @@ mod tests {
 /// # Errors
 ///
 /// Returns the underlying reqwest error if the stream fails mid-read.
-pub async fn bounded_text(resp: reqwest::Response, limit: usize) -> anyhow::Result<String> {
+pub async fn bounded_text(resp: crate::reqwest::Response, limit: usize) -> anyhow::Result<String> {
     use futures::StreamExt;
     let mut buf = Vec::with_capacity(limit.min(4096));
     let mut stream = resp.bytes_stream();
@@ -211,7 +211,7 @@ pub async fn bounded_text(resp: reqwest::Response, limit: usize) -> anyhow::Resu
 /// # Errors
 ///
 /// Returns the underlying reqwest error if the stream fails mid-read.
-pub async fn bounded_bytes(resp: reqwest::Response, limit: usize) -> anyhow::Result<Vec<u8>> {
+pub async fn bounded_bytes(resp: crate::reqwest::Response, limit: usize) -> anyhow::Result<Vec<u8>> {
     use futures::StreamExt;
     let mut buf = Vec::with_capacity(limit.min(4096));
     let mut stream = resp.bytes_stream();
@@ -233,7 +233,7 @@ pub async fn bounded_bytes(resp: reqwest::Response, limit: usize) -> anyhow::Res
 ///
 /// Returns an error on stream failure or JSON parse failure.
 pub async fn bounded_json<T: serde::de::DeserializeOwned>(
-    resp: reqwest::Response,
+    resp: crate::reqwest::Response,
     limit: usize,
 ) -> anyhow::Result<T> {
     let text = bounded_text(resp, limit).await?;
@@ -262,7 +262,7 @@ mod bounded_tests {
             let _ = s.shutdown().await;
         });
         let url = format!("http://{addr}/");
-        let resp = reqwest::get(&url).await.unwrap();
+        let resp = crate::reqwest::get(&url).await.unwrap();
         let body = bounded_text(resp, 4096).await.unwrap();
         assert_eq!(body.len(), 4096, "must clamp to limit, got {}", body.len());
     }
@@ -284,7 +284,7 @@ mod bounded_tests {
             let _ = s.shutdown().await;
         });
         let url = format!("http://{addr}/");
-        let resp = reqwest::get(&url).await.unwrap();
+        let resp = crate::reqwest::get(&url).await.unwrap();
         let body = bounded_text(resp, 1024 * 1024).await.unwrap();
         assert_eq!(body, "hello");
     }

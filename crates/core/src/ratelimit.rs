@@ -19,8 +19,10 @@ use std::time::Duration;
 
 use governor::{DefaultDirectRateLimiter, Quota, RateLimiter};
 use hickory_resolver::TokioAsyncResolver;
+use scanclient::reqwest;
 use tokio::sync::RwLock;
 
+use crate::scanclient_bridge;
 use crate::Config;
 
 fn is_timeout_error(error: &anyhow::Error) -> bool {
@@ -72,78 +74,20 @@ impl HostRateLimiter {
     }
 }
 
-/// Build a shared `reqwest::Client` from scan `Config`.
+/// Build a shared `reqwest::Client` from scan `Config` via scanclient's pool.
 pub fn build_client(
     config: &Config,
     follow_redirects: bool,
     resolver: Arc<TokioAsyncResolver>,
 ) -> anyhow::Result<reqwest::Client> {
+    crate::transport::warn_insecure_tls_once(config.insecure_tls);
     let redirect_policy = if follow_redirects {
         reqwest::redirect::Policy::limited(10)
     } else {
         reqwest::redirect::Policy::none()
     };
-
-    crate::transport::warn_insecure_tls_once(config.insecure_tls);
-
-    let mut headers = reqwest::header::HeaderMap::new();
-    if let Some(cookie_val) = &config.cookie {
-        if let Ok(hv) = reqwest::header::HeaderValue::from_str(cookie_val) {
-            headers.insert(reqwest::header::COOKIE, hv);
-        }
-    }
-
-    let mut builder = reqwest::Client::builder()
-        .dns_resolver(Arc::new(HickoryResolver(resolver)))
-        .timeout(config.timeout())
-        .user_agent(&config.user_agent)
-        .default_headers(headers)
-        .danger_accept_invalid_certs(config.insecure_tls)
-        .redirect(redirect_policy)
-        .pool_max_idle_per_host(20)
-        .pool_idle_timeout(Duration::from_secs(90))
-        .tcp_keepalive(Duration::from_secs(30));
-
-    // Optional proxy
-    if let Some(proxy_url) = &config.proxy {
-        let proxy =
-            reqwest::Proxy::all(proxy_url).map_err(|e| anyhow::anyhow!("invalid proxy: {e}"))?;
-        builder = builder.proxy(proxy);
-    }
-
-    Ok(builder.build()?)
-}
-
-struct HickoryResolver(Arc<TokioAsyncResolver>);
-
-impl reqwest::dns::Resolve for HickoryResolver {
-    fn resolve(
-        &self,
-        name: reqwest::dns::Name,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = std::result::Result<
-                        Box<dyn Iterator<Item = std::net::SocketAddr> + Send>,
-                        Box<dyn std::error::Error + Send + Sync>,
-                    >,
-                > + Send,
-        >,
-    > {
-        let resolver = Arc::clone(&self.0);
-        Box::pin(async move {
-            let lookup = resolver
-                .lookup_ip(name.as_str())
-                .await
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
-            let addrs: Box<dyn Iterator<Item = std::net::SocketAddr> + Send> = Box::new(
-                lookup
-                    .into_iter()
-                    .map(|ip| std::net::SocketAddr::new(ip, 0)),
-            );
-            Ok(addrs)
-        })
-    }
+    scanclient_bridge::build_http_client(config, resolver, redirect_policy)
+        .map_err(|e| anyhow::anyhow!("scanclient pool: {e}"))
 }
 
 /// Retry an HTTP GET request, backing off exponentially on 429 responses.

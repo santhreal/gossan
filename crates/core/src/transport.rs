@@ -1,6 +1,6 @@
 //! Unified transport layer for all Gossan scanner modules.
 //!
-//! [`ScanClient`] wraps a single pooled `reqwest::Client` with:
+//! [`ScanClient`] wraps a scanclient-pooled `reqwest::Client` with:
 //!
 //! - **Per-host rate limiting** via [`HostRateLimiter`]
 //! - **Automatic 429 / timeout backoff** (exponential, 4 retries)
@@ -15,18 +15,19 @@
 //! let json: serde_json::Value = client.get_json("https://example.com/api").await?;
 //! ```
 //!
-//! No scanner module should ever import `reqwest` directly or call
-//! `reqwest::Client::builder()`. This is the single source of truth.
+//! No scanner module should import `reqwest` directly or call
+//! `reqwest::Client::builder()`. HTTP pools are built via `scanclient`.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use hickory_resolver::TokioAsyncResolver;
+use scanclient::reqwest::{self, redirect::Policy};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use crate::config::Config;
 use crate::ratelimit::HostRateLimiter;
+use crate::scanclient_bridge;
 
 /// Unified HTTP client for all scanner modules.
 ///
@@ -35,7 +36,7 @@ use crate::ratelimit::HostRateLimiter;
 /// `&ScanClient`) across all scanner stages.
 #[derive(Clone)]
 pub struct ScanClient {
-    /// The underlying pooled HTTP client.
+    /// The underlying pooled HTTP client (scanclient pool).
     http: reqwest::Client,
     /// Per-host rate limiter.
     rate_limiter: Arc<HostRateLimiter>,
@@ -62,78 +63,18 @@ pub(crate) fn warn_insecure_tls_once(insecure: bool) {
     }
 }
 
-/// DNS resolver bridge for reqwest.
-struct HickoryResolver(Arc<TokioAsyncResolver>);
-
-impl reqwest::dns::Resolve for HickoryResolver {
-    fn resolve(
-        &self,
-        name: reqwest::dns::Name,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = std::result::Result<
-                        Box<dyn Iterator<Item = std::net::SocketAddr> + Send>,
-                        Box<dyn std::error::Error + Send + Sync>,
-                    >,
-                > + Send,
-        >,
-    > {
-        let resolver = Arc::clone(&self.0);
-        Box::pin(async move {
-            let lookup = resolver
-                .lookup_ip(name.as_str())
-                .await
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
-            let addrs: Box<dyn Iterator<Item = std::net::SocketAddr> + Send> = Box::new(
-                lookup
-                    .into_iter()
-                    .map(|ip| std::net::SocketAddr::new(ip, 0)),
-            );
-            Ok(addrs)
-        })
-    }
-}
-
 impl ScanClient {
     /// Build a `ScanClient` from scan configuration.
     ///
     /// # Errors
     ///
-    /// Returns an error if the underlying reqwest client cannot be constructed
+    /// Returns an error if the underlying HTTP client cannot be constructed
     /// (e.g. invalid proxy URL).
     pub fn from_config(config: &Config, resolver: Arc<TokioAsyncResolver>) -> anyhow::Result<Self> {
         warn_insecure_tls_once(config.insecure_tls);
-
-        let mut headers = reqwest::header::HeaderMap::new();
-        if let Some(cookie_val) = &config.cookie {
-            if let Ok(hv) = reqwest::header::HeaderValue::from_str(cookie_val) {
-                headers.insert(reqwest::header::COOKIE, hv);
-            }
-        }
-
-        let mut builder = reqwest::Client::builder()
-            .dns_resolver(Arc::new(HickoryResolver(resolver)))
-            .timeout(config.timeout())
-            .connect_timeout(Duration::from_secs(config.timeout_secs.min(5)))
-            .user_agent(&config.user_agent)
-            .default_headers(headers)
-            .danger_accept_invalid_certs(config.insecure_tls)
-            .redirect(reqwest::redirect::Policy::limited(10))
-            .pool_max_idle_per_host(32)
-            .pool_idle_timeout(Duration::from_secs(90))
-            .tcp_keepalive(Duration::from_secs(30));
-
-        if let Some(proxy_url) = &config.proxy {
-            let proxy = reqwest::Proxy::all(proxy_url)
-                .map_err(|e| anyhow::anyhow!("invalid proxy: {e}"))?;
-            builder = builder.proxy(proxy);
-        }
-
-        let http = builder.build()?;
-
+        let http = scanclient_bridge::build_http_client(config, resolver, Policy::limited(10))
+            .map_err(|e| anyhow::anyhow!("scanclient pool: {e}"))?;
         let rate_limiter = Arc::new(HostRateLimiter::new(config.rate_limit.max(1)));
-
         Ok(Self {
             http,
             rate_limiter,
@@ -150,35 +91,9 @@ impl ScanClient {
         resolver: Arc<TokioAsyncResolver>,
     ) -> anyhow::Result<Self> {
         warn_insecure_tls_once(config.insecure_tls);
-
-        let mut headers = reqwest::header::HeaderMap::new();
-        if let Some(cookie_val) = &config.cookie {
-            if let Ok(hv) = reqwest::header::HeaderValue::from_str(cookie_val) {
-                headers.insert(reqwest::header::COOKIE, hv);
-            }
-        }
-
-        let mut builder = reqwest::Client::builder()
-            .dns_resolver(Arc::new(HickoryResolver(resolver)))
-            .timeout(config.timeout())
-            .connect_timeout(Duration::from_secs(config.timeout_secs.min(5)))
-            .user_agent(&config.user_agent)
-            .default_headers(headers)
-            .danger_accept_invalid_certs(config.insecure_tls)
-            .redirect(reqwest::redirect::Policy::none())
-            .pool_max_idle_per_host(32)
-            .pool_idle_timeout(Duration::from_secs(90))
-            .tcp_keepalive(Duration::from_secs(30));
-
-        if let Some(proxy_url) = &config.proxy {
-            let proxy = reqwest::Proxy::all(proxy_url)
-                .map_err(|e| anyhow::anyhow!("invalid proxy: {e}"))?;
-            builder = builder.proxy(proxy);
-        }
-
-        let http = builder.build()?;
+        let http = scanclient_bridge::build_http_client(config, resolver, Policy::none())
+            .map_err(|e| anyhow::anyhow!("scanclient pool: {e}"))?;
         let rate_limiter = Arc::new(HostRateLimiter::new(config.rate_limit.max(1)));
-
         Ok(Self {
             http,
             rate_limiter,
@@ -306,7 +221,7 @@ impl ScanClient {
 
             match send().await {
                 Ok(resp) if resp.status().as_u16() == 429 => {
-                    let delay = Duration::from_millis(500 * 2u64.pow(attempt));
+                    let delay = std::time::Duration::from_millis(500 * 2u64.pow(attempt));
                     tracing::debug!(
                         url,
                         attempt,
@@ -317,7 +232,7 @@ impl ScanClient {
                 }
                 Ok(resp) => return Ok(resp),
                 Err(e) if attempt + 1 < MAX_RETRIES && e.is_timeout() => {
-                    let delay = Duration::from_millis(200 * 2u64.pow(attempt));
+                    let delay = std::time::Duration::from_millis(200 * 2u64.pow(attempt));
                     tracing::debug!(
                         url,
                         attempt,
@@ -357,5 +272,15 @@ mod tests {
         let resolver = Arc::new(crate::net::build_resolver(&config).unwrap());
         let client = ScanClient::from_config(&config, resolver);
         assert!(client.is_ok());
+    }
+
+    /// MP-W08: gossan-core depends on scanclient; pin that the fleet-wide
+    /// TLS profile parser is reachable without a separate reqwest stack.
+    #[test]
+    fn scanclient_tls_profile_substrate_reachable() {
+        assert_eq!(
+            scanclient::tls_impersonate::ImpersonateProfile::parse("chrome131").unwrap(),
+            scanclient::tls_impersonate::ImpersonateProfile::Chrome131
+        );
     }
 }

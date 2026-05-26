@@ -29,7 +29,7 @@ uuid        = { workspace = true }
 hashkit     = { path = "../../../../libs/performance/indexing/hashkit" }
 chrono      = { workspace = true }
 tokio       = { workspace = true }
-reqwest = { workspace = true }
+scanclient = { path = "../../../../libs/scanner/scanclient" }
 futures      = { workspace = true }
 governor    = { workspace = true }
 nonzero_ext = { workspace = true }
