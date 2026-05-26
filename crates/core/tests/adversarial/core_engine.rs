@@ -108,7 +108,7 @@ fn test_output_json_evidence_raw_injection() {
 
     // Inject massive raw evidence
     let massive_evidence = "A".repeat(1_000_000);
-    finding.evidence().push(Evidence::Raw(massive_evidence.clone()));
+    finding.evidence().push(Evidence::raw(massive_evidence.clone()));
 
     let json_str = serde_json::to_string(&finding).unwrap();
     

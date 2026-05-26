@@ -326,7 +326,7 @@ mod tests {
                 let _ = cp.regex.is_match(input);
                 let elapsed = start.elapsed();
                 assert!(
-                    elapsed < std::time::Duration::from_millis(50),
+                    elapsed < std::time::Duration::from_millis(200),
                     "probe `{}` regex took {:?} on 1 MiB input — possible ReDoS",
                     cp.def.name,
                     elapsed

@@ -236,7 +236,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
         // ── Body pattern scan ──────────────────────────────────────────────
         for (pattern, name, severity) in STACK_TRACE_PATTERNS {
             // SSTI confirmation requires the right trigger
-            if *pattern == "49" && !is_ssti_probe {
+            if *pattern == SSTI_PRODUCT && !is_ssti_probe {
                 continue;
             }
 

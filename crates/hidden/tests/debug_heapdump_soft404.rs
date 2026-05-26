@@ -49,7 +49,7 @@ async fn real_octet_stream_heap_dump_still_detected() {
         .respond_with(
             ResponseTemplate::new(200)
                 .insert_header("content-type", "application/octet-stream")
-                .set_body_bytes(vec![0u8, 1, 2, 3, 4, 5, 6, 7]),
+                .set_body_bytes(b"JAVA PROFILE 1.0.1\n".to_vec()),
         )
         .mount(&server)
         .await;

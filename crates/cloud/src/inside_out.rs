@@ -171,15 +171,15 @@ mod tests {
     use std::sync::Arc;
     use tokio::sync::mpsc;
 
-    fn mock_scan_input() -> (ScanInput, mpsc::UnboundedReceiver<Target>) {
+    fn mock_scan_input() -> (ScanInput, mpsc::Receiver<Target>) {
         // Streaming-API ScanInput. The pre-streaming literal-struct
         // form (`targets: Vec<_>`, optional `live_tx`/`target_tx`)
         // was retired; targets flow in via `target_rx` and the live
         // channels are required, not optional.
-        let (target_tx, rx) = mpsc::unbounded_channel();
-        let (in_tx, in_rx) = mpsc::unbounded_channel::<Target>();
+        let (target_tx, rx) = mpsc::channel(64);
+        let (in_tx, in_rx) = mpsc::channel::<Target>(64);
         drop(in_tx); // no inbound seeds for these adversarial tests
-        let (live_tx, _live_rx) = mpsc::unbounded_channel();
+        let (live_tx, _live_rx) = mpsc::channel(64);
         let input = ScanInput {
             seed: "example.com".into(),
             target_rx: tokio::sync::Mutex::new(in_rx),

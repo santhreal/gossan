@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 use gossan_core::{Config, DiscoverySource, DomainTarget, Target};
-use tokio::sync::{mpsc::UnboundedSender, Mutex};
+use tokio::sync::Mutex;
 
 const WORDLIST: &str = include_str!("wordlist.txt");
 
@@ -13,7 +13,7 @@ const WORDLIST: &str = include_str!("wordlist.txt");
 pub async fn scan(
     domain: &str,
     config: &Config,
-    target_tx: Option<UnboundedSender<Target>>,
+    target_tx: Option<tokio::sync::mpsc::Sender<Target>>,
     resolver: Arc<hickory_resolver::TokioAsyncResolver>,
     wildcard_ips: Option<&HashSet<std::net::IpAddr>>,
 ) -> anyhow::Result<Vec<Target>> {
@@ -47,7 +47,7 @@ fn recursive_scan(
     domain: String,
     config: Config,
     resolver: Arc<hickory_resolver::TokioAsyncResolver>,
-    target_tx: Arc<Option<UnboundedSender<Target>>>,
+    target_tx: Arc<Option<tokio::sync::mpsc::Sender<Target>>>,
     seen: Arc<Mutex<HashSet<String>>>,
     words: Arc<Vec<String>>,
     depth: usize,
@@ -66,14 +66,15 @@ fn recursive_scan(
             }
         }
 
-        let discovered: Vec<Target> = futures::stream::iter(words.as_ref().clone())
-            .map(|word| {
+        let discovered: Vec<Target> = futures::stream::iter(0..words.len())
+            .map(|i| {
                 let resolver = Arc::clone(&resolver);
                 let domain_str = domain.clone();
                 let tx = Arc::clone(&target_tx);
                 let wildcards = wildcard_ips.clone();
+                let words = Arc::clone(&words);
                 async move {
-                    let candidate = format!("{}.{}", word, domain_str);
+                    let candidate = format!("{}.{}", words[i], domain_str);
                     let Ok(lookup) = resolver.lookup_ip(candidate.as_str()).await else {
                         return None;
                     };
@@ -91,7 +92,7 @@ fn recursive_scan(
                     });
                     // Emit immediately for streaming pipeline
                     if let Some(tx) = tx.as_ref() {
-                        let _ = tx.send(t.clone());
+                        let _ = tx.send(t.clone()).await;
                     }
                     Some(t)
                 }

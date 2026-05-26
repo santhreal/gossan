@@ -307,11 +307,19 @@ const BACKUP_CHECKS: &[BackupCheck] = &[
 ];
 
 /// Probe the target for backup-file exposures. No-op for non-Web targets.
-pub async fn probe(client: &reqwest::Client, target: &Target) -> anyhow::Result<Vec<Finding>> {
+pub async fn probe(
+    client: &reqwest::Client,
+    target: &Target,
+    rate_limiter: &std::sync::Arc<crate::HostRateLimiter>,
+    host: &str,
+) -> anyhow::Result<Vec<Finding>> {
     let Target::Web(asset) = target else {
         return Ok(vec![]);
     };
     let base = asset.url.as_str().trim_end_matches('/').to_string();
+
+    // Establish a baseline fingerprint for soft-404 detection
+    let baseline = crate::soft404::establish(client, &base).await;
 
     let indices: Vec<usize> = (0..BACKUP_CHECKS.len()).collect();
     let results: Vec<Vec<Finding>> = futures::stream::iter(indices)
@@ -319,7 +327,21 @@ pub async fn probe(client: &reqwest::Client, target: &Target) -> anyhow::Result<
             let client = client.clone();
             let base = base.clone();
             let target = target.clone();
-            async move { process_one(client, base, target, &BACKUP_CHECKS[idx]).await }
+            let rl = std::sync::Arc::clone(rate_limiter);
+            let host_str = host.to_string();
+            let baseline_opt = baseline.clone();
+            async move {
+                process_one(
+                    client,
+                    base,
+                    target,
+                    &BACKUP_CHECKS[idx],
+                    &rl,
+                    &host_str,
+                    baseline_opt.as_ref(),
+                )
+                .await
+            }
         })
         .buffer_unordered(PARALLEL_REQUESTS)
         .collect()
@@ -333,14 +355,21 @@ async fn process_one(
     base: String,
     target: Target,
     check: &BackupCheck,
+    rate_limiter: &crate::HostRateLimiter,
+    host: &str,
+    baseline: Option<&crate::soft404::BaselineFingerprint>,
 ) -> Vec<Finding> {
     let mut findings = Vec::new();
     let url = format!("{}{}", base, check.path);
 
+    rate_limiter.wait_for_host(host).await;
     let Ok(resp) = client.get(&url).send().await else {
         return findings;
     };
-    if resp.status().as_u16() != 200 {
+    let status = resp.status().as_u16();
+    rate_limiter.observe_status(host, status).await;
+
+    if status != 200 {
         return findings;
     }
 
@@ -348,6 +377,10 @@ async fn process_one(
         Some(b) => b,
         None => return findings,
     };
+
+    if crate::soft404::is_likely_404(status, &bytes, baseline, false) {
+        return findings;
+    }
 
     if !check.magic.is_empty() && !magic_matches(check.magic, &bytes) {
         return findings;
@@ -437,7 +470,8 @@ mod tests {
             source: gossan_core::DiscoverySource::Seed,
         });
         let client = reqwest::Client::new();
-        let findings = futures::executor::block_on(probe(&client, &target)).unwrap();
+        let rl = std::sync::Arc::new(crate::HostRateLimiter::new(1));
+        let findings = futures::executor::block_on(probe(&client, &target, &rl, "example.com")).unwrap();
         assert!(findings.is_empty());
     }
 }

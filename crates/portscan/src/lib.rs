@@ -1,9 +1,6 @@
 #![forbid(unsafe_code)]
 // pedantic moved to workspace [lints.clippy] in root Cargo.toml
 //
-// `expect_used` is intentionally ALLOWED inside this crate — every
-// `.expect()` site is on `Mutex::lock()` and the message is the
-// documented invariant ("portscan completed_ports mutex poisoned").
 // `unwrap_used` / `todo` / `unimplemented` / `panic` stay forbidden.
 #![cfg_attr(
     not(test),
@@ -36,6 +33,7 @@ pub mod cve;
 pub mod jarm;
 pub mod probes;
 pub mod rules;
+pub mod stateless;
 pub mod tls;
 pub mod top_ports;
 
@@ -56,6 +54,13 @@ use gossan_core::{
 };
 use secfinding::{Evidence, Finding, FindingBuilder, Severity};
 use tokio::io::AsyncReadExt;
+
+/// A unique key identifying a scanned target (IP address or domain) and port.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct ScanTargetKey {
+    pub target: String,
+    pub port: u16,
+}
 
 /// TCP port scanner with banner grabbing, TLS inspection, and CVE correlation.
 pub struct PortScanner;
@@ -171,7 +176,7 @@ impl Scanner for PortScanner {
         };
 
         // ── Resume support: load checkpoint if available ─────────────────────
-        let completed_ports: Arc<std::sync::Mutex<std::collections::HashSet<(IpAddr, u16)>>> =
+        let completed_ports: Arc<std::sync::Mutex<std::collections::HashSet<ScanTargetKey>>> =
             Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
         let checkpoint_path = std::env::var("GOSSAN_CHECKPOINT")
             .ok()
@@ -191,17 +196,36 @@ impl Scanner for PortScanner {
                     if let Ok(content) =
                         std::fs::read_to_string(path.with_extension("portscan-resume.json"))
                     {
-                        if let Ok(ports) = serde_json::from_str::<Vec<(IpAddr, u16)>>(&content) {
+                        if let Ok(keys) = serde_json::from_str::<Vec<ScanTargetKey>>(&content) {
                             completed_ports
                                 .lock()
-                                .expect("portscan completed_ports mutex poisoned")
-                                .extend(ports);
+                                .unwrap_or_else(|e| e.into_inner())
+                                .extend(keys);
                             tracing::info!(
                                 resumed = completed_ports
                                     .lock()
-                                    .expect("portscan completed_ports mutex poisoned")
+                                    .unwrap_or_else(|e| e.into_inner())
                                     .len(),
                                 "resuming portscan from checkpoint"
+                            );
+                        } else if let Ok(old_ports) = serde_json::from_str::<Vec<(IpAddr, u16)>>(&content) {
+                            let keys: Vec<ScanTargetKey> = old_ports
+                                .into_iter()
+                                .map(|(ip, port)| ScanTargetKey {
+                                    target: ip.to_string(),
+                                    port,
+                                })
+                                .collect();
+                            completed_ports
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .extend(keys);
+                            tracing::info!(
+                                resumed = completed_ports
+                                    .lock()
+                                    .unwrap_or_else(|e| e.into_inner())
+                                    .len(),
+                                "resuming portscan from legacy checkpoint"
                             );
                         }
                     }
@@ -222,15 +246,16 @@ impl Scanner for PortScanner {
                     .iter()
                     .filter({
                         let completed_ports = Arc::clone(&completed_ports);
+                        let target_str = addr.clone();
                         move |&&p| {
-                            if let Some(ip) = ip {
-                                !completed_ports
-                                    .lock()
-                                    .expect("portscan completed_ports mutex poisoned")
-                                    .contains(&(ip, p))
-                            } else {
-                                true
-                            }
+                            let key = ScanTargetKey {
+                                target: target_str.clone(),
+                                port: p,
+                            };
+                            !completed_ports
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .contains(&key)
                         }
                     })
                     .map(move |&p| {
@@ -246,6 +271,32 @@ impl Scanner for PortScanner {
 
         let open_count = Arc::new(AtomicUsize::new(0));
         let probe_engine = Arc::new(probes::ProbeEngine::new(timeout));
+
+        // ── Periodic checkpoint saving task ──────────────────────────────────
+        let checkpoint_task = if let Some(ref path) = checkpoint_path {
+            let path = path.clone();
+            let completed_ports = Arc::clone(&completed_ports);
+            Some(tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    let resume_file = path.with_extension("portscan-resume.json");
+                    let data = {
+                        let locked = completed_ports
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
+                        let keys: Vec<&ScanTargetKey> = locked.iter().collect();
+                        serde_json::to_string(&keys)
+                    };
+                    if let Ok(json) = data {
+                        if let Err(e) = tokio::fs::write(&resume_file, json).await {
+                            tracing::warn!(err = %e, "failed to write periodic checkpoint");
+                        }
+                    }
+                }
+            }))
+        } else {
+            None
+        };
 
         let results: Vec<Option<(ServiceTarget, Vec<Finding>, Vec<Target>)>> =
             futures::stream::iter(pairs)
@@ -281,8 +332,11 @@ impl Scanner for PortScanner {
                         // unused `ip` variable was concealing.
                         completed_ports
                             .lock()
-                            .expect("portscan completed_ports mutex poisoned")
-                            .insert((ip, port));
+                            .unwrap_or_else(|e| e.into_inner())
+                            .insert(ScanTargetKey {
+                                target: addr.clone(),
+                                port,
+                            });
 
                         if let Some((ref svc, _, _)) = result {
                             tracing::debug!(host = ?svc.host.ip, port = svc.port, "open port");
@@ -326,19 +380,21 @@ impl Scanner for PortScanner {
             }
         }
 
+        // ── Abort periodic checkpoint task and save final state ──────────────
+        if let Some(handle) = checkpoint_task {
+            handle.abort();
+            let _ = handle.await;
+        }
+
         // ── Save checkpoint ──────────────────────────────────────────────────
         if let Some(path) = checkpoint_path {
             let resume_file = path.with_extension("portscan-resume.json");
-            let _ = std::fs::write(
-                &resume_file,
-                serde_json::to_string(
-                    &completed_ports
-                        .lock()
-                        .expect("portscan completed_ports mutex poisoned")
-                        .iter()
-                        .collect::<Vec<_>>(),
-                )?,
-            );
+            let data = {
+                let guard = completed_ports.lock().unwrap_or_else(|e| e.into_inner());
+                let keys: Vec<&ScanTargetKey> = guard.iter().collect();
+                serde_json::to_string(&keys)?
+            };
+            let _ = tokio::fs::write(&resume_file, data).await;
         }
 
         tracing::info!(
@@ -1077,7 +1133,22 @@ fn extract_root_domain(domain: &str) -> String {
         return domain;
     }
     let last_two = format!("{}.{}", parts[parts.len() - 2], parts[parts.len() - 1]);
-    last_two
+    let common_two_part_suffixes = [
+        "co.uk", "org.uk", "me.uk", "ltd.uk", "plc.uk", "sch.uk", "gov.uk", "ac.uk", "net.uk",
+        "com.au", "net.au", "org.au", "edu.au", "gov.au", "asn.au", "id.au",
+        "com.cn", "edu.cn", "gov.cn", "org.cn", "net.cn", "ac.cn",
+        "com.br", "net.br", "org.br", "edu.br", "gov.br",
+        "co.jp", "or.jp", "ne.jp", "ac.jp", "ad.jp", "ed.jp", "go.jp",
+        "com.sg", "org.sg", "edu.sg", "gov.sg", "net.sg",
+        "co.nz", "net.nz", "org.nz", "edu.nz", "gov.nz",
+        "com.tw", "org.tw", "gov.tw", "edu.tw", "net.tw",
+        "com.hk", "org.hk", "gov.hk", "edu.hk", "net.hk",
+    ];
+    if common_two_part_suffixes.contains(&last_two.as_str()) && parts.len() >= 3 {
+        format!("{}.{}.{}", parts[parts.len() - 3], parts[parts.len() - 2], parts[parts.len() - 1])
+    } else {
+        last_two
+    }
 }
 
 #[cfg(test)]

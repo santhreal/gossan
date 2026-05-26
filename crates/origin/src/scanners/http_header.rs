@@ -99,11 +99,44 @@ pub async fn scan(
                     Err(_) => continue,
                 };
 
-                // Try to extract IP addresses from the header value.
-                for token in
-                    val_str.split(|c: char| !c.is_ascii_alphanumeric() && c != '.' && c != ':')
-                {
-                    if let Ok(ip) = IpAddr::from_str(token.trim()) {
+                let cleaned_val = val_str.replace('"', "").replace('\'', "");
+                for raw_token in cleaned_val.split(|c: char| c == ',' || c == ';' || c == '(' || c == ')' || c.is_whitespace()) {
+                    let mut token = raw_token.trim().to_string();
+                    if token.is_empty() {
+                        continue;
+                    }
+
+                    if token.starts_with('[') && token.ends_with(']') {
+                        token = token[1..token.len() - 1].to_string();
+                    }
+
+                    // Handle IPv6 bracket stripping or port extraction:
+                    // If bracketed like [2606:4700::1111]:80 or [2606:4700::1111]
+                    if token.starts_with('[') {
+                        if let Some(close_bracket_idx) = token.find(']') {
+                            let ip_part = &token[1..close_bracket_idx];
+                            token = ip_part.to_string();
+                        }
+                    } else {
+                        // Standard IPv4:port checks or non-bracketed IPv6
+                        // Note: IPv6 contains multiple colons (e.g. 2606:4700:4700::1111),
+                        // so we only split port if the string contains a single colon,
+                        // or if the port part after the last colon is a valid port.
+                        if let Some(colon_idx) = token.rfind(':') {
+                            let port_part = &token[colon_idx + 1..];
+                            let ip_part = &token[..colon_idx];
+                            // If ip_part contains no colons (e.g. standard IPv4),
+                            // or if it contains colons but we explicitly have a digit port:
+                            if (!ip_part.contains(':') || ip_part.starts_with('[') || IpAddr::from_str(ip_part).is_ok())
+                                && !port_part.is_empty()
+                                && port_part.chars().all(|c| c.is_ascii_digit())
+                            {
+                                token = ip_part.to_string();
+                            }
+                        }
+                    }
+
+                    if let Ok(ip) = IpAddr::from_str(&token) {
                         if !is_routable_ip(ip) {
                             continue;
                         }

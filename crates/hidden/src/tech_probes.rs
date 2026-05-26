@@ -3,27 +3,33 @@
 //! Once `techstack` fingerprints the CMS/framework, these probes run
 //! targeted checks that only make sense for that specific technology.
 //!
-//! WordPress  → user enumeration (REST), xmlrpc.php, debug.log
-//! Drupal     → CHANGELOG.txt version, update.php exposure
-//! Laravel    → Ignition debug/RCE (CVE-2021-3129)
-//! Joomla     → /administrator/ panel exposure
-//! Strapi     → open registration, admin UI
+//! WordPress  - user enumeration (REST), xmlrpc.php, debug.log
+//! Drupal     - CHANGELOG.txt version, update.php exposure
+//! Laravel    - Ignition debug/RCE (CVE-2021-3129)
+//! Joomla     - /administrator/ panel exposure
+//! Strapi     - open registration, admin UI
 
 use gossan_core::{Target, WebAssetTarget};
 use reqwest::Client;
 use secfinding::{Evidence, Finding, Severity};
 
-pub async fn probe(client: &Client, asset: &WebAssetTarget, target: &Target) -> Vec<Finding> {
+pub async fn probe(
+    client: &Client,
+    asset: &WebAssetTarget,
+    target: &Target,
+    rate_limiter: &crate::HostRateLimiter,
+    host: &str,
+) -> Vec<Finding> {
     let mut findings = Vec::new();
     let base = asset.url.as_str().trim_end_matches('/');
 
     for tech in &asset.tech {
         let f = match tech.name.as_str() {
-            "WordPress" => wordpress(client, base, target).await,
-            "Drupal" => drupal(client, base, target).await,
-            "Laravel" => laravel(client, base, target).await,
-            "Joomla" => joomla(client, base, target).await,
-            "Strapi" => strapi(client, base, target).await,
+            "WordPress" => wordpress(client, base, target, rate_limiter, host).await,
+            "Drupal" => drupal(client, base, target, rate_limiter, host).await,
+            "Laravel" => laravel(client, base, target, rate_limiter, host).await,
+            "Joomla" => joomla(client, base, target, rate_limiter, host).await,
+            "Strapi" => strapi(client, base, target, rate_limiter, host).await,
             _ => vec![],
         };
         findings.extend(f);
@@ -32,15 +38,24 @@ pub async fn probe(client: &Client, asset: &WebAssetTarget, target: &Target) -> 
     findings
 }
 
-// ── WordPress ─────────────────────────────────────────────────────────────────
+// -- WordPress -----------------------------------------------------------------
 
-async fn wordpress(client: &Client, base: &str, target: &Target) -> Vec<Finding> {
+async fn wordpress(
+    client: &Client,
+    base: &str,
+    target: &Target,
+    rate_limiter: &crate::HostRateLimiter,
+    host: &str,
+) -> Vec<Finding> {
     let mut f = Vec::new();
 
     // User enumeration via REST API — leaks usernames for brute force
     let url = format!("{}/wp-json/wp/v2/users", base);
+    rate_limiter.wait_for_host(host).await;
     if let Ok(resp) = client.get(&url).send().await {
-        if resp.status().as_u16() == 200 {
+        let status = resp.status().as_u16();
+        rate_limiter.observe_status(host, status).await;
+        if status == 200 {
             let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
                 .await
                 .unwrap_or_default();
@@ -76,8 +91,10 @@ async fn wordpress(client: &Client, base: &str, target: &Target) -> Vec<Finding>
 
     // XML-RPC: brute force amplification via system.multicall
     let xmlrpc_url = format!("{}/xmlrpc.php", base);
+    rate_limiter.wait_for_host(host).await;
     if let Ok(resp) = client.get(&xmlrpc_url).send().await {
         let status = resp.status().as_u16();
+        rate_limiter.observe_status(host, status).await;
         if status == 200 || status == 405 {
             let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
                 .await
@@ -116,8 +133,11 @@ async fn wordpress(client: &Client, base: &str, target: &Target) -> Vec<Finding>
 
     // Debug log often left behind after troubleshooting
     let debug_url = format!("{}/wp-content/debug.log", base);
+    rate_limiter.wait_for_host(host).await;
     if let Ok(resp) = client.get(&debug_url).send().await {
-        if resp.status().as_u16() == 200 {
+        let status = resp.status().as_u16();
+        rate_limiter.observe_status(host, status).await;
+        if status == 200 {
             let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
                 .await
                 .unwrap_or_default();
@@ -152,15 +172,24 @@ async fn wordpress(client: &Client, base: &str, target: &Target) -> Vec<Finding>
     f
 }
 
-// ── Drupal ────────────────────────────────────────────────────────────────────
+// -- Drupal --------------------------------------------------------------------
 
-async fn drupal(client: &Client, base: &str, target: &Target) -> Vec<Finding> {
+async fn drupal(
+    client: &Client,
+    base: &str,
+    target: &Target,
+    rate_limiter: &crate::HostRateLimiter,
+    host: &str,
+) -> Vec<Finding> {
     let mut f = Vec::new();
 
     // CHANGELOG.txt reveals exact Drupal version
     let url = format!("{}/CHANGELOG.txt", base);
+    rate_limiter.wait_for_host(host).await;
     if let Ok(resp) = client.get(&url).send().await {
-        if resp.status().as_u16() == 200 {
+        let status = resp.status().as_u16();
+        rate_limiter.observe_status(host, status).await;
+        if status == 200 {
             let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
                 .await
                 .unwrap_or_default();
@@ -189,8 +218,11 @@ async fn drupal(client: &Client, base: &str, target: &Target) -> Vec<Finding> {
 
     // update.php accessible to anonymous users
     let update_url = format!("{}/update.php", base);
+    rate_limiter.wait_for_host(host).await;
     if let Ok(resp) = client.get(&update_url).send().await {
-        if resp.status().as_u16() == 200 {
+        let status = resp.status().as_u16();
+        rate_limiter.observe_status(host, status).await;
+        if status == 200 {
             let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
                 .await
                 .unwrap_or_default();
@@ -223,15 +255,24 @@ async fn drupal(client: &Client, base: &str, target: &Target) -> Vec<Finding> {
     f
 }
 
-// ── Laravel ───────────────────────────────────────────────────────────────────
+// -- Laravel -------------------------------------------------------------------
 
-async fn laravel(client: &Client, base: &str, target: &Target) -> Vec<Finding> {
+async fn laravel(
+    client: &Client,
+    base: &str,
+    target: &Target,
+    rate_limiter: &crate::HostRateLimiter,
+    host: &str,
+) -> Vec<Finding> {
     let mut f = Vec::new();
 
     // Ignition health-check — if exposed, RCE likely available (CVE-2021-3129)
     let url = format!("{}/_ignition/health-check", base);
+    rate_limiter.wait_for_host(host).await;
     if let Ok(resp) = client.get(&url).send().await {
-        if resp.status().as_u16() == 200 {
+        let status = resp.status().as_u16();
+        rate_limiter.observe_status(host, status).await;
+        if status == 200 {
             let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
                 .await
                 .unwrap_or_default();
@@ -269,14 +310,23 @@ async fn laravel(client: &Client, base: &str, target: &Target) -> Vec<Finding> {
     f
 }
 
-// ── Joomla ────────────────────────────────────────────────────────────────────
+// -- Joomla --------------------------------------------------------------------
 
-async fn joomla(client: &Client, base: &str, target: &Target) -> Vec<Finding> {
+async fn joomla(
+    client: &Client,
+    base: &str,
+    target: &Target,
+    rate_limiter: &crate::HostRateLimiter,
+    host: &str,
+) -> Vec<Finding> {
     let mut f = Vec::new();
 
     let admin_url = format!("{}/administrator/", base);
+    rate_limiter.wait_for_host(host).await;
     if let Ok(resp) = client.get(&admin_url).send().await {
-        if resp.status().as_u16() == 200 {
+        let status = resp.status().as_u16();
+        rate_limiter.observe_status(host, status).await;
+        if status == 200 {
             let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
                 .await
                 .unwrap_or_default();
@@ -301,15 +351,24 @@ async fn joomla(client: &Client, base: &str, target: &Target) -> Vec<Finding> {
     f
 }
 
-// ── Strapi ────────────────────────────────────────────────────────────────────
+// -- Strapi --------------------------------------------------------------------
 
-async fn strapi(client: &Client, base: &str, target: &Target) -> Vec<Finding> {
+async fn strapi(
+    client: &Client,
+    base: &str,
+    target: &Target,
+    rate_limiter: &crate::HostRateLimiter,
+    host: &str,
+) -> Vec<Finding> {
     let mut f = Vec::new();
 
     // Admin UI exposed
     let admin_url = format!("{}/admin", base);
+    rate_limiter.wait_for_host(host).await;
     if let Ok(resp) = client.get(&admin_url).send().await {
-        if resp.status().as_u16() == 200 {
+        let status = resp.status().as_u16();
+        rate_limiter.observe_status(host, status).await;
+        if status == 200 {
             let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
                 .await
                 .unwrap_or_default();
@@ -341,6 +400,7 @@ async fn strapi(client: &Client, base: &str, target: &Target) -> Vec<Finding> {
 
     // Open self-registration endpoint (v4 path)
     let reg_url = format!("{}/api/auth/local/register", base);
+    rate_limiter.wait_for_host(host).await;
     if let Ok(resp) = client
         .post(&reg_url)
         .header("content-type", "application/json")
@@ -348,7 +408,9 @@ async fn strapi(client: &Client, base: &str, target: &Target) -> Vec<Finding> {
         .send()
         .await
     {
-        if resp.status().as_u16() == 200 {
+        let status = resp.status().as_u16();
+        rate_limiter.observe_status(host, status).await;
+        if status == 200 {
             gossan_core::try_push_finding(crate::info_finding(target, Severity::High,
                     "Strapi open user registration enabled",
                     format!("{} accepts new user signups without restriction. \

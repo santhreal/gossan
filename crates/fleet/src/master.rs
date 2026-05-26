@@ -70,7 +70,7 @@ impl Master {
         }
 
         let chunk_size = targets.len().div_ceil(worker_count);
-        let shards: Vec<Vec<String>> = targets.chunks(chunk_size).map(|c| c.to_vec()).collect();
+        let mut shards: Vec<Vec<String>> = targets.chunks(chunk_size).map(|c| c.to_vec()).collect();
         let total_shards = shards.len();
 
         self.tasks.insert(
@@ -84,6 +84,8 @@ impl Master {
 
         // Use a loop over indices to avoid dashmap iteration issues
         let worker_ids: Vec<String> = self.workers.iter().map(|r| r.key().clone()).collect();
+        let module_name: Arc<str> = module.into();
+        let config_json: Arc<str> = config.into();
         for (i, worker_id) in worker_ids.iter().enumerate() {
             if i >= total_shards {
                 break;
@@ -91,15 +93,18 @@ impl Master {
             if let Some(tx) = self.workers.get(worker_id) {
                 let assignment = TaskAssignment {
                     task_id: task_id.clone(),
-                    module_name: module.to_string(),
-                    targets: shards[i].clone(),
-                    config_json: config.to_string(),
+                    module_name: module_name.to_string(),
+                    targets: std::mem::take(&mut shards[i]),
+                    config_json: config_json.to_string(),
                 };
-                let _ = tx
+                if let Err(e) = tx
                     .send(MasterInstruction {
                         instruction: Some(master_instruction::Instruction::Task(assignment)),
                     })
-                    .await;
+                    .await
+                {
+                    tracing::error!(err = %e, "failed to send task assignment to worker");
+                }
             }
         }
 

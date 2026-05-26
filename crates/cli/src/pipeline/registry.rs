@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::net::IpAddr;
 use tokio::sync::mpsc;
 
 use gossan_core::{Config, Finding, ScanInput, Scanner, Target};
@@ -48,7 +49,7 @@ impl Registry {
     ) -> anyhow::Result<Vec<Finding>> {
         let resolver = Arc::new(gossan_core::net::build_resolver(&config)?);
         let mut findings = Vec::new();
-        let (live_tx, mut live_rx) = mpsc::unbounded_channel::<Finding>();
+        let (live_tx, mut live_rx) = mpsc::channel::<Finding>(1024);
 
         // Spawn findings collector
         let live_handle = tokio::spawn(async move {
@@ -62,8 +63,15 @@ impl Registry {
         // The running target pool that cascades downward via phase evaluation.
         // We start Phase 0 with just the seed target.
         let mut cascade_targets = vec![seed_target(seed)];
+        if is_private_target(&cascade_targets[0], &resolver).await {
+            tracing::warn!(target = seed, "Refusing private/loopback target under default-deny posture");
+            cascade_targets.clear();
+        }
+
         let mut global_seen = HashSet::new();
-        global_seen.insert(target_streaming_key(&cascade_targets[0]));
+        if !cascade_targets.is_empty() {
+            global_seen.insert(target_streaming_key(&cascade_targets[0]));
+        }
 
         for phase_scanners in self.phases {
             if phase_scanners.is_empty() {
@@ -72,7 +80,7 @@ impl Registry {
 
             // For each scanner in this phase, create boundaries
             let mut inboxes = Vec::new();
-            let (target_tx, mut target_rx) = mpsc::unbounded_channel::<Target>();
+            let (target_tx, mut target_rx) = mpsc::channel::<Target>(1024);
             let mut handles = Vec::new();
 
             for scanner in phase_scanners {
@@ -87,7 +95,7 @@ impl Registry {
                     continue;
                 }
 
-                let (in_tx, in_rx) = mpsc::unbounded_channel::<Target>();
+                let (in_tx, in_rx) = mpsc::channel::<Target>(1024);
                 inboxes.push((Arc::clone(&scanner), in_tx));
 
                 let input = ScanInput {
@@ -110,7 +118,7 @@ impl Registry {
             for target in &cascade_targets {
                 for (scanner, in_tx) in &inboxes {
                     if scanner.accepts(target) {
-                        let _ = in_tx.send(target.clone());
+                        let _ = in_tx.send(target.clone()).await;
                     }
                 }
             }
@@ -122,6 +130,10 @@ impl Registry {
             // Collect any NEW targets discovered by this phase.
             let mut new_in_phase = Vec::new();
             while let Some(t) = target_rx.recv().await {
+                if is_private_target(&t, &resolver).await {
+                    tracing::debug!(target = ?t, "Filtering out private/loopback target");
+                    continue;
+                }
                 let key = target_streaming_key(&t);
                 if global_seen.insert(key) {
                     new_in_phase.push(t);
@@ -164,3 +176,36 @@ impl Registry {
         Ok(findings)
     }
 }
+
+async fn is_private_target(target: &Target, resolver: &hickory_resolver::TokioAsyncResolver) -> bool {
+    let allow_private = std::env::var("GOSSAN_ALLOW_PRIVATE_TARGETS").ok().as_deref() == Some("1");
+    if allow_private {
+        return false;
+    }
+
+    match target {
+        Target::Domain(d) => {
+            let host = d.domain.split(':').next().unwrap_or(&d.domain);
+            if let Ok(ip) = host.parse::<IpAddr>() {
+                bogon::ip_addr_is_bogon(ip)
+            } else if let Ok(lookup) = resolver.lookup_ip(host).await {
+                lookup.iter().any(bogon::ip_addr_is_bogon)
+            } else {
+                false
+            }
+        }
+        Target::Host(h) => bogon::ip_addr_is_bogon(h.ip),
+        Target::Service(s) => bogon::ip_addr_is_bogon(s.host.ip),
+        Target::Web(w) => bogon::ip_addr_is_bogon(w.service.host.ip),
+        Target::Network(n) => {
+            let ip_str = n.cidr.split('/').next().unwrap_or(&n.cidr);
+            if let Ok(ip) = ip_str.parse::<IpAddr>() {
+                bogon::ip_addr_is_bogon(ip)
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+

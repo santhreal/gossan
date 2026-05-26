@@ -257,37 +257,42 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
             .unwrap_or("")
             .to_string();
 
-        if debug_probe.path.contains("heapdump") && content_type.contains("octet-stream") {
-            findings.push(
-                crate::exposure_finding(
-                    target,
-                    debug_probe.severity,
-                    format!("{} Exposed", debug_probe.name),
-                    format!(
-                        "{} endpoint at {} returns a binary heap dump. \
-                         This contains in-memory application data including \
-                         database credentials, API keys, and session tokens. \
-                         Framework: {}. Fix: disable or restrict actuator endpoints.",
-                        debug_probe.name, debug_probe.path, debug_probe.framework
-                    ),
-                )
-                .evidence(Evidence::HttpResponse {
-                    status,
-                    headers: vec![("content-type".into(), content_type.clone().into())],
-                    body_excerpt: Some("[binary heap dump]".into()),
-                })
-                .tag("debug")
-                .tag("exposure")
-                .tag(
-                    debug_probe
-                        .framework
-                        .split_whitespace()
-                        .next()
-                        .unwrap_or("web"),
-                )
-                .build()
-                .map_err(|e| anyhow::anyhow!(e))?,
-            );
+        if debug_probe.path.contains("heapdump") {
+            if content_type.contains("octet-stream") {
+                let bytes = crate::soft404::read_limited(resp, 1024).await.unwrap_or_default();
+                if bytes.starts_with(b"JAVA PROFILE") {
+                    findings.push(
+                        crate::exposure_finding(
+                            target,
+                            debug_probe.severity,
+                            format!("{} Exposed", debug_probe.name),
+                            format!(
+                                "{} endpoint at {} returns a binary heap dump. \
+                                 This contains in-memory application data including \
+                                 database credentials, API keys, and session tokens. \
+                                 Framework: {}. Fix: disable or restrict actuator endpoints.",
+                                debug_probe.name, debug_probe.path, debug_probe.framework
+                            ),
+                        )
+                        .evidence(Evidence::HttpResponse {
+                            status,
+                            headers: vec![("content-type".into(), content_type.clone().into())],
+                            body_excerpt: Some("[binary heap dump]".into()),
+                        })
+                        .tag("debug")
+                        .tag("exposure")
+                        .tag(
+                            debug_probe
+                                .framework
+                                .split_whitespace()
+                                .next()
+                                .unwrap_or("web"),
+                        )
+                        .build()
+                        .map_err(|e| anyhow::anyhow!(e))?,
+                    );
+                }
+            }
             continue;
         }
 

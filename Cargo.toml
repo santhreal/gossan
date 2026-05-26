@@ -198,7 +198,7 @@ new_without_default = "allow"
 return_self_not_must_use = "allow"
 
 [workspace.dependencies]
-tokio        = { version = "1", features = ["full"] }
+tokio        = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "fs"] }
 async-trait  = "0.1"
 serde        = { version = "1", features = ["derive"] }
 serde_json   = "1"
@@ -216,7 +216,8 @@ regex-syntax = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
 uuid         = { version = "1", features = ["v4", "serde"] }
 
-hickory-resolver = "0.24"
+# W6-F012: align with gossan-core / karyx reqwest `hickory-dns` 0.25 (0.24 `TokioAsyncResolver::tokio` removed).
+hickory-resolver = { version = "0.25", default-features = false, features = ["tokio", "system-config"] }
 tokio-rustls    = "0.26"
 rustls          = { version = "0.23", features = ["ring"] }
 x509-cert       = "0.2"
@@ -228,7 +229,7 @@ rusqlite     = { version = "0.32", features = ["bundled"] }
 # Santh shared libraries — pulled from crates.io so this workspace
 # stands alone outside the Santh monorepo. Path-deps to the monorepo
 # would re-couple the standalone repo to internal layout.
-secfinding     = "0.3"
+secfinding     = "0.4"
 santh-output   = { package = "secreport", version = "0.3" }
 scantarget     = "0.2"
 scanclient     = "0.2"
@@ -244,6 +245,7 @@ wafrift-detect = "0.2"
 hashkit        = "0.1"
 netforge       = "0.1"
 proxywire      = "0.1"
+bogon          = { version = "0.1.0", path = "../../libs/scanner/bogon" }
 
 toml = "0.8"
 fastrand = "2"
@@ -257,6 +259,17 @@ aho-corasick = "1"
 unicode-normalization = "0.1"
 indexmap = "2"
 octocrab = "0.38"
+
 gitlab = "0.1703"
 gix = "0.67"
+
+[patch.crates-io]
+secfinding = { path = "../../libs/scanner/secfinding" }
+secreport  = { path = "../../libs/scanner/secreport" }
+scantarget = { path = "../../libs/scanner/scantarget" }
+scanclient = { path = "../../libs/scanner/scanclient" }
+scanstate  = { path = "../../libs/scanner/scanstate" }
+codewalk   = { path = "../../libs/runtime/codewalk" }
+truestack  = { path = "../../web/truestack" }
+
 

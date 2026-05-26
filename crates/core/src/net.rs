@@ -9,7 +9,8 @@
 use crate::Config;
 use hickory_resolver::{
     config::{NameServerConfigGroup, ResolverConfig, ResolverOpts},
-    TokioAsyncResolver,
+    name_server::TokioConnectionProvider,
+    TokioAsyncResolver, TokioResolver,
 };
 use tokio::net::TcpStream;
 
@@ -42,7 +43,9 @@ pub fn build_resolver(config: &Config) -> anyhow::Result<TokioAsyncResolver> {
     // poison the resolver for the rest of the process.
     opts.negative_min_ttl = Some(std::time::Duration::from_secs(60));
     opts.cache_size = 8192;
-    Ok(TokioAsyncResolver::tokio(rc, opts))
+    Ok(TokioResolver::builder_with_config(rc, TokioConnectionProvider::default())
+        .with_options(opts)
+        .build())
 }
 
 /// Create a TCP connection, optionally routing through a proxy.

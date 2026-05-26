@@ -18,10 +18,10 @@ async fn test_scan_input_emit_finding() {
     // targets flow through `target_rx`, live + target senders are
     // required. The unused channels here are still allocated so the
     // ScanInput is fully constructed.
-    let (in_tx, in_rx) = mpsc::unbounded_channel::<Target>();
+    let (in_tx, in_rx) = mpsc::channel::<Target>(64);
     drop(in_tx);
-    let (live_tx, mut live_rx) = mpsc::unbounded_channel();
-    let (target_tx, _target_rx) = mpsc::unbounded_channel();
+    let (live_tx, mut live_rx) = mpsc::channel(64);
+    let (target_tx, _target_rx) = mpsc::channel(64);
     let input = ScanInput {
         seed: "example.com".to_string(),
         target_rx: tokio::sync::Mutex::new(in_rx),
@@ -52,10 +52,10 @@ async fn test_scan_input_emit_target() {
     ));
 
     // Same streaming-API construction as above.
-    let (in_tx, in_rx) = mpsc::unbounded_channel::<Target>();
+    let (in_tx, in_rx) = mpsc::channel::<Target>(64);
     drop(in_tx);
-    let (live_tx, _live_rx) = mpsc::unbounded_channel();
-    let (target_tx, mut target_rx) = mpsc::unbounded_channel();
+    let (live_tx, _live_rx) = mpsc::channel(64);
+    let (target_tx, mut target_rx) = mpsc::channel(64);
     let input = ScanInput {
         seed: "example.com".to_string(),
         target_rx: tokio::sync::Mutex::new(in_rx),

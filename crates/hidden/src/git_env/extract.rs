@@ -40,6 +40,9 @@ fn is_ds_store(data: &[u8]) -> bool {
 }
 
 fn magic_confirms(path: &str, data: &[u8]) -> bool {
+    if path.contains("heapdump") {
+        return data.starts_with(b"JAVA PROFILE");
+    }
     if path.ends_with(".zip") {
         return is_zip_file(data);
     }
@@ -62,6 +65,8 @@ pub async fn process_check(
     target: Target,
     check: OwnedCheck,
     is_catch_all: bool,
+    rate_limiter: std::sync::Arc<crate::HostRateLimiter>,
+    host: String,
 ) -> Vec<Finding> {
     let mut findings = Vec::new();
     let url = format!("{}{}", base, check.path);
@@ -70,10 +75,12 @@ pub async fn process_check(
         return findings;
     }
 
+    rate_limiter.wait_for_host(&host).await;
     let Ok(resp) = client.get(&url).send().await else {
         return findings;
     };
     let status = resp.status().as_u16();
+    rate_limiter.observe_status(&host, status).await;
 
     if status == 200 {
         let bytes = match crate::soft404::read_limited(resp, crate::MAX_BODY_BYTES).await {

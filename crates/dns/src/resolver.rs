@@ -3,7 +3,8 @@
 use gossan_core::Config;
 use hickory_resolver::{
     config::{NameServerConfigGroup, ResolverConfig, ResolverOpts},
-    TokioAsyncResolver,
+    name_server::TokioConnectionProvider,
+    TokioAsyncResolver, TokioResolver,
 };
 
 /// Build a [`TokioAsyncResolver`] from scan config.
@@ -26,7 +27,9 @@ pub fn build_resolver(config: &Config) -> anyhow::Result<TokioAsyncResolver> {
     // Enable DNSSEC validation in the resolver
     opts.validate = true;
 
-    Ok(TokioAsyncResolver::tokio(rc, opts))
+    Ok(TokioResolver::builder_with_config(rc, TokioConnectionProvider::default())
+        .with_options(opts)
+        .build())
 }
 
 /// Look up TXT records for a domain, returning the concatenated text content.
@@ -34,7 +37,12 @@ pub async fn lookup_txt(resolver: &TokioAsyncResolver, name: &str) -> anyhow::Re
     let lookup = resolver.txt_lookup(name).await?;
     let records: Vec<String> = lookup
         .iter()
-        .flat_map(|txt| txt.iter().map(|d| String::from_utf8_lossy(d).to_string()))
+        .map(|txt| {
+            txt.iter()
+                .map(|d| String::from_utf8_lossy(d).to_string())
+                .collect::<Vec<String>>()
+                .join("")
+        })
         .collect();
     Ok(records)
 }

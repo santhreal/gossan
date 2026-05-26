@@ -22,13 +22,13 @@ fn finding() -> Finding {
 
 fn build_input() -> (
     ScanInput,
-    mpsc::UnboundedSender<Target>,
-    mpsc::UnboundedReceiver<Finding>,
-    mpsc::UnboundedReceiver<Target>,
+    mpsc::Sender<Target>,
+    mpsc::Receiver<Finding>,
+    mpsc::Receiver<Target>,
 ) {
-    let (target_tx_in, target_rx_in) = mpsc::unbounded_channel::<Target>();
-    let (live_tx, live_rx) = mpsc::unbounded_channel::<Finding>();
-    let (target_tx, target_rx) = mpsc::unbounded_channel::<Target>();
+    let (target_tx_in, target_rx_in) = mpsc::channel::<Target>(64);
+    let (live_tx, live_rx) = mpsc::channel::<Finding>(16384);
+    let (target_tx, target_rx) = mpsc::channel::<Target>(64);
     let resolver = Arc::new(TokioAsyncResolver::tokio(
         ResolverConfig::default(),
         ResolverOpts::default(),
@@ -65,6 +65,7 @@ async fn pushes_100k_targets_through_input() {
                     domain: format!("a{i}.example.com"),
                     source: DiscoverySource::Seed,
                 }))
+                .await
                 .unwrap();
         }
     });

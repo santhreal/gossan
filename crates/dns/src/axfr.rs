@@ -37,7 +37,7 @@ pub async fn check(
     };
 
     for ns in &nameservers {
-        if let Some(axfr_result) = attempt(ns, domain, timeout, proxy).await {
+        if let Some(axfr_result) = attempt(resolver, ns, domain, timeout, proxy).await {
             gossan_core::try_push_finding(
                 Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Critical)
                     .title(format!("DNS zone transfer (AXFR) succeeds on {ns}"))
@@ -97,15 +97,20 @@ async fn resolve_nameservers(resolver: &TokioAsyncResolver, domain: &str) -> Opt
 /// Returns `Some(AxfrResult)` if the server responds with RCODE 0 and
 /// at least one answer record, `None` otherwise.
 async fn attempt(
+    resolver: &TokioAsyncResolver,
     nameserver: &str,
     zone: &str,
     timeout: std::time::Duration,
     proxy: Option<&str>,
 ) -> Option<AxfrResult> {
-    let addr = tokio::net::lookup_host(format!("{nameserver}:53"))
-        .await
-        .ok()?
-        .next()?;
+    let port: u16 = std::env::var("GOSSAN_AXFR_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(53);
+
+    let lookup = resolver.lookup_ip(nameserver).await.ok()?;
+    let ip = lookup.iter().next()?;
+    let addr = std::net::SocketAddr::new(ip, port);
 
     let mut stream = tokio::time::timeout(
         timeout,

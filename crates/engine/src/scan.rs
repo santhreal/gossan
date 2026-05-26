@@ -217,7 +217,7 @@ impl Scanner for EngineScanner {
         let ports = resolve_ports(&config.port_mode);
 
         // Resolve all targets to IPv4 addresses
-        let mut target_ips: Vec<(Ipv4Addr, Target)> = Vec::new();
+        let mut target_ips: Vec<(Ipv4Addr, usize)> = Vec::new();
 
         // Drain incoming targets
         let mut incoming = Vec::new();
@@ -228,18 +228,18 @@ impl Scanner for EngineScanner {
             }
         }
 
-        for t in &incoming {
+        for (i, t) in incoming.iter().enumerate() {
             match t {
                 Target::Host(h) => {
                     if let IpAddr::V4(ipv4) = h.ip {
-                        target_ips.push((ipv4, t.clone()));
+                        target_ips.push((ipv4, i));
                     }
                 }
                 Target::Domain(d) => {
                     if let Ok(addrs) = input.resolver.lookup_ip(format!("{}.", d.domain)).await {
                         for addr in addrs {
                             if let IpAddr::V4(ipv4) = addr {
-                                target_ips.push((ipv4, t.clone()));
+                                target_ips.push((ipv4, i));
                                 break;
                             }
                         }
@@ -351,12 +351,14 @@ impl Scanner for EngineScanner {
                     // was sent from (= pkt.dst_port from RX perspective).
                     if rx_encoder.verify_synack(pkt.ack_num, pkt.src_ip, pkt.src_port, pkt.dst_port)
                     {
-                        let _ = res_tx.try_send(SynAckResponse {
+                        if let Err(e) = res_tx.try_send(SynAckResponse {
                             ip: pkt.src_ip,
                             port: pkt.src_port,
                             ttl: pkt.ttl,
                             window: pkt.window,
-                        });
+                        }) {
+                            tracing::warn!(err = %e, "probe result channel full, dropping SYN-ACK");
+                        }
                     }
                 }
 
@@ -695,7 +697,8 @@ impl Scanner for EngineScanner {
         // below isn't HRTB-bound by an unwanted 'static lifetime.
         let mut grab_jobs: Vec<(Ipv4Addr, u16, Option<String>, Option<String>)> =
             Vec::with_capacity(found.len());
-        for (ip, t) in &target_ips {
+        for (ip, idx) in &target_ips {
+            let t = &incoming[*idx];
             let domain = match t {
                 Target::Domain(d) => Some(d.domain.clone()),
                 Target::Host(h) => h.domain.clone(),

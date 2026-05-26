@@ -200,7 +200,9 @@ async fn try_write(
 
     let status = resp.status().as_u16();
     if matches!(status, 200 | 204) {
-        let _ = client.delete(&put_url).send().await;
+        if let Err(e) = client.delete(&put_url).send().await {
+            tracing::error!(bucket = %bucket, region = %region, err = %e, "probe cleanup failed");
+        }
         gossan_core::try_push_finding(
             crate::finding_builder(
                 target,

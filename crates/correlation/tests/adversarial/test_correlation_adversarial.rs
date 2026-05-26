@@ -15,10 +15,10 @@ fn test_evidence_chain_construction() {
     let f2 = create_finding("techstack", "admin.example.com", "Missing authentication");
     let chains = AdminExposedRule.check(&[f1.clone(), f2.clone()], &[]);
     assert_eq!(chains.len(), 1);
-    let ev = &chains[0].evidence();
+    let ev = chains[0].evidence();
     assert_eq!(ev.len(), 1);
     match &ev[0] {
-        secfinding::Evidence::Raw(s) => {
+        secfinding::Evidence::Raw { value: s } => {
             assert!(s.contains(&f1.id.to_string()));
             assert!(s.contains(&f2.id.to_string()));
         }

@@ -408,17 +408,48 @@ impl SeedFingerprint {
             cors_origins = extract_cors_origins(&headers);
         }
 
+        let mut failures = Vec::new();
+
+        let cert_serial = get_cert_serial(seed)
+            .await
+            .map_err(|e| { failures.push(("cert_serial", e)); })
+            .ok();
+        let ssh_key = get_ssh_host_key(seed)
+            .await
+            .map_err(|e| { failures.push(("ssh_host_key", e)); })
+            .ok();
+        let favicon_hash = get_favicon_hash(client, seed, max_size)
+            .await
+            .map_err(|e| { failures.push(("favicon_hash", e)); })
+            .ok();
+        let content_hash = get_content_hash(client, seed, max_size)
+            .await
+            .map_err(|e| { failures.push(("content_hash", e)); })
+            .ok();
+        let jarm = get_jarm_fingerprint(seed)
+            .await
+            .map_err(|e| { failures.push(("jarm", e)); })
+            .ok();
+        let dns_ips = get_dns_ips(resolver, seed)
+            .await
+            .map_err(|e| { failures.push(("dns_ips", e)); })
+            .ok();
+
+        for (name, e) in failures {
+            tracing::warn!(host = seed, getter = name, err = %e, "fingerprint getter failed");
+        }
+
         Self {
-            cert_serial: get_cert_serial(seed).await.ok(),
-            ssh_key: get_ssh_host_key(seed).await.ok(),
+            cert_serial,
+            ssh_key,
             tracking_ids,
             internal_ips,
             csp_report_uri,
             cors_origins,
-            favicon_hash: get_favicon_hash(client, seed, max_size).await.ok(),
-            content_hash: get_content_hash(client, seed, max_size).await.ok(),
-            jarm: get_jarm_fingerprint(seed).await.ok(),
-            dns_ips: get_dns_ips(resolver, seed).await.ok(),
+            favicon_hash,
+            content_hash,
+            jarm,
+            dns_ips,
         }
     }
 
@@ -489,11 +520,12 @@ impl SeedFingerprint {
                 .cloned()
                 .collect();
             if !shared.is_empty() {
+                let joined = shared.join(", ");
                 signals.push(Signal {
                     name: "Shared Tracking ID",
                     weight: 30,
-                    detail: format!("shared analytics property: {}", shared.join(", ")),
-                    matched_value: shared.join(", "),
+                    detail: format!("shared analytics property: {}", joined),
+                    matched_value: joined,
                 });
             }
         }
@@ -506,14 +538,15 @@ impl SeedFingerprint {
                 .cloned()
                 .collect();
             if !shared.is_empty() {
+                let joined = shared.join(", ");
                 signals.push(Signal {
                     name: "Leaked Internal IP",
                     weight: 35,
                     detail: format!(
                         "same RFC 1918 address leaked in headers: {}",
-                        shared.join(", ")
+                        joined
                     ),
-                    matched_value: shared.join(", "),
+                    matched_value: joined,
                 });
             }
         }
@@ -538,11 +571,12 @@ impl SeedFingerprint {
                 .cloned()
                 .collect();
             if !shared.is_empty() {
+                let joined = shared.join(", ");
                 signals.push(Signal {
                     name: "CORS Allowed Origin",
                     weight: 20,
-                    detail: format!("same non-public CORS origin: {}", shared.join(", ")),
-                    matched_value: shared.join(", "),
+                    detail: format!("same non-public CORS origin: {}", joined),
+                    matched_value: joined,
                 });
             }
         }
@@ -809,7 +843,7 @@ impl Scanner for ConservativeScanner {
                         "matched_value": s.matched_value,
                     })).collect::<Vec<_>>(),
                 });
-                builder = builder.evidence(Evidence::Raw(signal_json.to_string().into()));
+                builder = builder.evidence(Evidence::raw(signal_json.to_string()));
 
                 if let Some(finding) = builder.build_or_log() {
                     input.emit(finding);

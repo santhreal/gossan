@@ -30,6 +30,13 @@
 
 pub mod accuracy;
 pub mod config;
+// Canonical host normalisation used by dedup, target-classification,
+// and scanner output. Previously a stray sibling file alongside
+// `domain.rs` whose contents nobody could reach because the module
+// wasn't declared; promoted so the canonical dedup path
+// (`crate::dedup`) and external callers (gossan correlation /
+// graph) can share one normaliser.
+pub mod domain;
 pub mod error;
 pub mod finding;
 pub mod net;
@@ -37,6 +44,14 @@ pub mod ratelimit;
 pub mod scanner;
 pub mod target;
 pub mod transport;
+pub mod testkit;
+
+// Canonical finding deduplication. Used to live in two places
+// (`gossan::correlation::dedup` and
+// `gossan::graph::correlation::dedup`) that had silently diverged
+// on the security-critical wildcard-bucket key. See `dedup.rs` for
+// the apex-RCE adversarial test that pins the correct behaviour.
+pub mod dedup;
 
 pub use accuracy::{calculate_fuzzy_hash, generate_dom_fingerprint, ResponseBaseline};
 pub use config::{

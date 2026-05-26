@@ -19,13 +19,18 @@ use gossan_core::Target;
 use secfinding::Finding;
 
 /// Probe the target for hidden files and directories.
-pub async fn probe(client: &reqwest::Client, target: &Target) -> anyhow::Result<Vec<Finding>> {
+pub async fn probe(
+    client: &reqwest::Client,
+    target: &Target,
+    rate_limiter: &std::sync::Arc<crate::HostRateLimiter>,
+    host: &str,
+) -> anyhow::Result<Vec<Finding>> {
     let Target::Web(asset) = target else {
         return Ok(vec![]);
     };
     let base = asset.url.as_str().trim_end_matches('/');
 
-    let is_catch_all = detect::is_catch_all(client, base).await;
+    let is_catch_all = detect::is_catch_all(client, base, rate_limiter, host).await;
     let checks = rules::get_owned_checks();
 
     let results: Vec<Vec<Finding>> = futures::stream::iter(checks)
@@ -36,6 +41,8 @@ pub async fn probe(client: &reqwest::Client, target: &Target) -> anyhow::Result<
                 target.clone(),
                 c,
                 is_catch_all,
+                std::sync::Arc::clone(rate_limiter),
+                host.to_string(),
             )
         })
         .buffer_unordered(25)
