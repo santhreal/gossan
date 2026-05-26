@@ -99,10 +99,12 @@ pub async fn scan(
     );
 
     // Resolve each hostname to find non-CDN IPs.
-    let resolver = hickory_resolver::TokioAsyncResolver::tokio(
+    let resolver = hickory_resolver::TokioResolver::builder_with_config(
         hickory_resolver::config::ResolverConfig::default(),
-        hickory_resolver::config::ResolverOpts::default(),
-    );
+        hickory_resolver::name_server::TokioConnectionProvider::default(),
+    )
+    .with_options(hickory_resolver::config::ResolverOpts::default())
+    .build();
 
     let mut seen_ips = HashSet::new();
 

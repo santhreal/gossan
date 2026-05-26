@@ -32,9 +32,26 @@ enum Comparison {
 
 /// Extract `<title>` from HTML without regex.
 fn extract_title(body: &str) -> Option<String> {
-    let lower = body.to_lowercase();
-    let start = lower.find("<title>")? + 7;
-    let end = lower[start..].find("</title>")?;
+    let title_tag = "<title>";
+    let title_close = "</title>";
+    
+    let start = body.char_indices().find_map(|(i, _)| {
+        if body[i..].len() >= 7 && body[i..i+7].eq_ignore_ascii_case(title_tag) {
+            Some(i + 7)
+        } else {
+            None
+        }
+    })?;
+    
+    let end = body[start..].char_indices().find_map(|(i, _)| {
+        let abs_idx = start + i;
+        if body[abs_idx..].len() >= 8 && body[abs_idx..abs_idx+8].eq_ignore_ascii_case(title_close) {
+            Some(i)
+        } else {
+            None
+        }
+    })?;
+    
     Some(body[start..start + end].trim().to_string())
 }
 

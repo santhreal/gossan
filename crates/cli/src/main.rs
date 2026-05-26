@@ -27,12 +27,14 @@ async fn main() -> anyhow::Result<()> {
             .with_env_filter(EnvFilter::from_default_env().add_directive("gossan=info".parse()?))
             .with_target(false)
             .json()
+            .with_writer(std::io::stderr)
             .init();
     } else {
         tracing_subscriber::fmt()
             .with_env_filter(EnvFilter::from_default_env().add_directive("gossan=info".parse()?))
             .with_target(false)
             .compact()
+            .with_writer(std::io::stderr)
             .init();
     }
 

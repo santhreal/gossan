@@ -28,13 +28,12 @@ pub async fn detect_wildcards(
         // Explicit CNAME chain
         if let Ok(cname_lookup) = resolver.lookup(&probe, RecordType::CNAME).await {
             for record in cname_lookup.record_iter() {
-                if let Some(rdata) = record.data() {
-                    if let Some(cname_rdata) = rdata.as_cname() {
-                        let cname = cname_rdata.0.to_utf8().trim_end_matches('.').to_string();
-                        if let Ok(ip_lookup) = resolver.lookup_ip(&cname).await {
-                            for ip in ip_lookup.iter() {
-                                ips.insert(ip);
-                            }
+                let rdata = record.data();
+                if let Some(cname_rdata) = rdata.as_cname() {
+                    let cname = cname_rdata.0.to_utf8().trim_end_matches('.').to_string();
+                    if let Ok(ip_lookup) = resolver.lookup_ip(&cname).await {
+                        for ip in ip_lookup.iter() {
+                            ips.insert(ip);
                         }
                     }
                 }
@@ -48,7 +47,8 @@ pub async fn detect_wildcards(
 mod tests {
     use super::*;
     use hickory_resolver::config::{ResolverConfig, ResolverOpts};
-    use hickory_resolver::TokioAsyncResolver;
+    use hickory_resolver::name_server::TokioConnectionProvider;
+    use hickory_resolver::TokioResolver;
     use std::net::{Ipv4Addr, SocketAddr};
     use std::sync::Arc;
     use tokio::net::UdpSocket;
@@ -106,26 +106,18 @@ mod tests {
         })
     }
 
-    fn resolver_for(addr: SocketAddr) -> TokioAsyncResolver {
-        // hickory-resolver 0.24's `add_name_server` takes a
-        // `NameServerConfig` (struct), not a `SocketAddr` — and the
-        // struct is `#[non_exhaustive]` so we need the `::new`
-        // constructor instead of struct-literal syntax. UDP is the
-        // right protocol for this mock loopback DNS responder.
+    fn resolver_for(addr: SocketAddr) -> TokioResolver {
         let mut config = ResolverConfig::new();
         config.add_name_server(hickory_resolver::config::NameServerConfig::new(
             addr,
             hickory_resolver::config::Protocol::Udp,
         ));
-        // ResolverOpts is `#[non_exhaustive]` in hickory-resolver
-        // 0.24; struct-update syntax does not compile across crate
-        // boundaries on non-exhaustive structs. Default + per-field
-        // assignment is the supported construction path.
         let mut opts = ResolverOpts::default();
-        // short timeout so tests fail fast if server is down
         opts.timeout = std::time::Duration::from_secs(2);
         opts.attempts = 1;
-        TokioAsyncResolver::tokio(config, opts)
+        TokioResolver::builder_with_config(config, TokioConnectionProvider::default())
+            .with_options(opts)
+            .build()
     }
 
     #[tokio::test]

@@ -157,6 +157,16 @@ fn builtin_rules() -> Vec<CveRule> {
             description: "OpenSSL 3.0.0 — X.509 certificate buffer overflow (SPOOKYSSL).".into(), exploit: None },
         CveRule { pattern: "openssl/3.0.1".into(), cve: "CVE-2022-3602".into(), cvss: 7.5, severity: Severity::High,
             description: "OpenSSL 3.0.1 — X.509 certificate buffer overflow (SPOOKYSSL).".into(), exploit: None },
+        CveRule { pattern: "openssl/3.0.2".into(), cve: "CVE-2022-3602".into(), cvss: 7.5, severity: Severity::High,
+            description: "OpenSSL 3.0.2 — X.509 certificate buffer overflow (SPOOKYSSL).".into(), exploit: None },
+        CveRule { pattern: "openssl/3.0.3".into(), cve: "CVE-2022-3602".into(), cvss: 7.5, severity: Severity::High,
+            description: "OpenSSL 3.0.3 — X.509 certificate buffer overflow (SPOOKYSSL).".into(), exploit: None },
+        CveRule { pattern: "openssl/3.0.4".into(), cve: "CVE-2022-3602".into(), cvss: 7.5, severity: Severity::High,
+            description: "OpenSSL 3.0.4 — X.509 certificate buffer overflow (SPOOKYSSL).".into(), exploit: None },
+        CveRule { pattern: "openssl/3.0.5".into(), cve: "CVE-2022-3602".into(), cvss: 7.5, severity: Severity::High,
+            description: "OpenSSL 3.0.5 — X.509 certificate buffer overflow (SPOOKYSSL).".into(), exploit: None },
+        CveRule { pattern: "openssl/3.0.6".into(), cve: "CVE-2022-3602".into(), cvss: 7.5, severity: Severity::High,
+            description: "OpenSSL 3.0.6 — X.509 certificate buffer overflow (SPOOKYSSL).".into(), exploit: None },
         CveRule { pattern: "openssl/1.0.1".into(), cve: "CVE-2014-0160".into(), cvss: 7.5, severity: Severity::High,
             description: "OpenSSL 1.0.1 — Heartbleed: private key + memory disclosure. CRITICAL LEGACY.".into(),
             exploit: Some("python3 heartbleed.py TARGET:443 -n 10  # github.com/sensepost/heartbleed-poc".into()) },
@@ -328,12 +338,86 @@ pub fn all_rules(community_dir: Option<&std::path::Path>) -> Vec<CveRule> {
 /// let findings = correlate_with_rules("Server: MyApp/1.0", &svc, &custom_rules);
 /// assert!(!findings.is_empty());
 /// ```
+
 pub fn correlate_with_rules(banner: &str, svc: &ServiceTarget, rules: &[CveRule]) -> Vec<Finding> {
     let lower = banner.to_lowercase();
     let mut findings = Vec::new();
 
     for rule in rules {
-        if lower.contains(&rule.pattern) {
+        let pattern_lower = rule.pattern.to_lowercase();
+        let mut is_match = false;
+        let mut start_idx = 0;
+        
+        while let Some(offset) = lower[start_idx..].find(&pattern_lower) {
+            let actual_idx = start_idx + offset;
+            let end_idx = actual_idx + pattern_lower.len();
+            
+            // Check character immediately following the match (if any)
+            let next_char = lower.as_bytes().get(end_idx).copied();
+            
+            if pattern_lower == "openssl/1.0.1" {
+                // Heartbleed affects OpenSSL 1.0.1 through 1.0.1f.
+                // 1.0.1g is the first fixed version.
+                if let Some(c) = next_char {
+                    if c.is_ascii_alphanumeric() {
+                        let is_vuln_letter = c >= b'a' && c <= b'f';
+                        let next_next_char = lower.as_bytes().get(end_idx + 1).copied();
+                        let next_next_is_alphanumeric = next_next_char.map(|nc| nc.is_ascii_alphanumeric()).unwrap_or(false);
+                        if is_vuln_letter && !next_next_is_alphanumeric {
+                            is_match = true;
+                            break;
+                        }
+                    } else {
+                        is_match = true;
+                        break;
+                    }
+                } else {
+                    is_match = true;
+                    break;
+                }
+            } else if pattern_lower.starts_with("openssh_") {
+                // OpenSSH portable versions have a 'pX' suffix (e.g. openssh_8.0p1).
+                // We should allow 'p' followed by digits.
+                let mut suffix_len = 0;
+                if next_char == Some(b'p') {
+                    suffix_len += 1;
+                    while let Some(c) = lower.as_bytes().get(end_idx + suffix_len).copied() {
+                        if c.is_ascii_digit() {
+                            suffix_len += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                let post_suffix_char = lower.as_bytes().get(end_idx + suffix_len).copied();
+                let post_suffix_is_alphanumeric = post_suffix_char.map(|c| c.is_ascii_alphanumeric()).unwrap_or(false);
+                if !post_suffix_is_alphanumeric {
+                    is_match = true;
+                    break;
+                }
+            } else {
+                // Standard precise matching: the character following the pattern must not be alphanumeric or extend the version
+                let mut suffix_len = 0;
+                if pattern_lower.ends_with('.') {
+                    while let Some(c) = lower.as_bytes().get(end_idx + suffix_len).copied() {
+                        if c.is_ascii_digit() {
+                            suffix_len += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                let post_suffix_char = lower.as_bytes().get(end_idx + suffix_len).copied();
+                let post_suffix_is_alphanumeric = post_suffix_char.map(|c| c.is_ascii_alphanumeric()).unwrap_or(false);
+                if !post_suffix_is_alphanumeric {
+                    is_match = true;
+                    break;
+                }
+            }
+            start_idx = actual_idx + 1;
+        }
+
+        if is_match {
             let target = Target::Service(svc.clone());
             let mut f = crate::finding_builder(
                 &target,

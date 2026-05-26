@@ -107,7 +107,7 @@ impl Scanner for JsScanner {
 async fn analyze(
     client: &reqwest::Client,
     target: &Target,
-    target_tx: &tokio::sync::mpsc::UnboundedSender<Target>,
+    target_tx: &tokio::sync::mpsc::Sender<Target>,
     rate_limiter: &HostRateLimiter,
 ) -> anyhow::Result<Vec<Finding>> {
     let Target::Web(asset) = target else {
@@ -194,7 +194,7 @@ async fn analyze(
 
             // Emit new targets if they are external domains or IPs
             if let Some(new_target) = ep.as_target() {
-                let _ = target_tx.send(new_target);
+                let _ = target_tx.send(new_target).await;
             }
         }
 

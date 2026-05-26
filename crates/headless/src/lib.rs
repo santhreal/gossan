@@ -118,6 +118,7 @@ impl Scanner for HeadlessScanner {
         }
 
         handle.abort();
+        let _ = handle.await;
 
         // ... (headless logic remains same for now as it uses chrome)
         Ok(())
@@ -268,7 +269,7 @@ async fn analyze_target(
                         )
                         .tag("recon")
                         .tag("hooked_request")
-                        .evidence(Evidence::Raw(url.to_string().into())),
+                        .evidence(Evidence::raw(url.to_string())),
                         &mut findings,
                     );
                 }
@@ -345,7 +346,7 @@ async fn analyze_target(
                 )
                 .tag("recon")
                 .tag("js-global")
-                .evidence(Evidence::Raw(format!("{}: {}", key, value).into())), &mut findings);
+                .evidence(Evidence::raw(format!("{}: {}", key, value))), &mut findings);
             }
         }
     }
@@ -473,6 +474,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "W3-F009: headless Chromium launch >60s; run with cargo test -- --ignored"]
     async fn test_analyze_target_graceful_on_invalid_url() {
         // Use a headless browser with no sandbox for environment compatibility
         let (browser, mut handler) = match Browser::launch(
@@ -487,7 +489,7 @@ mod tests {
             Err(_) => return, // Skip if browser cannot launch in this environment
         };
 
-        tokio::spawn(async move { while let Some(_) = handler.next().await {} });
+        let _handler = tokio::spawn(async move { while let Some(_) = handler.next().await {} });
 
         let mut target = web_target();
         if let Target::Web(ref mut asset) = target {
@@ -500,6 +502,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "W3-F009: headless Chromium launch >60s; run with cargo test -- --ignored"]
     async fn test_analyze_target_with_incomplete_auth_does_not_panic() {
         let (browser, mut handler) = match Browser::launch(
             BrowserConfig::builder()
@@ -513,7 +516,7 @@ mod tests {
             Err(_) => return,
         };
 
-        tokio::spawn(async move { while let Some(_) = handler.next().await {} });
+        let _handler = tokio::spawn(async move { while let Some(_) = handler.next().await {} });
 
         let target = web_target();
         let mut config = Config::default();

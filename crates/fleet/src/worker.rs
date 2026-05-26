@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::proto::fleet_control_client::FleetControlClient;
@@ -60,6 +60,8 @@ impl Worker {
 
         info!(worker_id = %worker_id, "Connected to master at {}", self.master_url);
 
+        let mut task_set = tokio::task::JoinSet::new();
+
         while let Some(instruction) = stream.next().await {
             match instruction {
                 Ok(instr) => {
@@ -70,7 +72,7 @@ impl Worker {
                                 let tx = tx_clone.clone();
                                 let worker_id = worker_id.clone();
 
-                                tokio::spawn(async move {
+                                task_set.spawn(async move {
                                     let res: anyhow::Result<()> = async {
                                         info!(task_id = %task.task_id, module = %task.module_name, "Executing task");
                                         let scanner = match factory(&task.module_name) {
@@ -87,12 +89,12 @@ impl Worker {
                                             })
                                         }).collect();
 
-                                        let (finding_tx, mut finding_rx) = mpsc::unbounded_channel();
+                                        let (finding_tx, mut finding_rx) = mpsc::channel(1024);
                                         let task_id_f = task.task_id.clone();
                                         let worker_id_f = worker_id.clone();
                                         let tx_f = tx.clone();
 
-                                        tokio::spawn(async move {
+                                        let finding_forwarder = tokio::spawn(async move {
                                             while let Some(f) = finding_rx.recv().await {
                                                 let data_json = serde_json::to_string(&f).unwrap_or_default();
                                                 let _ = tx_f.send(WorkerUpdate {
@@ -115,13 +117,13 @@ impl Worker {
                                         };
                                         let resolver = Arc::new(gossan_core::net::build_resolver(&config)?);
 
-                                        let (target_in_tx, target_in_rx) = mpsc::unbounded_channel();
+                                        let (target_in_tx, target_in_rx) = mpsc::channel(1024);
                                         for t in targets {
-                                            let _ = target_in_tx.send(t);
+                                            let _ = target_in_tx.send(t).await;
                                         }
                                         drop(target_in_tx);
 
-                                        let (_target_out_tx, _target_out_rx) = mpsc::unbounded_channel();
+                                        let (_target_out_tx, _target_out_rx) = mpsc::channel(1024);
 
                                         let input = ScanInput {
                                             seed: "fleet-task".to_string(),
@@ -132,6 +134,9 @@ impl Worker {
                                         };
 
                                         scanner.run(input, &config).await?;
+                                        if finding_forwarder.await.is_err() {
+                                            warn!("finding forwarder task panicked");
+                                        }
                                         Ok(())
                                     }.await;
 
@@ -178,6 +183,12 @@ impl Worker {
                     error!(error = %e, "Master stream error");
                     break;
                 }
+            }
+        }
+
+        while let Some(res) = task_set.join_next().await {
+            if res.is_err() {
+                warn!("worker task panicked");
             }
         }
 

@@ -24,7 +24,7 @@ tracing = "0.1"
 url = "2"
 anyhow = "1"
 tokio = { workspace = true }
-chromiumoxide = { version = "0.5", features = ["tokio-runtime"] }
+runtime-headless = { path = "../../../../libs/runtime/headless" }
 gossan-js = { version = "0.3", path = "../js" }
 secfinding = { workspace = true }
 

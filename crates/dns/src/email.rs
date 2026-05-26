@@ -275,7 +275,7 @@ pub struct DmarcRecord {
 #[must_use]
 pub fn parse_dmarc(record: &str) -> Option<DmarcRecord> {
     let trimmed = record.trim();
-    if !trimmed.starts_with("v=DMARC1") {
+    if !trimmed.to_lowercase().starts_with("v=dmarc1") {
         return None;
     }
     let mut out = DmarcRecord::default();
@@ -287,12 +287,12 @@ pub fn parse_dmarc(record: &str) -> Option<DmarcRecord> {
         let Some((k, v)) = part.split_once('=') else {
             continue;
         };
-        let k = k.trim();
+        let k = k.trim().to_lowercase();
         let v = v.trim();
-        match k {
+        match k.as_str() {
             "v" => out.version = Some(v.into()),
-            "p" => out.policy = Some(v.into()),
-            "sp" => out.subdomain_policy = Some(v.into()),
+            "p" => out.policy = Some(v.to_lowercase()),
+            "sp" => out.subdomain_policy = Some(v.to_lowercase()),
             "pct" => out.pct = v.parse::<u8>().ok().filter(|n| *n <= 100),
             "rua" => {
                 out.rua = v.split(',').map(|s| s.trim().to_string()).collect();
@@ -300,15 +300,78 @@ pub fn parse_dmarc(record: &str) -> Option<DmarcRecord> {
             "ruf" => {
                 out.ruf = v.split(',').map(|s| s.trim().to_string()).collect();
             }
-            "adkim" => out.adkim = Some(v.into()),
-            "aspf" => out.aspf = Some(v.into()),
-            "fo" => out.fo = Some(v.into()),
-            "rf" => out.rf = Some(v.into()),
+            "adkim" => out.adkim = Some(v.to_lowercase()),
+            "aspf" => out.aspf = Some(v.to_lowercase()),
+            "fo" => out.fo = Some(v.to_lowercase()),
+            "rf" => out.rf = Some(v.to_lowercase()),
             "ri" => out.ri = v.parse::<u32>().ok(),
             _ => {} // unknown tag; tolerate per RFC 7489 §6.6
         }
     }
     Some(out)
+}
+
+/// DMARC analysis issues identified from a record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DmarcIssue {
+    /// Missing DMARC record.
+    Missing,
+    /// Policy is p=none (unenforced).
+    PolicyNone,
+    /// Policy is p=quarantine (soft enforcement).
+    PolicyQuarantine,
+    /// Subdomain policy is none or missing under main none policy.
+    SubdomainSpoofable,
+    /// Subdomain policy is explicitly weaker than main policy.
+    SubdomainWeakerThanMain,
+}
+
+/// Analyze a DMARC record for security issues.
+#[must_use]
+pub fn analyze_dmarc(record: &str) -> Vec<DmarcIssue> {
+    let Some(parsed) = parse_dmarc(record) else {
+        return vec![DmarcIssue::Missing];
+    };
+
+    let mut issues = Vec::new();
+    let p = parsed
+        .policy
+        .as_deref()
+        .unwrap_or("none")
+        .to_lowercase();
+    let sp = parsed
+        .subdomain_policy
+        .as_deref()
+        .map(|s| s.to_lowercase());
+    let effective_sp = sp.clone().unwrap_or_else(|| p.clone());
+
+    if p == "none" {
+        issues.push(DmarcIssue::PolicyNone);
+    } else if p == "quarantine" {
+        issues.push(DmarcIssue::PolicyQuarantine);
+    }
+
+    if effective_sp == "none" {
+        issues.push(DmarcIssue::SubdomainSpoofable);
+    }
+
+    if let Some(sp_val) = sp {
+        let p_strength = match p.as_str() {
+            "reject" => 2,
+            "quarantine" => 1,
+            _ => 0,
+        };
+        let sp_strength = match sp_val.as_str() {
+            "reject" => 2,
+            "quarantine" => 1,
+            _ => 0,
+        };
+        if sp_strength < p_strength {
+            issues.push(DmarcIssue::SubdomainWeakerThanMain);
+        }
+    }
+
+    issues
 }
 
 /// DMARC policy analysis: presence, enforcement level, subdomain policy, report URIs.
@@ -326,7 +389,7 @@ async fn check_dmarc(resolver: &TokioAsyncResolver, domain: &str, target: &Targe
         }
     };
 
-    let rec = match records.iter().find(|r| r.starts_with("v=DMARC1")) {
+    let rec = match records.iter().find(|r| r.to_lowercase().trim().starts_with("v=dmarc1")) {
         Some(r) => r.clone(),
         None => {
             gossan_core::try_push_finding(
@@ -344,8 +407,13 @@ async fn check_dmarc(resolver: &TokioAsyncResolver, domain: &str, target: &Targe
         }
     };
 
+    let Some(parsed) = parse_dmarc(&rec) else {
+        return findings;
+    };
+
     // Policy strength
-    if rec.contains("p=none") {
+    let p = parsed.policy.as_deref().unwrap_or("none");
+    if p == "none" {
         gossan_core::try_push_finding(
             fb(
                 target,
@@ -357,7 +425,7 @@ async fn check_dmarc(resolver: &TokioAsyncResolver, domain: &str, target: &Targe
             .tag("dmarc"),
             &mut findings,
         );
-    } else if rec.contains("p=quarantine") {
+    } else if p == "quarantine" {
         gossan_core::try_push_finding(
             fb(
                 target,
@@ -372,7 +440,8 @@ async fn check_dmarc(resolver: &TokioAsyncResolver, domain: &str, target: &Targe
     }
 
     // Subdomain policy
-    if !rec.contains("sp=reject") && !rec.contains("p=none") {
+    let effective_sp = parsed.subdomain_policy.as_deref().unwrap_or(p);
+    if effective_sp != "reject" && p != "none" {
         gossan_core::try_push_finding(
             fb(
                 target,
@@ -387,8 +456,8 @@ async fn check_dmarc(resolver: &TokioAsyncResolver, domain: &str, target: &Targe
     }
 
     // Report URI disclosure
-    if let Some(part) = rec.split(';').find(|p| p.trim().starts_with("rua=")) {
-        let addr = part.trim().trim_start_matches("rua=");
+    if !parsed.rua.is_empty() {
+        let addr = parsed.rua.join(", ");
         gossan_core::try_push_finding(
             fb(
                 target,
@@ -593,15 +662,20 @@ mod tests {
 pub fn parse_spf_includes(spf_record: &str) -> Vec<String> {
     let mut includes = Vec::new();
     for part in spf_record.split_whitespace() {
-        if let Some(domain) = part.strip_prefix("include:") {
+        let clean = part
+            .trim_start_matches('+')
+            .trim_start_matches('-')
+            .trim_start_matches('~')
+            .trim_start_matches('?');
+        if let Some(domain) = clean.strip_prefix("include:") {
             includes.push(domain.to_string());
-        } else if let Some(ip_range) = part.strip_prefix("ip4:") {
+        } else if let Some(ip_range) = clean.strip_prefix("ip4:") {
             includes.push(format!("ip4:{}", ip_range));
-        } else if let Some(ip_range) = part.strip_prefix("ip6:") {
+        } else if let Some(ip_range) = clean.strip_prefix("ip6:") {
             includes.push(format!("ip6:{}", ip_range));
-        } else if let Some(domain) = part.strip_prefix("a:") {
+        } else if let Some(domain) = clean.strip_prefix("a:") {
             includes.push(domain.to_string());
-        } else if let Some(domain) = part.strip_prefix("mx:") {
+        } else if let Some(domain) = clean.strip_prefix("mx:") {
             includes.push(domain.to_string());
         }
     }

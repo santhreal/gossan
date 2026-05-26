@@ -6,7 +6,7 @@
 use async_trait::async_trait;
 use hickory_resolver::TokioAsyncResolver;
 use std::sync::Arc;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{Receiver, Sender};
 
 use crate::{Config, Finding, Target};
 
@@ -16,11 +16,11 @@ pub struct ScanInput {
     /// Original seed supplied by the scan request.
     pub seed: String,
     /// Inbound stream of targets for this scanner stage.
-    pub target_rx: tokio::sync::Mutex<UnboundedReceiver<Target>>,
+    pub target_rx: tokio::sync::Mutex<Receiver<Target>>,
     /// Live finding stream shared by the pipeline.
-    pub live_tx: UnboundedSender<Finding>,
+    pub live_tx: Sender<Finding>,
     /// Downstream target stream for newly discovered assets.
-    pub target_tx: UnboundedSender<Target>,
+    pub target_tx: Sender<Target>,
     /// Shared DNS resolver configured for this scan.
     pub resolver: Arc<TokioAsyncResolver>,
 }
@@ -28,12 +28,16 @@ pub struct ScanInput {
 impl ScanInput {
     /// Emit a finding to the live channel.
     pub fn emit(&self, f: Finding) {
-        let _ = self.live_tx.send(f);
+        if let Err(e) = self.live_tx.try_send(f) {
+            tracing::warn!(err = %e, "failed to emit finding");
+        }
     }
 
     /// Emit a discovered target downstream.
     pub fn emit_target(&self, t: Target) {
-        let _ = self.target_tx.send(t);
+        if let Err(e) = self.target_tx.try_send(t) {
+            tracing::warn!(err = %e, "failed to emit target");
+        }
     }
 }
 

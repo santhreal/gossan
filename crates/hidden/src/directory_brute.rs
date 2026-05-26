@@ -5,6 +5,7 @@
 //! Wordlist is loaded from a Tier B file (SecLists-derived) by default,
 //! falling back to a small built-in list.
 
+use futures::StreamExt as _;
 use gossan_core::Target;
 use reqwest::Client;
 use secfinding::{Evidence, Finding, Severity};
@@ -112,77 +113,94 @@ pub async fn probe(
     extensions: &[String],
     status_codes: &[u16],
     baseline: Option<&crate::soft404::BaselineFingerprint>,
+    rate_limiter: &std::sync::Arc<crate::HostRateLimiter>,
+    host: &str,
 ) -> Vec<Finding> {
     let Target::Web(asset) = target else {
         return vec![];
     };
     let base = asset.url.as_str().trim_end_matches('/');
-    let mut findings = Vec::new();
 
-    for path in wordlist {
-        let path = if path.starts_with('/') {
-            path.clone()
-        } else {
-            format!("/{}", path)
-        };
-        for ext in extensions {
-            let url = format!("{}{}{}", base, path, ext);
-            let Ok(resp) = client.get(&url).send().await else {
-                continue;
-            };
-            let status = resp.status().as_u16();
+    let client = client.clone();
+    let findings: Vec<Finding> = futures::stream::iter(0..wordlist.len())
+        .map(|i| {
+            let client = client.clone();
+            let rl = std::sync::Arc::clone(rate_limiter);
+            let host_str = host.to_string();
+            async move {
+                let path = &wordlist[i];
+                let path = if path.starts_with('/') {
+                    path.clone()
+                } else {
+                    format!("/{}", path)
+                };
+                let mut path_findings = Vec::new();
+                for ext in extensions {
+                    let url = format!("{}{}{}", base, path, ext);
+                    rl.wait_for_host(&host_str).await;
+                    let Ok(resp) = client.get(&url).send().await else {
+                        continue;
+                    };
+                    let status = resp.status().as_u16();
+                    rl.observe_status(&host_str, status).await;
 
-            if !status_codes.contains(&status) {
-                continue;
+                    if !status_codes.contains(&status) {
+                        continue;
+                    }
+
+                    let bytes = match crate::soft404::read_limited(resp, crate::MAX_BODY_BYTES).await {
+                        Some(b) => b,
+                        None => continue,
+                    };
+
+                    if crate::soft404::is_likely_404(status, &bytes, baseline, false) {
+                        continue;
+                    }
+
+                    let body_preview = String::from_utf8_lossy(&bytes);
+                    let excerpt = if body_preview.len() > 200 {
+                        format!("{}...", &body_preview[..200])
+                    } else {
+                        body_preview.to_string()
+                    };
+
+                    let safe_path = crate::path_sanitize::sanitize_url_path(&path);
+                    let safe_ext = crate::path_sanitize::sanitize_url_path(ext);
+
+                    if let Some(f) = Finding::builder("hidden", target.domain().unwrap_or("?"), severity_for_status(status))
+                        .title(format!("Hidden path discovered: {}{}", safe_path, safe_ext))
+                        .detail(format!(
+                            "The path {}{} returned HTTP {} ({} bytes). This may expose administrative interfaces, backups, or undocumented API endpoints.",
+                            safe_path, safe_ext, status, bytes.len()
+                        ))
+                        .evidence(Evidence::HttpResponse {
+                            status,
+                            headers: vec![],
+                            body_excerpt: Some((excerpt).into()),
+                        })
+                        .tag("hidden")
+                        .tag("directory-brute")
+                        .tag(match status {
+                            401 | 403 => "auth-required",
+                            500 => "server-error",
+                            _ => "exposure",
+                        })
+                        .kind(secfinding::FindingKind::FileDiscovery)
+                        .build_or_log()
+                    {
+                        path_findings.push(f);
+                    }
+
+                    // Only report one extension variant per path to avoid spam
+                    break;
+                }
+                path_findings
             }
-
-            let bytes = match crate::soft404::read_limited(resp, crate::MAX_BODY_BYTES).await {
-                Some(b) => b,
-                None => continue,
-            };
-
-            if crate::soft404::is_likely_404(status, &bytes, baseline, false) {
-                continue;
-            }
-
-            let body_preview = String::from_utf8_lossy(&bytes);
-            let excerpt = if body_preview.len() > 200 {
-                format!("{}...", &body_preview[..200])
-            } else {
-                body_preview.to_string()
-            };
-
-            let safe_path = crate::path_sanitize::sanitize_url_path(&path);
-            let safe_ext = crate::path_sanitize::sanitize_url_path(ext);
-
-            if let Some(f) = Finding::builder("hidden", target.domain().unwrap_or("?"), severity_for_status(status))
-                .title(format!("Hidden path discovered: {}{}", safe_path, safe_ext))
-                .detail(format!(
-                    "The path {}{} returned HTTP {} ({} bytes). This may expose administrative interfaces, backups, or undocumented API endpoints.",
-                    safe_path, safe_ext, status, bytes.len()
-                ))
-                .evidence(Evidence::HttpResponse {
-                    status,
-                    headers: vec![],
-                    body_excerpt: Some((excerpt).into()),
-                })
-                .tag("hidden")
-                .tag("directory-brute")
-                .tag(match status {
-                    401 | 403 => "auth-required",
-                    500 => "server-error",
-                    _ => "exposure",
-                })
-                .kind(secfinding::FindingKind::FileDiscovery)
-                .build_or_log()
-            {
-                findings.push(f);
-            }
-
-            // Only report one extension variant per path to avoid spam
-            break;
-        }
-    }
+        })
+        .buffer_unordered(16)
+        .flat_map(futures::stream::iter)
+        .collect()
+        .await;
 
     findings
 }

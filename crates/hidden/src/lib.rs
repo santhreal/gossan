@@ -31,10 +31,10 @@ mod bypass403;
 mod cookies;
 pub mod cors;
 pub mod csp;
-mod debug_endpoints;
+pub mod debug_endpoints;
 pub mod dependency_confusion;
 pub mod directory_brute;
-mod error_disclosure;
+pub mod error_disclosure;
 mod favicon;
 pub mod git_env;
 pub mod graphql;
@@ -45,7 +45,7 @@ mod rate_limit;
 pub mod robots;
 mod security_headers;
 mod sitemap;
-mod soft404;
+pub mod soft404;
 pub mod swagger;
 mod tech_probes;
 mod waf;
@@ -57,7 +57,7 @@ use secfinding::{Evidence, Finding, FindingBuilder, Severity};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{RwLock, Semaphore};
+use tokio::sync::Semaphore;
 
 /// Maximum concurrent in-flight requests to a single host.
 const PER_HOST_CONCURRENCY: usize = 4;
@@ -65,15 +65,19 @@ const PER_HOST_CONCURRENCY: usize = 4;
 /// Maximum response body size to read into memory (10 MiB).
 pub const MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
 
+struct HostRateLimiterState {
+    /// Map of hostname to last request time.
+    last_request: HashMap<String, Instant>,
+    /// Current backoff multiplier per host.
+    backoff: HashMap<String, Duration>,
+}
+
 /// Per-host rate limiter that enforces a minimum delay between requests
 /// and exponential backoff on 429/503.
 pub struct HostRateLimiter {
-    /// Map of hostname to last request time.
-    last_request: RwLock<HashMap<String, Instant>>,
+    state: std::sync::Mutex<HostRateLimiterState>,
     /// Minimum delay between requests to the same host.
     delay: Duration,
-    /// Current backoff multiplier per host.
-    backoff: RwLock<HashMap<String, Duration>>,
 }
 
 impl HostRateLimiter {
@@ -81,9 +85,11 @@ impl HostRateLimiter {
     #[must_use]
     pub fn new(delay_ms: u64) -> Self {
         Self {
-            last_request: RwLock::new(HashMap::new()),
+            state: std::sync::Mutex::new(HostRateLimiterState {
+                last_request: HashMap::new(),
+                backoff: HashMap::new(),
+            }),
             delay: Duration::from_millis(delay_ms),
-            backoff: RwLock::new(HashMap::new()),
         }
     }
 
@@ -94,35 +100,37 @@ impl HostRateLimiter {
         }
 
         let now = Instant::now();
-        let should_sleep = {
-            let read_guard = self.last_request.read().await;
-            let backoff_guard = self.backoff.read().await;
-            let effective_delay = self.delay + backoff_guard.get(host).copied().unwrap_or_default();
-            if let Some(last) = read_guard.get(host) {
-                let elapsed = now.duration_since(*last);
-                if elapsed < effective_delay {
-                    Some(effective_delay - elapsed)
-                } else {
-                    None
-                }
+        let sleep_duration = {
+            let mut state = self.state.lock().expect("lock poisoned");
+            let backoff_dur = state.backoff.get(host).copied().unwrap_or_default();
+            let effective_delay = self.delay + backoff_dur;
+
+            let last = state.last_request.get(host).copied();
+            let next_allowed = last
+                .map(|l| l + effective_delay)
+                .unwrap_or(now)
+                .max(now);
+
+            // Pre-reserve the slot by setting the last request time to next_allowed
+            state.last_request.insert(host.to_string(), next_allowed);
+
+            if next_allowed > now {
+                Some(next_allowed - now)
             } else {
                 None
             }
         };
 
-        if let Some(sleep_duration) = should_sleep {
+        if let Some(sleep_duration) = sleep_duration {
             tokio::time::sleep(sleep_duration).await;
         }
-
-        let mut write_guard = self.last_request.write().await;
-        write_guard.insert(host.to_string(), Instant::now());
     }
 
     /// Increase backoff on 429/503 responses.
     pub async fn observe_status(&self, host: &str, status: u16) {
         if status == 429 || status == 503 {
-            let mut backoff_guard = self.backoff.write().await;
-            let current = backoff_guard.get(host).copied().unwrap_or_default();
+            let mut state = self.state.lock().expect("lock poisoned");
+            let current = state.backoff.get(host).copied().unwrap_or_default();
             let next = if current.is_zero() {
                 self.delay
             } else {
@@ -130,19 +138,21 @@ impl HostRateLimiter {
             };
             // Cap at 60 seconds
             let capped = next.min(Duration::from_secs(60));
-            backoff_guard.insert(host.to_string(), capped);
+            state.backoff.insert(host.to_string(), capped);
+        } else {
+            self.decay_backoff(host).await;
         }
     }
 
     /// Decay backoff after a successful request.
     pub async fn decay_backoff(&self, host: &str) {
-        let mut backoff_guard = self.backoff.write().await;
-        if let Some(current) = backoff_guard.get(host).copied() {
+        let mut state = self.state.lock().expect("lock poisoned");
+        if let Some(current) = state.backoff.get(host).copied() {
             let next = current / 2;
             if next < self.delay {
-                backoff_guard.remove(host);
+                state.backoff.remove(host);
             } else {
-                backoff_guard.insert(host.to_string(), next);
+                state.backoff.insert(host.to_string(), next);
             }
         }
     }
@@ -337,157 +347,168 @@ impl Scanner for HiddenScanner {
         let client_follow = ScanClient::from_config(config, Arc::clone(&input.resolver))?;
         let rate_limiter = Arc::new(HostRateLimiter::new(config.host_delay_ms));
 
-        // Drain the streaming target receiver into a Vec. Hidden's per-host
-        // probe layout (futures::stream::iter + buffer_unordered + per-host
-        // semaphore) is batch-shaped, not incremental — collect first, then
-        // fan out probes per accepted Web target.
-        let owned: Vec<Target> = {
-            let mut rx = input.target_rx.lock().await;
-            let mut buf = Vec::new();
-            while let Ok(t) = rx.try_recv() {
-                if self.accepts(&t) {
-                    buf.push(t);
-                }
-            }
-            buf
-        };
+        let semaphore = Arc::new(Semaphore::new(config.concurrency));
+        let mut rx = input.target_rx.lock().await;
+        let mut workers = futures::stream::FuturesUnordered::new();
+        let live_tx = input.live_tx.clone();
 
-        let findings: Vec<Vec<Finding>> = futures::stream::iter(owned)
-            .map(|target| {
-                let cn = client_no_redir.clone();
-                let cf = client_follow.clone();
-                let rl = Arc::clone(&rate_limiter);
-                async move {
-                    let mut f = Vec::new();
-                    let host = target.domain().unwrap_or("").to_string();
-                    let semaphore = Arc::new(Semaphore::new(PER_HOST_CONCURRENCY));
-
-                    // Establish a shared soft-404 baseline for this target
-                    let baseline = if let Target::Web(asset) = &target {
-                        let base = asset.url.as_str().trim_end_matches('/');
-                        soft404::establish(&cn, base).await
-                    } else {
-                        None
-                    };
-                    let baseline = Arc::new(baseline);
-
-                    let mut probes = futures::stream::FuturesUnordered::new();
-
-                    macro_rules! spawn_probe {
-                        ($name:expr, $client:expr, $target:expr) => {
-                            {
-                                let rl_inner = Arc::clone(&rl);
-                                let host_inner = host.clone();
-                                let target_inner = $target.clone();
-                                let client_inner = $client.clone();
-                                let sem_inner = Arc::clone(&semaphore);
-                                let baseline_inner = Arc::clone(&baseline);
-                                probes.push(tokio::spawn(async move {
-                                    let _permit = sem_inner.acquire().await;
-                                    rl_inner.wait_for_host(&host_inner).await;
-                                    let result = match $name {
-                                        "git_env" => git_env::probe(&client_inner, &target_inner).await,
-                                        "swagger" => swagger::probe(&client_inner, &target_inner, baseline_inner.as_ref().as_ref()).await,
-                                        "cookies" => cookies::probe(&client_inner, &target_inner).await,
-                                        "graphql" => graphql::probe(&client_inner, &target_inner, baseline_inner.as_ref().as_ref()).await,
-                                        "cors" => cors::probe(&client_inner, &target_inner).await,
-                                        "csp" => csp::probe(&client_inner, &target_inner).await,
-                                        "api_versions" => api_versions::probe(&client_inner, &target_inner).await,
-                                        "methods" => methods::probe(&client_inner, &target_inner).await,
-                                        "rate_limit" => rate_limit::probe(&client_inner, &target_inner).await,
-                                        "security_headers" => security_headers::probe(&client_inner, &target_inner).await,
-                                        "debug_endpoints" => debug_endpoints::probe(&client_inner, &target_inner).await,
-                                        "error_disclosure" => error_disclosure::probe(&client_inner, &target_inner).await,
-                                        "robots" => robots::probe(&client_inner, &target_inner).await,
-                                        "sitemap" => sitemap::probe(&client_inner, &target_inner).await,
-                                        "favicon" => favicon::probe(&client_inner, &target_inner).await,
-                                        "waf" => waf::probe(&client_inner, &target_inner).await,
-                                        "tech_probes" => {
-                                            // tech_probes::probe returns
-                                            // Vec<Finding> directly (no Result),
-                                            // unlike the other probes. Wrap so
-                                            // the match arms agree on
-                                            // anyhow::Result<Vec<Finding>>.
-                                            if let Target::Web(asset) = &target_inner {
-                                                Ok(tech_probes::probe(&client_inner, asset, &target_inner).await)
-                                            } else {
-                                                Ok::<Vec<Finding>, anyhow::Error>(Vec::new())
-                                            }
-                                        }
-                                        "debug_endpoints_follow" => debug_endpoints::probe(&client_inner, &target_inner).await,
-                                        "directory_brute" => {
-                                            let words = directory_brute::load_wordlist(None);
-                                            let exts = directory_brute::extensions(&[]);
-                                            let codes = directory_brute::status_codes(&[]);
-                                            Ok(directory_brute::probe(&client_inner, &target_inner, &words, &exts, &codes, baseline_inner.as_ref().as_ref()).await)
-                                        }
-                                        "bypass403" => bypass403::probe(&client_inner, &target_inner).await,
-                                        "oauth" => oauth::probe(&client_inner, &target_inner).await,
-                                        "dependency_confusion" => dependency_confusion::probe(&client_inner, &target_inner).await,
-                                        "backup_files" => backup_files::probe(&client_inner, &target_inner).await,
-                                        _ => Ok(Vec::new()),
-                                    };
-                                    // Update rate-limiter state based on response evidence
-                                    if let Ok(ref findings) = result {
-                                        for finding in findings {
-                                            for ev in finding.evidence() {
-                                                if let Evidence::HttpResponse { status, .. } = ev {
-                                                    rl_inner.observe_status(&host_inner, *status).await;
-                                                }
-                                            }
-                                        }
-                                    }
-                                    result.unwrap_or_else(|e| {
-                                        tracing::warn!(probe = $name, err = %e, "probe error");
-                                        Vec::new()
-                                    })
-                                }));
+        loop {
+            tokio::select! {
+                opt_target = rx.recv() => {
+                    match opt_target {
+                        Some(target) => {
+                            if !self.accepts(&target) {
+                                continue;
                             }
-                        };
-                    }
+                            let permit = Arc::clone(&semaphore).acquire_owned().await;
+                            let Ok(permit) = permit else {
+                                break;
+                            };
+                            let cn = client_no_redir.clone();
+                            let cf = client_follow.clone();
+                            let rl = Arc::clone(&rate_limiter);
+                            let live_tx = live_tx.clone();
+                            workers.push(tokio::spawn(async move {
+                                let _permit = permit;
+                                let mut f = Vec::new();
+                                let host = target.domain().unwrap_or("").to_string();
+                                let host_clone = host.clone();
+                                let per_host_semaphore = Arc::new(Semaphore::new(PER_HOST_CONCURRENCY));
 
-                    spawn_probe!("git_env", cn, target);
-                    spawn_probe!("swagger", cn, target);
-                    spawn_probe!("cookies", cn, target);
-                    spawn_probe!("graphql", cn, target);
-                    spawn_probe!("cors", cn, target);
-                    spawn_probe!("csp", cn, target);
-                    spawn_probe!("api_versions", cn, target);
-                    spawn_probe!("methods", cn, target);
-                    spawn_probe!("rate_limit", cn, target);
-                    spawn_probe!("security_headers", cn, target);
-                    spawn_probe!("debug_endpoints", cn, target);
-                    spawn_probe!("error_disclosure", cn, target);
-                    spawn_probe!("robots", cf, target);
-                    spawn_probe!("sitemap", cf, target);
-                    spawn_probe!("favicon", cf, target);
-                    spawn_probe!("waf", cf, target);
-                    spawn_probe!("tech_probes", cf, target);
-                    spawn_probe!("debug_endpoints_follow", cf, target);
-                    spawn_probe!("directory_brute", cf, target);
-                    spawn_probe!("bypass403", cn, target);
-                    spawn_probe!("oauth", cn, target);
-                    spawn_probe!("dependency_confusion", cn, target);
-                    spawn_probe!("backup_files", cn, target);
+                                // Establish a shared soft-404 baseline for this target
+                                let baseline = if let Target::Web(asset) = &target {
+                                    let base = asset.url.as_str().trim_end_matches('/');
+                                    soft404::establish(&cn, base).await
+                                } else {
+                                    None
+                                };
+                                let baseline = Arc::new(baseline);
 
-                    while let Some(res) = probes.next().await {
-                        if let Ok(mut probe_findings) = res {
-                            f.append(&mut probe_findings);
+                                let mut probes = futures::stream::FuturesUnordered::new();
+
+                                macro_rules! spawn_probe {
+                                    ($name:expr, $client:expr, $target_inner:expr) => {
+                                        {
+                                            let rl_inner = Arc::clone(&rl);
+                                            let host_inner = host_clone.clone();
+                                            let target_inner2 = $target_inner.clone();
+                                            let client_inner = $client.clone();
+                                            let sem_inner = Arc::clone(&per_host_semaphore);
+                                            let baseline_inner = Arc::clone(&baseline);
+                                            probes.push(tokio::spawn(async move {
+                                                let _permit = sem_inner.acquire().await;
+                                                rl_inner.wait_for_host(&host_inner).await;
+                                                let result = match $name {
+                                                    "git_env" => git_env::probe(&client_inner, &target_inner2, &rl_inner, &host_inner).await,
+                                                    "swagger" => swagger::probe(&client_inner, &target_inner2, baseline_inner.as_ref().as_ref()).await,
+                                                    "cookies" => cookies::probe(&client_inner, &target_inner2).await,
+                                                    "graphql" => graphql::probe(&client_inner, &target_inner2, baseline_inner.as_ref().as_ref()).await,
+                                                    "cors" => cors::probe(&client_inner, &target_inner2).await,
+                                                    "csp" => csp::probe(&client_inner, &target_inner2).await,
+                                                    "api_versions" => api_versions::probe(&client_inner, &target_inner2).await,
+                                                    "methods" => methods::probe(&client_inner, &target_inner2).await,
+                                                    "rate_limit" => rate_limit::probe(&client_inner, &target_inner2).await,
+                                                    "security_headers" => security_headers::probe(&client_inner, &target_inner2).await,
+                                                    "debug_endpoints" => debug_endpoints::probe(&client_inner, &target_inner2).await,
+                                                    "error_disclosure" => error_disclosure::probe(&client_inner, &target_inner2).await,
+                                                    "robots" => robots::probe(&client_inner, &target_inner2).await,
+                                                    "sitemap" => sitemap::probe(&client_inner, &target_inner2).await,
+                                                    "favicon" => favicon::probe(&client_inner, &target_inner2).await,
+                                                    "waf" => waf::probe(&client_inner, &target_inner2).await,
+                                                    "tech_probes" => {
+                                                        if let Target::Web(asset) = &target_inner2 {
+                                                            Ok(tech_probes::probe(&client_inner, asset, &target_inner2, &rl_inner, &host_inner).await)
+                                                        } else {
+                                                            Ok::<Vec<Finding>, anyhow::Error>(Vec::new())
+                                                        }
+                                                    }
+                                                    "debug_endpoints_follow" => debug_endpoints::probe(&client_inner, &target_inner2).await,
+                                                    "directory_brute" => {
+                                                        let words = directory_brute::load_wordlist(None);
+                                                        let exts = directory_brute::extensions(&[]);
+                                                        let codes = directory_brute::status_codes(&[]);
+                                                        Ok(directory_brute::probe(&client_inner, &target_inner2, &words, &exts, &codes, baseline_inner.as_ref().as_ref(), &rl_inner, &host_inner).await)
+                                                    }
+                                                    "bypass403" => bypass403::probe(&client_inner, &target_inner2).await,
+                                                    "oauth" => oauth::probe(&client_inner, &target_inner2).await,
+                                                    "dependency_confusion" => dependency_confusion::probe(&client_inner, &target_inner2).await,
+                                                    "backup_files" => backup_files::probe(&client_inner, &target_inner2, &rl_inner, &host_inner).await,
+                                                    _ => Ok(Vec::new()),
+                                                };
+                                                // Update rate-limiter state based on response evidence
+                                                if let Ok(ref findings) = result {
+                                                    for finding in findings {
+                                                        for ev in finding.evidence() {
+                                                            if let Evidence::HttpResponse { status, .. } = ev {
+                                                                rl_inner.observe_status(&host_inner, *status).await;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                result.unwrap_or_else(|e| {
+                                                    tracing::warn!(probe = $name, err = %e, "probe error");
+                                                    Vec::new()
+                                                })
+                                            }));
+                                        }
+                                    };
+                                }
+
+                                spawn_probe!("git_env", cn, target);
+                                spawn_probe!("swagger", cn, target);
+                                spawn_probe!("cookies", cn, target);
+                                spawn_probe!("graphql", cn, target);
+                                spawn_probe!("cors", cn, target);
+                                spawn_probe!("csp", cn, target);
+                                spawn_probe!("api_versions", cn, target);
+                                spawn_probe!("methods", cn, target);
+                                spawn_probe!("rate_limit", cn, target);
+                                spawn_probe!("security_headers", cn, target);
+                                spawn_probe!("debug_endpoints", cn, target);
+                                spawn_probe!("error_disclosure", cn, target);
+                                spawn_probe!("robots", cf, target);
+                                spawn_probe!("sitemap", cf, target);
+                                spawn_probe!("favicon", cf, target);
+                                spawn_probe!("waf", cf, target);
+                                spawn_probe!("tech_probes", cf, target);
+                                spawn_probe!("debug_endpoints_follow", cf, target);
+                                spawn_probe!("directory_brute", cf, target);
+                                spawn_probe!("bypass403", cn, target);
+                                spawn_probe!("oauth", cn, target);
+                                spawn_probe!("dependency_confusion", cn, target);
+                                spawn_probe!("backup_files", cn, target);
+
+                                while let Some(res) = probes.next().await {
+                                    if let Ok(mut probe_findings) = res {
+                                        f.append(&mut probe_findings);
+                                    }
+                                }
+
+                                // Emit findings for this target directly
+                                for finding in f {
+                                    let _ = live_tx.send(finding);
+                                }
+                            }));
+                        }
+                        None => {
+                            break;
                         }
                     }
-
-                    f
                 }
-            })
-            .buffer_unordered(config.concurrency)
-            .collect()
-            .await;
-
-        for batch in findings {
-            for finding in batch {
-                input.emit(finding);
+                Some(worker_res) = workers.next() => {
+                    if let Err(e) = worker_res {
+                        tracing::error!(err = %e, "worker task panicked");
+                    }
+                }
             }
         }
+
+        while let Some(worker_res) = workers.next().await {
+            if let Err(e) = worker_res {
+                tracing::error!(err = %e, "worker task panicked");
+            }
+        }
+
         Ok(())
     }
 }

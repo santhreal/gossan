@@ -33,7 +33,7 @@ pub mod dedup;
 pub mod sources;
 pub mod wildcard;
 
-mod bruteforce;
+pub mod bruteforce;
 mod permutations;
 
 use std::collections::HashSet;
@@ -51,16 +51,20 @@ use crate::wildcard::detect_wildcards;
 /// Downstream emitter wrapper — cloneable so it can be moved into spawned tasks.
 #[derive(Clone)]
 struct Emitter {
-    live_tx: tokio::sync::mpsc::UnboundedSender<Finding>,
-    target_tx: tokio::sync::mpsc::UnboundedSender<Target>,
+    live_tx: tokio::sync::mpsc::Sender<Finding>,
+    target_tx: tokio::sync::mpsc::Sender<Target>,
 }
 
 impl Emitter {
     fn emit_target(&self, t: Target) {
-        let _ = self.target_tx.send(t);
+        if let Err(e) = self.target_tx.try_send(t) {
+            tracing::warn!(err = %e, "failed to emit target");
+        }
     }
     fn emit_finding(&self, f: Finding) {
-        let _ = self.live_tx.send(f);
+        if let Err(e) = self.live_tx.try_send(f) {
+            tracing::warn!(err = %e, "failed to emit finding");
+        }
     }
 }
 
@@ -106,7 +110,7 @@ impl Scanner for SubdomainScanner {
             let Target::Domain(d) = target else { continue };
             tracing::info!(domain = %d.domain, sources = sources.len(), "subdomain scan");
 
-            let wildcard_ips = detect_wildcards(&d.domain, &input.resolver, 5).await;
+            let wildcard_ips = detect_wildcards(&d.domain, input.resolver.as_ref(), 5).await;
             if !wildcard_ips.is_empty() {
                 tracing::warn!(domain = %d.domain, ips = ?wildcard_ips, "wildcard DNS detected");
             }
@@ -159,7 +163,7 @@ impl Scanner for SubdomainScanner {
                                 .kind(secfinding::FindingKind::Other)
                                 .tag("subdomain")
                                 .tag("source-error")
-                                .evidence(Evidence::Raw(err.to_string().into()))
+                                .evidence(Evidence::raw(err.to_string()))
                                 .build_or_log()
                             {
                                 emitter.emit_finding(finding);
@@ -231,7 +235,7 @@ impl Scanner for SubdomainScanner {
                 &d.domain,
                 config,
                 &wildcard_ips,
-                &input.resolver,
+                input.resolver.as_ref(),
             )
             .await
             {

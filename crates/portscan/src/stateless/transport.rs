@@ -124,7 +124,7 @@ pub mod linux {
     pub fn raw_available() -> bool {
         Socket::new(
             Domain::IPV4,
-            Type::RAW,
+            Type::from(libc::SOCK_RAW),
             Some(Protocol::from(libc::IPPROTO_TCP)),
         )
         .is_ok()
@@ -144,12 +144,12 @@ pub mod linux {
         pub fn new() -> std::io::Result<Self> {
             let tx = Socket::new(
                 Domain::IPV4,
-                Type::RAW,
+                Type::from(libc::SOCK_RAW),
                 Some(Protocol::from(libc::IPPROTO_RAW)),
             )?;
             let rx = Socket::new(
                 Domain::IPV4,
-                Type::RAW,
+                Type::from(libc::SOCK_RAW),
                 Some(Protocol::from(libc::IPPROTO_TCP)),
             )?;
             rx.set_nonblocking(true)?;

@@ -1,7 +1,8 @@
 use crate::util::is_routable_ip;
 use crate::OriginCandidate;
 use hickory_resolver::config::{ResolverConfig, ResolverOpts};
-use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::name_server::TokioConnectionProvider;
+use hickory_resolver::TokioResolver;
 use std::net::IpAddr;
 use std::str::FromStr;
 
@@ -9,7 +10,12 @@ use std::str::FromStr;
 /// CDNs usually only proxy web traffic (A/CNAME on the apex/www).
 pub async fn scan(domain: String) -> anyhow::Result<Vec<OriginCandidate>> {
     let mut candidates = Vec::new();
-    let resolver = TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
+    let resolver = TokioResolver::builder_with_config(
+        ResolverConfig::default(),
+        TokioConnectionProvider::default(),
+    )
+    .with_options(ResolverOpts::default())
+    .build();
 
     // 1. Check MX records (Mail servers often sit on the origin IP or nearby subnet)
     if let Ok(mx_lookup) = resolver.mx_lookup(domain.clone()).await {

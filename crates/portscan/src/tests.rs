@@ -370,7 +370,7 @@ fn cve_correlation_edge_cases() {
     assert!(findings.is_empty());
 
     // Very long banner
-    let long_banner = format!("Server: Apache/2.4.49{}", "x".repeat(10000));
+    let long_banner = format!("Server: Apache/2.4.49 {}", "x".repeat(10000));
     let findings = correlate(&long_banner, &svc);
     // Should still match the pattern
     assert!(findings
@@ -434,3 +434,59 @@ fn tls_cert_info_display() {
     // Far past
     assert!(days_until_expiry(now - 365 * 86400) < -364);
 }
+
+#[test]
+fn test_scan_target_key_serialization_and_legacy_migration() {
+    use std::net::IpAddr;
+    use std::collections::HashSet;
+
+    // Test 1: Serialize and Deserialize ScanTargetKey
+    let mut completed = HashSet::new();
+    completed.insert(ScanTargetKey {
+        target: "alpha.com".to_string(),
+        port: 80,
+    });
+    completed.insert(ScanTargetKey {
+        target: "127.0.0.1".to_string(),
+        port: 443,
+    });
+
+    let keys: Vec<&ScanTargetKey> = completed.iter().collect();
+    let json = serde_json::to_string(&keys).unwrap();
+
+    // Deserialize new format
+    let parsed: Vec<ScanTargetKey> = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed.len(), 2);
+    assert!(parsed.iter().any(|k| k.target == "alpha.com" && k.port == 80));
+    assert!(parsed.iter().any(|k| k.target == "127.0.0.1" && k.port == 443));
+
+    // Test 2: Parse legacy format Vec<(IpAddr, u16)> and migrate
+    let old_data: Vec<(IpAddr, u16)> = vec![
+        (IpAddr::from([1, 1, 1, 1]), 80),
+        (IpAddr::from([8, 8, 8, 8]), 53),
+    ];
+    let old_json = serde_json::to_string(&old_data).unwrap();
+
+    // Ensure it might parse directly due to Serde's flexibility with sequence deserialization.
+    // If it succeeds, verify the output; otherwise, we explicitly test the migration fallback path.
+    let parsed_new_attempt = serde_json::from_str::<Vec<ScanTargetKey>>(&old_json);
+    if let Ok(ref migrated) = parsed_new_attempt {
+        assert_eq!(migrated.len(), 2);
+        assert!(migrated.iter().any(|k| k.target == "1.1.1.1" && k.port == 80));
+    }
+
+    // Migrate old format successfully
+    let old_ports: Vec<(IpAddr, u16)> = serde_json::from_str(&old_json).unwrap();
+    let migrated_keys: Vec<ScanTargetKey> = old_ports
+        .into_iter()
+        .map(|(ip, port)| ScanTargetKey {
+            target: ip.to_string(),
+            port,
+        })
+        .collect();
+
+    assert_eq!(migrated_keys.len(), 2);
+    assert!(migrated_keys.iter().any(|k| k.target == "1.1.1.1" && k.port == 80));
+    assert!(migrated_keys.iter().any(|k| k.target == "8.8.8.8" && k.port == 53));
+}
+

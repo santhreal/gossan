@@ -77,7 +77,9 @@ fn write_to_output(bytes: &[u8], config: &OutputConfig) {
             }
         }
     } else {
-        let _ = std::io::stdout().write_all(bytes);
+        if let Err(e) = std::io::stdout().write_all(bytes) {
+            tracing::error!(err = %e, "failed to write to stdout");
+        }
     }
 }
 
@@ -197,7 +199,25 @@ pub fn render_graphml(findings: &[Finding]) -> String {
         "  <key id=\"title\"    for=\"node\" attr.name=\"title\"    attr.type=\"string\"/>\n",
     );
     out.push_str("  <graph id=\"gossan\" edgedefault=\"undirected\">\n");
-    let mut by_target: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+
+    let mut target_ids = BTreeMap::new();
+    for f in findings {
+        let target = f.target().to_string();
+        if !target_ids.contains_key(&target) {
+            let tid = format!("t{}", target_ids.len());
+            target_ids.insert(target, tid);
+        }
+    }
+
+    for (target, tid) in &target_ids {
+        out.push_str(&format!("    <node id=\"{tid}\">\n"));
+        out.push_str(&format!(
+            "      <data key=\"target\">{}</data>\n",
+            xml_escape(target)
+        ));
+        out.push_str("    </node>\n");
+    }
+
     for (i, f) in findings.iter().enumerate() {
         let nid = format!("n{i}");
         out.push_str(&format!("    <node id=\"{nid}\">\n"));
@@ -214,18 +234,18 @@ pub fn render_graphml(findings: &[Finding]) -> String {
             xml_escape(f.title())
         ));
         out.push_str("    </node>\n");
-        by_target.entry(f.target().to_string()).or_default().push(i);
     }
+
     let mut edge_id = 0usize;
-    for (_target, group) in by_target {
-        for window in group.windows(2) {
-            let (a, b) = (window[0], window[1]);
-            out.push_str(&format!(
-                "    <edge id=\"e{edge_id}\" source=\"n{a}\" target=\"n{b}\"/>\n"
-            ));
-            edge_id += 1;
-        }
+    for (i, f) in findings.iter().enumerate() {
+        let nid = format!("n{i}");
+        let tid = &target_ids[f.target()];
+        out.push_str(&format!(
+            "    <edge id=\"e{edge_id}\" source=\"{nid}\" target=\"{tid}\"/>\n"
+        ));
+        edge_id += 1;
     }
+
     out.push_str("  </graph>\n</graphml>\n");
     out
 }
@@ -383,9 +403,9 @@ mod tests {
             .unwrap();
         let body = render_graphml(&[f1, f2, f3]);
         assert!(body.contains("<graphml"));
-        assert_eq!(body.matches("<node ").count(), 3);
-        // f1 + f2 share target "example.com" → 1 edge.
-        assert_eq!(body.matches("<edge ").count(), 1);
+        assert_eq!(body.matches("<node ").count(), 5);
+        // radially connected to target nodes → 3 edges.
+        assert_eq!(body.matches("<edge ").count(), 3);
         assert!(body.contains(">example.com<"));
         assert!(body.contains(">10.0.0.1<"));
         assert!(body.contains("</graphml>"));

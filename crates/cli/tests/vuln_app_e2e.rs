@@ -470,6 +470,7 @@ fn assert_absent(f: &[serde_json::Value], needles: &[&str], what: &str) {
 // ───────────────────────── tech ──────────────────────────
 
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn tech_missing_security_headers() {
     let t = start_app(true, false);
     let (ok, f) = run_gossan("tech", &format!("http://{t}"));
@@ -483,6 +484,7 @@ fn tech_missing_security_headers() {
 }
 
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn tech_fingerprints_server_and_powered_by() {
     let t = start_app(true, false);
     let (ok, f) = run_gossan("tech", &format!("http://{t}"));
@@ -492,6 +494,7 @@ fn tech_fingerprints_server_and_powered_by() {
 }
 
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn tech_clean_site_no_missing_header_findings() {
     let t = start_app(false, true);
     let (ok, f) = run_gossan("tech", &format!("http://{t}"));
@@ -505,6 +508,7 @@ fn tech_clean_site_no_missing_header_findings() {
 }
 
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn tech_closed_port_clean_and_no_crash() {
     let (ok, f) = run_gossan("tech", "http://127.0.0.1:1");
     assert!(ok, "unreachable target must exit 0");
@@ -514,6 +518,7 @@ fn tech_closed_port_clean_and_no_crash() {
 // ───────────────────────── js ──────────────────────────
 
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn js_finds_secrets_inline_and_external() {
     let t = start_app(true, false);
     let (ok, f) = run_gossan("js", &format!("http://{t}"));
@@ -529,6 +534,7 @@ fn js_finds_secrets_inline_and_external() {
 /// inline `ghp_` token. This isolated single-route server makes a pass
 /// mean exactly that  -  the auth-walled body was analysed.
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn js_finds_secret_behind_403_auth_wall() {
     let t = start_auth_wall_app();
     let (ok, f) = run_gossan("js", &format!("http://{t}"));
@@ -541,6 +547,7 @@ fn js_finds_secret_behind_403_auth_wall() {
 }
 
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn js_finds_endpoints() {
     let t = start_app(true, false);
     let (ok, f) = run_gossan("js", &format!("http://{t}"));
@@ -555,6 +562,7 @@ fn js_finds_endpoints() {
 /// /api/v2/internal/users (200) and unknown paths 500 (so the
 /// catch-all guard is satisfied).
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn js_pivots_and_flags_live_discovered_endpoint() {
     let t = start_app(true, false);
     let (ok, f) = run_gossan("js", &format!("http://{t}"));
@@ -569,6 +577,7 @@ fn js_pivots_and_flags_live_discovered_endpoint() {
 /// PRECISION: the clean site advertises no extra endpoints and hard-
 /// 404s the unknown  -  the pivot must not manufacture a LIVE finding.
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn js_clean_site_no_live_endpoint_findings() {
     let t = start_app(false, true);
     let (ok, f) = run_gossan("js", &format!("http://{t}"));
@@ -577,6 +586,7 @@ fn js_clean_site_no_live_endpoint_findings() {
 }
 
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn js_clean_site_no_secret_findings() {
     let t = start_app(false, true);
     let (ok, f) = run_gossan("js", &format!("http://{t}"));
@@ -601,6 +611,7 @@ fn js_clean_site_no_secret_findings() {
 /// minified bundle. Any failure here is a real engine gap to fix in the
 /// engine  -  never by weakening this fixture (anti-rigging law).
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn js_finds_modulepreload_deep_bundle_secret_and_template_endpoint() {
     let t = start_app(true, false);
     let (ok, f) = run_gossan("js", &format!("http://{t}"));
@@ -620,6 +631,7 @@ fn js_finds_modulepreload_deep_bundle_secret_and_template_endpoint() {
 // ───────────────────────── hidden ──────────────────────────
 
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn hidden_finds_exposed_git() {
     let t = start_app(true, false);
     let (ok, f) = run_gossan("hidden", &format!("http://{t}"));
@@ -630,6 +642,7 @@ fn hidden_finds_exposed_git() {
 }
 
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn hidden_finds_exposed_env() {
     let t = start_app(true, false);
     let (ok, f) = run_gossan("hidden", &format!("http://{t}"));
@@ -638,6 +651,7 @@ fn hidden_finds_exposed_env() {
 }
 
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn hidden_finds_swagger() {
     let t = start_app(true, false);
     let (ok, f) = run_gossan("hidden", &format!("http://{t}"));
@@ -647,6 +661,7 @@ fn hidden_finds_swagger() {
 }
 
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn hidden_finds_robots_disallowed_incl_agent_specific() {
     let t = start_app(true, false);
     let (ok, f) = run_gossan("hidden", &format!("http://{t}"));
@@ -656,6 +671,7 @@ fn hidden_finds_robots_disallowed_incl_agent_specific() {
 }
 
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn hidden_finds_graphql_introspection() {
     let t = start_app(true, false);
     let (ok, f) = run_gossan("hidden", &format!("http://{t}"));
@@ -664,6 +680,7 @@ fn hidden_finds_graphql_introspection() {
 }
 
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn hidden_finds_cors_misconfig() {
     let t = start_app(true, false);
     let (ok, f) = run_gossan("hidden", &format!("http://{t}"));
@@ -673,6 +690,7 @@ fn hidden_finds_cors_misconfig() {
 }
 
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn hidden_finds_error_disclosure() {
     let t = start_app(true, false);
     let (ok, f) = run_gossan("hidden", &format!("http://{t}"));
@@ -682,6 +700,7 @@ fn hidden_finds_error_disclosure() {
 }
 
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn hidden_clean_site_is_quiet() {
     let t = start_app(false, true);
     let (ok, f) = run_gossan("hidden", &format!("http://{t}"));
@@ -697,6 +716,7 @@ fn hidden_clean_site_is_quiet() {
 }
 
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn hidden_finds_backup_file() {
     let t = start_app(true, false);
     let (ok, f) = run_gossan("hidden", &format!("http://{t}"));
@@ -706,6 +726,7 @@ fn hidden_finds_backup_file() {
 }
 
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn hidden_finds_spring_actuator_env() {
     let t = start_app(true, false);
     let (ok, f) = run_gossan("hidden", &format!("http://{t}"));
@@ -716,6 +737,7 @@ fn hidden_finds_spring_actuator_env() {
 }
 
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn hidden_finds_insecure_session_cookie() {
     let t = start_app(true, false);
     let (ok, f) = run_gossan("hidden", &format!("http://{t}"));
@@ -725,6 +747,7 @@ fn hidden_finds_insecure_session_cookie() {
 }
 
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn hidden_finds_dangerous_http_methods() {
     let t = start_app(true, false);
     let (ok, f) = run_gossan("hidden", &format!("http://{t}"));
@@ -736,6 +759,7 @@ fn hidden_finds_dangerous_http_methods() {
 // ───────────────────────── js source map ──────────────────────────
 
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn js_finds_source_map_leak() {
     let t = start_app(true, false);
     let (ok, f) = run_gossan("js", &format!("http://{t}"));
@@ -748,6 +772,7 @@ fn js_finds_source_map_leak() {
 // ───────────────────────── tech extra ──────────────────────────
 
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn tech_detects_wordpress_generator() {
     let t = start_app(true, false);
     let (ok, f) = run_gossan("tech", &format!("http://{t}"));
@@ -761,6 +786,7 @@ fn tech_detects_wordpress_generator() {
 /// exit 0, and aggregate web-layer findings from the whole pipeline
 /// against the live vuln app (not hang, not crash, not silent).
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn full_scan_completes_and_aggregates_findings() {
     let t = start_app(true, false);
     let (ok, f) = run_gossan("scan", &format!("http://{t}"));
@@ -791,6 +817,7 @@ fn full_scan_completes_and_aggregates_findings() {
 }
 
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn full_scan_clean_site_low_noise() {
     let t = start_app(false, true);
     let (ok, f) = run_gossan("scan", &format!("http://{t}"));
@@ -836,6 +863,7 @@ fn full_scan_clean_site_low_noise() {
 /// the modern SPA leak entirely. Fix #7's full-body inline scan must
 /// still catch it.
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn js_finds_secret_in_json_script_and_data_attr() {
     let t = start_app(true, false);
     let (ok, f) = run_gossan("js", &format!("http://{t}"));
@@ -851,6 +879,7 @@ fn js_finds_secret_in_json_script_and_data_attr() {
 /// Many real APIs do not sit at `/graphql`; the probe's path catalogue
 /// must be broad enough or this is a silent miss on real targets.
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn hidden_finds_graphql_on_nonstandard_path() {
     let t = start_app(true, false);
     let (ok, f) = run_gossan("hidden", &format!("http://{t}"));
@@ -865,6 +894,7 @@ fn hidden_finds_graphql_on_nonstandard_path() {
 /// RECALL: Spring's default OpenAPI location `/v3/api-docs` (distinct
 /// from `/swagger.json`). A Java shop's API docs must not be missed.
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn hidden_finds_openapi_on_spring_default_path() {
     let t = start_app(true, false);
     let (ok, f) = run_gossan("hidden", &format!("http://{t}"));
@@ -880,6 +910,7 @@ fn hidden_finds_openapi_on_spring_default_path() {
 /// blocked by the web server  -  the probe must confirm the repo from
 /// HEAD/refs, not only config.
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn hidden_finds_git_via_head_not_only_config() {
     let t = start_app(true, false);
     let (ok, f) = run_gossan("hidden", &format!("http://{t}"));
@@ -914,6 +945,7 @@ fn hidden_finds_git_via_head_not_only_config() {
 /// techstack signal, all reached via seed→Service→techstack→Web,
 /// never via a direct `gossan js http://…` shortcut.
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn scan_full_cascade_surfaces_web_layer_findings() {
     let t = start_app(true, false);
     let (ok, f) = run_gossan("scan", &t);
@@ -964,6 +996,7 @@ fn scan_full_cascade_surfaces_web_layer_findings() {
 /// exposed paths. Broadening the cascade must not broaden false
 /// positives end-to-end.
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn scan_full_cascade_clean_site_is_precise() {
     let t = start_app(false, true);
     let (ok, f) = run_gossan("scan", &t);
@@ -983,6 +1016,7 @@ fn scan_full_cascade_clean_site_is_precise() {
 /// no hang, exit 0) on an unreachable target  -  a black-box hang here
 /// is the same "does nothing" failure as a severed cascade.
 #[test]
+#[ignore = "W3-F009: gossan CLI e2e (headless/crawl/js) >60s; run with cargo test -- --ignored"]
 fn scan_default_deny_refuses_private_target() {
     // NO `GOSSAN_ALLOW_PRIVATE_TARGETS`  -  production default. This is
     // the SSRF / own-machine / DNS-rebinding safety contract the

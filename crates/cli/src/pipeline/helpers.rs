@@ -200,9 +200,9 @@ pub fn dedup_web_assets(targets: Vec<Target>) -> Vec<Target> {
 // ── Live broadcast ──────────────────────────────────────────────────────────
 
 /// Send findings to the live channel for real-time operator output.
-pub fn broadcast(tx: &tokio::sync::mpsc::UnboundedSender<Finding>, findings: &[Finding]) {
+pub fn broadcast(tx: &tokio::sync::mpsc::Sender<Finding>, findings: &[Finding]) {
     for f in findings {
-        if let Err(e) = tx.send(f.clone()) {
+        if let Err(e) = tx.try_send(f.clone()) {
             tracing::warn!(error = ?e, "live channel send failed, dropping finding");
         }
     }
@@ -286,7 +286,7 @@ pub fn make_subdomain_discovery_findings(targets: &[Target]) -> Vec<Finding> {
                 .kind(secfinding::FindingKind::InfoDisclosure)
                 .tag("subdomain")
                 .tag("discovery")
-                .evidence(Evidence::Raw(format!("source={source_label}").into()))
+                .evidence(Evidence::raw(format!("source={source_label}")))
                 .build_or_log()
         })
         .collect()

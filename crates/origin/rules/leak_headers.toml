@@ -78,3 +78,33 @@ description = "Cloudflare ray ID"
 name = "server"
 confidence = 50
 description = "Server software banner"
+
+[[header]]
+name = "x-forwarded-for"
+confidence = 85
+description = "Forwarded chain of client/proxy IPs"
+
+[[header]]
+name = "x-originating-ip"
+confidence = 85
+description = "Originating client IP"
+
+[[header]]
+name = "true-client-ip"
+confidence = 85
+description = "True client IP from CDN"
+
+[[header]]
+name = "x-client-ip"
+confidence = 85
+description = "Client IP from upstream"
+
+[[header]]
+name = "x-cluster-client-ip"
+confidence = 85
+description = "Cluster client IP"
+
+[[header]]
+name = "cf-connecting-ip"
+confidence = 85
+description = "Cloudflare connecting client IP"

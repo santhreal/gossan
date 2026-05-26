@@ -152,7 +152,9 @@ async fn try_write(
 
     let status = resp.status().as_u16();
     if matches!(status, 200 | 204) {
-        let _ = client.delete(&put_url).send().await; // best-effort cleanup
+        if let Err(e) = client.delete(&put_url).send().await {
+            tracing::error!(bucket = %bucket, err = %e, "probe cleanup failed");
+        }
         gossan_core::try_push_finding(crate::finding_builder(target, Severity::Critical,
                 format!("S3 bucket writable without authentication: {}", bucket),
                 format!(

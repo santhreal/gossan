@@ -1,6 +1,7 @@
 [package]
 name = "gossan-core"
-version.workspace = true
+# Pinned (not `version.workspace`) so path consumers (karyx) don't inherit 0.1.0.
+version = "0.3.2"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -21,9 +22,11 @@ serde_json  = { workspace = true }
 thiserror   = { workspace = true }
 anyhow      = { workspace = true }
 tracing     = { workspace = true }
-url         = { workspace = true }
+url         = { workspace = true, features = ["serde"] }
 uuid        = { workspace = true }
-hashkit     = { workspace = true }
+# Path pin: karyx and other web workspaces pull gossan-core without gossan's
+# workspace root when bogon/authjar bridge to the monorepo root (W6-F002).
+hashkit     = { path = "../../../../libs/performance/indexing/hashkit" }
 chrono      = { workspace = true }
 tokio       = { workspace = true }
 reqwest = { workspace = true }
@@ -32,8 +35,11 @@ governor    = { workspace = true }
 nonzero_ext = { workspace = true }
 secfinding = { workspace = true }
 toml = "0.8"
-proxywire = { workspace = true }
-hickory-resolver = { workspace = true }
+proxywire = { path = "../../../../libs/runtime/proxywire" }
+# Karyx/reqwest unify on 0.25 via `hickory-dns`; 0.24's `TokioAsyncResolver::tokio` is gone (W6-F012).
+hickory-resolver = { version = "0.25", default-features = false, features = ["tokio", "system-config"] }
+idna        = "1"
+psl         = "2"
 
 [dev-dependencies]
 proptest = {workspace = true}

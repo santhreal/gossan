@@ -40,6 +40,8 @@ md5          = "0.7"
 hex          = { workspace = true }
 hickory-resolver = { workspace = true }
 rusqlite = { workspace = true }
+socket2 = "0.5.1"
+libc = "0.2.169"
 
 [dev-dependencies]
 proptest = "1.0"

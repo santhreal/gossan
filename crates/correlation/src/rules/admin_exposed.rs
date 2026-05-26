@@ -113,9 +113,7 @@ impl CorrelationRule for AdminExposedRule {
                     .tag("chain")
                     .tag("admin")
                     .tag("auth-bypass")
-                    .evidence(Evidence::Raw(
-                        format!("Finding IDs: {}", evidence_string).into(),
-                    ))
+                    .evidence(Evidence::raw(format!("Finding IDs: {}", evidence_string)))
                     .build_or_log()
             {
                 chains.push(finding);

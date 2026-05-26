@@ -28,7 +28,8 @@ async fn no_false_positive_on_catch_all_server() {
 
     let client = gossan_core::ScanClient::default_client();
     let target = web_target(&server.uri());
-    let findings = backup_files::probe(&client, &target).await.unwrap();
+    let rate_limiter = std::sync::Arc::new(gossan_hidden::HostRateLimiter::new(0));
+    let findings = backup_files::probe(&client, &target, &rate_limiter, "127.0.0.1").await.unwrap();
 
     assert!(
         findings.is_empty(),
@@ -64,7 +65,8 @@ async fn still_fires_on_a_real_distinct_backup() {
 
     let client = gossan_core::ScanClient::default_client();
     let target = web_target(&server.uri());
-    let findings = backup_files::probe(&client, &target).await.unwrap();
+    let rate_limiter = std::sync::Arc::new(gossan_hidden::HostRateLimiter::new(0));
+    let findings = backup_files::probe(&client, &target, &rate_limiter, "127.0.0.1").await.unwrap();
 
     assert_eq!(
         findings.len(),

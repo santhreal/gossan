@@ -71,12 +71,12 @@ impl Checkpointer {
 // ── Full pipeline ─────────────────────────────────────────────────────────────
 pub async fn run_module(seed: &str, module: &str, config: Config) -> anyhow::Result<Vec<Finding>> {
     let resolver = Arc::new(build_resolver(&config)?);
-    let (in_tx, in_rx) = tokio::sync::mpsc::unbounded_channel();
-    let (out_tx, mut out_rx) = tokio::sync::mpsc::unbounded_channel();
-    let (live_tx, mut live_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (in_tx, in_rx) = tokio::sync::mpsc::channel(1024);
+    let (out_tx, mut out_rx) = tokio::sync::mpsc::channel(1024);
+    let (live_tx, mut live_rx) = tokio::sync::mpsc::channel(1024);
 
     // Seed the target channel
-    let _ = in_tx.send(seed_target(seed));
+    let _ = in_tx.try_send(seed_target(seed));
     drop(in_tx);
 
     let input = ScanInput {
@@ -285,9 +285,9 @@ async fn dispatch_module(module: &str, input: ScanInput, config: &Config) -> any
     // pre-loaded with the synthetic targets — equivalent semantics,
     // matches the new contract.
     let rebuild_with = |targets: Vec<Target>, prev: ScanInput| -> ScanInput {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Target>();
+        let (tx, rx) = tokio::sync::mpsc::channel::<Target>(1024);
         for t in targets {
-            let _ = tx.send(t);
+            let _ = tx.try_send(t);
         }
         drop(tx);
         ScanInput {
@@ -394,13 +394,13 @@ mod tests {
         let a = Finding::builder("test", "example.com", Severity::High)
             .title("SQL injection")
             .detail("param id")
-            .evidence(Evidence::Raw("GET /?id=1".into()))
+            .evidence(Evidence::raw("GET /?id=1"))
             .build()
             .expect("finding builder: required fields are set");
         let b = Finding::builder("test", "example.com", Severity::High)
             .title("SQL injection")
             .detail("param user_id")
-            .evidence(Evidence::Raw("GET /?user_id=1".into()))
+            .evidence(Evidence::raw("GET /?user_id=1"))
             .build()
             .expect("finding builder: required fields are set");
 

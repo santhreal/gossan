@@ -26,15 +26,17 @@ impl SubdomainSource for Ask {
         limiter.until_ready().await;
         let resp = client.get(&url).send().await?;
         let max_size = config.max_response_size;
-        let bytes = gossan_core::read_response_limited(resp, max_size).await?;
+        let text = String::from_utf8(gossan_core::read_response_limited(resp, max_size).await?)?;
         let mut seen = std::collections::HashSet::new();
         let domain_lower = domain.to_lowercase();
         
-        let arr: Vec<String> = serde_json::from_slice(&bytes).unwrap_or_default();
-        for item in arr {
-            let candidate = item.trim().trim_start_matches("*.").to_lowercase();
-            if !candidate.contains('*') && crate::is_subdomain_of(&candidate, &domain_lower) {
-                seen.insert(candidate);
+        let re = regex::Regex::new(&format!(r"([a-zA-Z0-9_-]+\\.{})", regex::escape(domain)))?;
+        for cap in re.captures_iter(&text) {
+            if let Some(m) = cap.get(1) {
+                let candidate = m.as_str().to_lowercase();
+                if crate::is_subdomain_of(&candidate, &domain_lower) {
+                    seen.insert(candidate);
+                }
             }
         }
 

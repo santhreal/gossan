@@ -24,10 +24,10 @@
 pub mod seeds;
 
 use std::collections::HashSet;
-use std::sync::Arc;
 
 use async_trait::async_trait;
-use chromiumoxide::{Browser, BrowserConfig};
+use runtime_headless::chromiumoxide::Browser;
+use runtime_headless::{BrowserLaunchOptions, BrowserRuntime};
 use gossan_core::{
     Config, DiscoveredForm, DiscoveredParam, ParamLocation, ParamSource, ScanInput, Scanner,
     Target, WebAssetTarget,
@@ -50,24 +50,12 @@ impl Scanner for CrawlScanner {
     }
 
     async fn run(&self, input: ScanInput, config: &Config) -> anyhow::Result<()> {
-        let (browser, mut handler) = Browser::launch(
-            BrowserConfig::builder()
-                .with_head()
-                .no_sandbox()
-                .build()
-                .map_err(|e| anyhow::anyhow!("config error: {e}"))?,
-        )
+        let runtime = BrowserRuntime::launch(&BrowserLaunchOptions {
+            no_sandbox: true,
+            ..Default::default()
+        })
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to launch browser: {:?}", e))?;
-
-        let browser = Arc::new(browser);
-        let handle = tokio::spawn(async move {
-            while let Some(h) = futures::StreamExt::next(&mut handler).await {
-                if h.is_err() {
-                    break;
-                }
-            }
-        });
+        .map_err(|e| anyhow::anyhow!("Failed to launch browser: {e}"))?;
 
         // Drain the streaming inbound channel — `targets: Vec<Target>`
         // is gone; web assets arrive via `target_rx`.
@@ -84,7 +72,7 @@ impl Scanner for CrawlScanner {
 
         // Limit concurrent browsers if many targets exist, but here we process sequentially
         for asset in web_assets {
-            match crawl_asset(&browser, &asset, config).await {
+            match crawl_asset(runtime.browser(), &asset, config).await {
                 Ok(enriched_targets) => {
                     for target in enriched_targets {
                         input.emit_target(Target::Web(Box::new(target.clone())));
@@ -97,13 +85,12 @@ impl Scanner for CrawlScanner {
             }
         }
 
-        handle.abort();
         Ok(())
     }
 }
 
 async fn crawl_asset(
-    browser: &Arc<Browser>,
+    browser: &Browser,
     seed: &WebAssetTarget,
     config: &Config,
 ) -> anyhow::Result<Vec<WebAssetTarget>> {

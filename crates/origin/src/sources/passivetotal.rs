@@ -108,10 +108,12 @@ pub async fn scan(
                 let limit = config.max_response_size.min(10 * 1024 * 1024);
                 if let Ok(json) = bounded_json::<serde_json::Value>(resp, limit).await {
                     if let Some(subs) = json.get("subdomains").and_then(|v| v.as_array()) {
-                        let resolver = hickory_resolver::TokioAsyncResolver::tokio(
+                        let resolver = hickory_resolver::TokioResolver::builder_with_config(
                             hickory_resolver::config::ResolverConfig::default(),
-                            hickory_resolver::config::ResolverOpts::default(),
-                        );
+                            hickory_resolver::name_server::TokioConnectionProvider::default(),
+                        )
+                        .with_options(hickory_resolver::config::ResolverOpts::default())
+                        .build();
                         for sub_val in subs {
                             if let Some(sub) = sub_val.as_str() {
                                 let fqdn = format!("{}.{}", sub, domain);

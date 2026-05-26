@@ -51,6 +51,8 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
     let base = asset.url.as_str().trim_end_matches('/');
     let mut findings = Vec::new();
 
+    let soft404_base = crate::soft404::establish(client, base).await;
+
     // Find the first auth endpoint that returns something interesting
     // (400/401/422 on bad creds = auth endpoint found; 404 = skip)
     let mut endpoint: Option<(String, bool)> = None; // (url, is_json)
@@ -68,8 +70,16 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
         {
             let s = resp.status().as_u16();
             if matches!(s, 400 | 401 | 403 | 422 | 429 | 200) {
-                endpoint = Some((url, true));
-                break;
+                // If it returns 200/etc., confirm it's not a soft-404 catch-all
+                let bytes = if let Ok(body_bytes) = resp.bytes().await {
+                    body_bytes.to_vec()
+                } else {
+                    Vec::new()
+                };
+                if !crate::soft404::is_likely_404(s, &bytes, soft404_base.as_ref(), false) {
+                    endpoint = Some((url, true));
+                    break;
+                }
             }
         }
 
@@ -83,8 +93,15 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
         {
             let s = resp.status().as_u16();
             if matches!(s, 400 | 401 | 403 | 422 | 200) {
-                endpoint = Some((url, false));
-                break;
+                let bytes = if let Ok(body_bytes) = resp.bytes().await {
+                    body_bytes.to_vec()
+                } else {
+                    Vec::new()
+                };
+                if !crate::soft404::is_likely_404(s, &bytes, soft404_base.as_ref(), false) {
+                    endpoint = Some((url, false));
+                    break;
+                }
             }
         }
     }
