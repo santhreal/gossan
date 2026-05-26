@@ -43,6 +43,7 @@ pub mod net;
 pub mod ratelimit;
 pub mod scanner;
 pub mod target;
+pub mod scanclient_bridge;
 pub mod transport;
 pub mod testkit;
 
@@ -63,7 +64,7 @@ pub use net::connect_tcp;
 pub use ratelimit::{
     build_client, get_with_backoff, read_response_limited, send_with_backoff, HostRateLimiter,
 };
-pub use reqwest;
+pub use scanclient::reqwest;
 pub use scanner::{ScanInput, Scanner};
 pub use target::{
     DiscoveredForm, DiscoveredParam, DiscoverySource, DomainTarget, HostTarget, NetworkTarget,

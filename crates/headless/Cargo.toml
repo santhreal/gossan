@@ -24,7 +24,7 @@ tracing      = { workspace = true }
 tokio        = { workspace = true }
 url          = { workspace = true }
 futures      = { workspace = true }
-chromiumoxide = { version = "0.5", features = ["tokio-runtime"] }
+runtime-headless = { path = "../../../../libs/runtime/headless" }
 secfinding = { workspace = true }
 
 [lints]

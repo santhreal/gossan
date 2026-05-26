@@ -18,17 +18,29 @@
 
 //! Headless browser scanning — screenshot, DOM analysis, SPA detection.
 //!
-//! Uses chromiumoxide to render JavaScript-heavy pages and extract
+//! Uses `runtime-headless` (Chromium CDP) to render JavaScript-heavy pages and extract
 //! security-relevant signals that static HTTP probing cannot see.
 
 use async_trait::async_trait;
-use chromiumoxide::{Browser, BrowserConfig};
 use futures::StreamExt;
 use gossan_core::{Config, ScanInput, Scanner, Target};
+use runtime_headless::chromiumoxide::Browser;
+use runtime_headless::{BrowserLaunchOptions, BrowserRuntime};
 use secfinding::{Evidence, Finding, FindingBuilder, Severity};
 use std::time::Duration;
 /// Headless browser scanner — screenshot, DOM analysis, SPA spider, dynamic endpoint discovery.
 pub struct HeadlessScanner;
+
+/// Launch options shared by the scanner and its tests (via `runtime-headless`).
+#[must_use]
+pub fn browser_launch_options() -> BrowserLaunchOptions {
+    BrowserLaunchOptions {
+        // Preserves pre-migration `BrowserConfig::builder().with_head()` posture.
+        headed: true,
+        no_sandbox: true,
+        ..Default::default()
+    }
+}
 
 fn finding_builder(
     target: &Target,
@@ -76,34 +88,18 @@ impl Scanner for HeadlessScanner {
             return Ok(());
         }
 
-        // Configure browser (headless, sandbox disabled for CI environments)
-        let (browser, mut handler) = Browser::launch(
-            BrowserConfig::builder()
-                .with_head()
-                .no_sandbox()
-                .build()
-                .map_err(|e| anyhow::anyhow!("config error: {e}"))?,
-        )
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to launch browser: {:?}", e))?;
-
-        let browser = std::sync::Arc::new(browser);
-
-        // Maintain the handler connection
-        let handle = tokio::spawn(async move {
-            while let Some(h) = handler.next().await {
-                if h.is_err() {
-                    break;
-                }
-            }
-        });
+        let runtime = std::sync::Arc::new(
+            BrowserRuntime::launch(&browser_launch_options())
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to launch browser: {e}"))?,
+        );
 
         // Parallel execution of all targets using the single browser instance
         let results: Vec<anyhow::Result<(Target, Vec<Finding>)>> = futures::stream::iter(owned)
             .map(|target| {
-                let browser = std::sync::Arc::clone(&browser);
+                let runtime = std::sync::Arc::clone(&runtime);
                 let config = config.clone();
-                async move { analyze_target(&browser, target, &config).await }
+                async move { analyze_target(runtime.browser(), target, &config).await }
             })
             // Browser limit for tabs
             .buffer_unordered(config.concurrency.min(10))
@@ -117,10 +113,7 @@ impl Scanner for HeadlessScanner {
             }
         }
 
-        handle.abort();
-        let _ = handle.await;
-
-        // ... (headless logic remains same for now as it uses chrome)
+        // `runtime` drops here — BrowserRuntime::Drop aborts the CDP handler task.
         Ok(())
     }
 }
@@ -163,7 +156,7 @@ async fn analyze_target(
 
     // Start event listener early to catch everything from the jump
     let mut request_events = page
-        .event_listener::<chromiumoxide::cdp::browser_protocol::network::EventRequestWillBeSent>()
+        .event_listener::<runtime_headless::chromiumoxide::cdp::browser_protocol::network::EventRequestWillBeSent>()
         .await?;
 
     let _ = page.goto(asset.url.as_str()).await?;
@@ -473,23 +466,22 @@ mod tests {
         })));
     }
 
+    #[test]
+    fn browser_launch_routes_through_runtime_headless() {
+        let opts = browser_launch_options();
+        assert!(opts.headed);
+        assert!(opts.no_sandbox);
+        assert_eq!(opts.window_width, BrowserLaunchOptions::default().window_width);
+    }
+
     #[tokio::test]
     #[ignore = "W3-F009: headless Chromium launch >60s; run with cargo test -- --ignored"]
     async fn test_analyze_target_graceful_on_invalid_url() {
-        // Use a headless browser with no sandbox for environment compatibility
-        let (browser, mut handler) = match Browser::launch(
-            BrowserConfig::builder()
-                .no_sandbox()
-                .build()
-                .expect("Failed to build BrowserConfig"),
-        )
-        .await
-        {
-            Ok(b) => b,
-            Err(_) => return, // Skip if browser cannot launch in this environment
+        let runtime = match BrowserRuntime::launch(&browser_launch_options()).await {
+            Ok(r) => r,
+            Err(_) => return,
         };
-
-        let _handler = tokio::spawn(async move { while let Some(_) = handler.next().await {} });
+        let browser = runtime.browser();
 
         let mut target = web_target();
         if let Target::Web(ref mut asset) = target {
@@ -504,19 +496,11 @@ mod tests {
     #[tokio::test]
     #[ignore = "W3-F009: headless Chromium launch >60s; run with cargo test -- --ignored"]
     async fn test_analyze_target_with_incomplete_auth_does_not_panic() {
-        let (browser, mut handler) = match Browser::launch(
-            BrowserConfig::builder()
-                .no_sandbox()
-                .build()
-                .expect("Failed to build BrowserConfig"),
-        )
-        .await
-        {
-            Ok(b) => b,
+        let runtime = match BrowserRuntime::launch(&browser_launch_options()).await {
+            Ok(r) => r,
             Err(_) => return,
         };
-
-        let _handler = tokio::spawn(async move { while let Some(_) = handler.next().await {} });
+        let browser = runtime.browser();
 
         let target = web_target();
         let mut config = Config::default();
