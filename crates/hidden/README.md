@@ -4,7 +4,7 @@
 
 Hidden endpoint and misconfiguration scanner for gossan (CORS, SSRF, JWT, Swagger, cache deception) — part of the Santh security research ecosystem.
 
-Part of [gossan](https://github.com/santhsecurity/gossan).
+Part of [gossan](https://github.com/santhreal/gossan).
 
 ## Usage
 
