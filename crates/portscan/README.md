@@ -2,7 +2,7 @@
 
 # gossan-portscan
 
-[![CI](https://github.com/santhsecurity/gossan/actions/workflows/ci.yml/badge.svg)](https://github.com/santhsecurity/gossan/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Crates.io](https://img.shields.io/crates/v/gossan-portscan)](https://crates.io/crates/gossan-portscan)
+[![CI](https://github.com/santhreal/gossan/actions/workflows/ci.yml/badge.svg)](https://github.com/santhreal/gossan/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Crates.io](https://img.shields.io/crates/v/gossan-portscan)](https://crates.io/crates/gossan-portscan)
 
 A fast, async TCP port scanner with TLS inspection, banner grabbing, and CVE correlation for security reconnaissance.
 

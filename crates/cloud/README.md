@@ -4,7 +4,7 @@
 
 Cloud asset discovery scanner for gossan (S3, GCS, Azure Blob, DigitalOcean Spaces) — part of the Santh security research ecosystem.
 
-Part of [gossan](https://github.com/santhsecurity/gossan).
+Part of [gossan](https://github.com/santhreal/gossan).
 
 ## Usage
 

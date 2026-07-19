@@ -1,7 +1,7 @@
 # gossan-keyhog-lite
 
 **Vendor slice — not for general use.** This crate is a frozen, pure-CPU
-subset of [keyhog-core](https://github.com/santhsecurity/keyhog) +
+subset of [keyhog-core](https://github.com/santhreal/keyhog) +
 keyhog-scanner + keyhog-verifier, vendored inside the Gossan workspace
 so that `gossan-js`, `gossan-scm`, and `gossan-crawl` can detect
 hardcoded secrets without dragging the upstream `wgpu` / `vyre` /
