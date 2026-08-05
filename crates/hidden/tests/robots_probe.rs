@@ -1,4 +1,4 @@
-//! robots.txt probe smoke tests — verifies the probe extracts
+//! robots.txt probe smoke tests, verifies the probe extracts
 //! disallow paths from a real robots response.
 
 use gossan_core::{Target, WebAssetTarget};

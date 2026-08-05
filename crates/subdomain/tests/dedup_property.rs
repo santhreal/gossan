@@ -1,6 +1,6 @@
 //! Property tests for the subdomain dedup helper.
 //!
-//! Per GOSSAN_LEGENDARY A3: arbitrary 10k domains → no panic, all
+//! Per GOSSAN_DEPTH_CONTRACT A3: arbitrary 10k domains → no panic, all
 //! results are valid DNS labels (or rejected upstream by the
 //! normalizer).
 
@@ -21,7 +21,7 @@ proptest! {
         let _ = dedup_domains(domains);
     }
 
-    /// normalize_domain returns either Some(lowercase) or None — never
+    /// normalize_domain returns either Some(lowercase) or None, never
     /// uppercase.
     #[test]
     fn normalize_yields_lowercase_or_none(s in "\\PC{0,128}") {

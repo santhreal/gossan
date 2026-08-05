@@ -113,4 +113,30 @@ mod tests {
     fn severity_default_is_medium() {
         assert_eq!(Severity::default(), Severity::Medium);
     }
+
+    // ------------------------------------------------------------------
+    // Proptest property tests
+    // ------------------------------------------------------------------
+
+    use proptest::prelude::*;
+
+    proptest! {
+        fn redact_never_leaks_full_long_secret(secret in "[a-zA-Z0-9]{12,200}") {
+            let r = redact(&secret);
+            // The redacted form must never equal the original secret.
+            prop_assert_ne!(r.clone(), secret);
+            // It must contain the ellipsis character.
+            prop_assert!(r.contains('…'));
+        }
+
+        fn redact_short_secret_is_all_asterisks(secret in "[a-zA-Z0-9]{1,11}") {
+            let r = redact(&secret);
+            prop_assert!(r.chars().all(|c| c == '*'));
+            prop_assert_eq!(r.chars().count(), secret.chars().count());
+        }
+
+        fn redact_empty_returns_empty(_dummy in Just(())) {
+            prop_assert_eq!(redact(""), "");
+        }
+    }
 }

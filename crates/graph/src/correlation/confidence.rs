@@ -22,9 +22,13 @@ pub const SINGLE_SOURCE_CONFIDENCE: f64 = 0.6;
 /// Panics if `count` is zero (no sources to fuse).
 #[must_use]
 pub fn fuse_confidence(count: usize) -> f64 {
-    assert!(count > 0, "fuse_confidence requires at least one source");
+    if count == 0 {
+        return 0.0;
+    }
     let p = SINGLE_SOURCE_CONFIDENCE;
-    1.0 - (1.0 - p).powi(count as i32)
+    // Cap to i32::MAX to avoid wrap-around in `powi` on overflow.
+    let safe_count = count.min(i32::MAX as usize);
+    1.0 - (1.0 - p).powi(safe_count as i32)
 }
 
 /// Map a fused confidence to a severity boost.
@@ -114,11 +118,43 @@ mod tests {
         );
     }
 
+    /// ADVERSARIAL: `fuse_confidence` used `assert!(count > 0)` which
+    /// panics on zero. A correlation pipeline that receives zero
+    /// observations (empty finding set) must not crash the scanner.
+    #[test]
+    fn fuse_confidence_zero_does_not_panic() {
+        let c = fuse_confidence(0);
+        assert_eq!(c, 0.0, "zero observations => zero confidence");
+    }
+
+    /// ADVERSARIAL: `count as i32` wraps for `usize::MAX`, causing
+    /// `powi` to receive a negative exponent and return `-inf` or NaN.
+    #[test]
+    fn fuse_confidence_huge_count_does_not_overflow() {
+        let c = fuse_confidence(usize::MAX);
+        assert!(
+            c.is_finite(),
+            "fuse_confidence(usize::MAX) must be finite, got {c}"
+        );
+        assert!(
+            (c - 1.0).abs() < 0.001,
+            "with astronomical observations confidence ≈ 1.0"
+        );
+    }
+
     #[test]
     fn fusion_associative_commutative() {
         // Under the simple model, order and grouping don't matter: only N matters.
         let c2 = fuse_confidence(2);
         let c2_again = fuse_confidence(2);
         assert!((c2 - c2_again).abs() < 0.001);
+    }
+
+    proptest! {
+        #[test]
+        fn fuse_confidence_never_panics(count in any::<usize>()) {
+            let _ = fuse_confidence(count);
+            prop_assert!(true);
+        }
     }
 }

@@ -1,4 +1,4 @@
-//! Coverage for `gossan_crawl` pure-CPU parsers — robots.txt + sitemap.xml.
+//! Coverage for `gossan_crawl` pure-CPU parsers (robots.txt + sitemap.xml).
 //!
 //! Boosts crawl test coverage past the audit's 3-test floor and locks
 //! down the parsers' edge-case behaviour (User-agent matching,

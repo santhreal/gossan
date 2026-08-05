@@ -1,4 +1,4 @@
-# Subdomain source metadata — community extensible TOML rules.
+# Subdomain source metadata (community extensible TOML rules).
 # Every source listed here has documented rate limits and key requirements.
 # Rate limits are expressed as "requests per second" (float). Use 0 for very low
 # limits that are handled by per-minute governor quotas in code.

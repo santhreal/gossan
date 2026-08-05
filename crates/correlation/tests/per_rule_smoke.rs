@@ -1,7 +1,7 @@
 //! Per-rule positive + negative smoke tests for every correlation
 //! rule that ships in `CorrelationEngine::new()`.
 //!
-//! These are smoke fixtures, not exhaustive — they verify the engine
+//! These are smoke fixtures, not exhaustive, they verify the engine
 //! invokes every rule and the rule arms don't panic on representative
 //! inputs. Per-rule depth lives in dedicated test files
 //! (`admin_exposed_chain.rs`, `tls_weakness_chain.rs`).

@@ -12,7 +12,7 @@ fn config_default_timeout_matches_timeout_secs() {
 fn module_config_all_enables_every_module() {
     // `ModuleConfig` migrated from a struct-with-fields to
     // `HashMap<String, bool>`. The "enable everything" sentinel is
-    // the special `"all"` key, not a constructor — same semantics,
+    // the special `"all"` key, not a constructor, same semantics,
     // different API.
     let mut modules: ModuleConfig = std::collections::HashMap::new();
     modules.insert("all".into(), true);

@@ -1,4 +1,4 @@
-//! Competitor benchmark — gossan-techstack vs projectdiscovery/httpx
+//! Competitor benchmark, gossan-techstack vs projectdiscovery/httpx
 //! and webanalyze.
 //!
 //! Both peer tools fingerprint the tech stack of an HTTP target.

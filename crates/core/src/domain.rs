@@ -26,10 +26,12 @@
 pub fn normalize_host(target: &str) -> String {
     let mut s = target;
 
-    if let Some(rest) = s.strip_prefix("http://") {
-        s = rest;
-    } else if let Some(rest) = s.strip_prefix("https://") {
-        s = rest;
+    // Scheme strip must be case-insensitive: HTTP:// / Https:// are valid
+    // and must not leave a corrupted "http:" / "https:" host key.
+    if s.len() >= 7 && s.as_bytes()[..7].eq_ignore_ascii_case(b"http://") {
+        s = &s[7..];
+    } else if s.len() >= 8 && s.as_bytes()[..8].eq_ignore_ascii_case(b"https://") {
+        s = &s[8..];
     }
 
     // Strip userinfo (user:pass@host).
@@ -46,6 +48,7 @@ pub fn normalize_host(target: &str) -> String {
             // Bracketed `[v6]:port`  -  strip the port, keep `[v6]`.
             s = &s[..idx];
         } else if s.matches(':').count() == 1
+            && !s[idx + 1..].is_empty()
             && s[idx + 1..].chars().all(|c| c.is_ascii_digit())
         {
             // Exactly one colon ⇒ `host:port`. A *bare* IPv6 literal
@@ -73,8 +76,7 @@ pub fn normalize_host(target: &str) -> String {
     // normalisation (and its adversarial test) is preserved  -  those
     // never contain an `xn--` label anyway, but the explicit guard
     // keeps the IDNA pass strictly scoped to real hostnames.
-    let looks_ip =
-        out.starts_with('[') || out.parse::<std::net::IpAddr>().is_ok();
+    let looks_ip = out.starts_with('[') || out.parse::<std::net::IpAddr>().is_ok();
     if !looks_ip && out.split('.').any(|label| label.starts_with("xn--")) {
         let (decoded, _maybe_err) = idna::domain_to_unicode(&out);
         out = decoded.to_lowercase();
@@ -101,7 +103,12 @@ pub fn registrable(host: &str) -> Option<String> {
 /// IPs. Mirrors the behaviour the `cloud` and `scm` scanners depend on.
 #[must_use]
 pub fn org_label(input: &str) -> String {
-    let host = normalize_host(input);
+    let mut host = normalize_host(input);
+    // Wildcard DNS names (`*.example.com`) are not PSL-matchable with the
+    // leading `*`; strip it so we return `example`, not `*`.
+    if let Some(stripped) = host.strip_prefix("*.") {
+        host = stripped.to_string();
+    }
     if host.is_empty() {
         return host;
     }
@@ -117,10 +124,7 @@ pub fn org_label(input: &str) -> String {
             }
         }
     }
-    host.split('.')
-        .next()
-        .unwrap_or(&host)
-        .to_string()
+    host.split('.').next().unwrap_or(&host).to_string()
 }
 
 /// Coarse "same blast radius" parent  -  the last two labels of the host.
@@ -150,9 +154,14 @@ mod tests {
         // split, etc.)  -  this is a behaviour-preserving consolidation,
         // not a rewrite, so the cases asserted here are the ones that
         // helper actually handled.
-        assert_eq!(normalize_host("https://user@Example.COM:443/a/b"), "example.com");
+        assert_eq!(
+            normalize_host("https://user@Example.COM:443/a/b"),
+            "example.com"
+        );
         assert_eq!(normalize_host("https://Example.COM/a/b"), "example.com");
         assert_eq!(normalize_host("http://example.com."), "example.com");
+        assert_eq!(normalize_host("HTTP://Example.COM/path"), "example.com");
+        assert_eq!(normalize_host("Https://Example.COM:443/x"), "example.com");
         assert_eq!(normalize_host("[::1]:8443"), "[::1]");
         assert_eq!(normalize_host("1.2.3.4:80"), "1.2.3.4");
     }
@@ -176,10 +185,7 @@ mod tests {
     #[test]
     fn normalize_decodes_punycode_in_any_label_position() {
         // Second-label IDN: A-label form must fold to the U-label form.
-        assert_eq!(
-            normalize_host("www.xn--mnchen-3ya.de"),
-            "www.münchen.de"
-        );
+        assert_eq!(normalize_host("www.xn--mnchen-3ya.de"), "www.münchen.de");
         assert_eq!(
             normalize_host("https://API.xn--mnchen-3ya.de:443/x"),
             "api.münchen.de"
@@ -207,6 +213,8 @@ mod tests {
     fn org_label_uses_registrable_first_label() {
         assert_eq!(org_label("example.com"), "example");
         assert_eq!(org_label("shop.example.co.uk"), "example");
+        assert_eq!(org_label("*.example.com"), "example");
+        assert_eq!(org_label("*.shop.example.co.uk"), "example");
         assert_eq!(org_label("https://api.example.com.br:443/x"), "example");
         assert_eq!(org_label("www.agency.gov.au"), "agency");
         assert_eq!(org_label("localhost"), "localhost");
@@ -216,7 +224,10 @@ mod tests {
 
     #[test]
     fn registrable_handles_etld_and_rejects_ip() {
-        assert_eq!(registrable("a.b.example.co.uk").as_deref(), Some("example.co.uk"));
+        assert_eq!(
+            registrable("a.b.example.co.uk").as_deref(),
+            Some("example.co.uk")
+        );
         assert_eq!(registrable("example.com").as_deref(), Some("example.com"));
         assert_eq!(registrable("10.0.0.1"), None);
     }
@@ -255,5 +266,15 @@ mod tests {
         assert_eq!(normalize_host("example.com:443"), "example.com");
         assert_eq!(normalize_host("1.2.3.4:8080"), "1.2.3.4");
         assert_eq!(normalize_host("[::1]:8443"), "[::1]");
+    }
+
+    /// ADVERSARIAL: a trailing colon with no port digits must NOT be
+    /// stripped. Pre-fix `s[idx + 1..].chars().all(...)` returned true
+    /// for an empty string, so `example.com:` was silently mangled to
+    /// `example.com`: a different key that breaks deduplication.
+    #[test]
+    fn normalize_preserves_trailing_colon_without_port() {
+        assert_eq!(normalize_host("example.com:"), "example.com:");
+        assert_eq!(normalize_host("host:"), "host:");
     }
 }

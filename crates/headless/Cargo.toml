@@ -5,8 +5,8 @@ edition.workspace = true
 authors = ["Santh Project <security@santh.dev>"]
 license.workspace = true
 homepage = "https://santh.dev"
-repository = "https://github.com/santhsecurity/gossan"
-description = "Headless Chromium browser engine for executing JavaScript and trapping dynamic XHRs in gossan — part of the security research ecosystem"
+repository = "https://github.com/santhreal/gossan"
+description = "Headless Chromium browser engine for executing JavaScript and trapping dynamic XHRs in gossan, part of the security research ecosystem"
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
@@ -24,8 +24,12 @@ tracing      = { workspace = true }
 tokio        = { workspace = true }
 url          = { workspace = true }
 futures      = { workspace = true }
-runtime-headless = { path = "../../../../libs/runtime/headless" }
+runtime-headless = { workspace = true }
 secfinding = { workspace = true }
+
+[dev-dependencies]
+regex = { workspace = true }
+proptest = { workspace = true }
 
 [lints]
 workspace = true

@@ -9,21 +9,21 @@ async fn main() -> anyhow::Result<()> {
     let scanner = SubdomainScanner;
     let config = Config::default();
 
-    let (target_tx, mut target_rx) = mpsc::unbounded_channel::<Target>();
-    let (live_tx, _live_rx) = mpsc::unbounded_channel();
+    let (target_tx, mut target_rx) = mpsc::channel::<Target>(1024);
+    let (live_tx, _live_rx) = mpsc::channel(1024);
     // Pre-load the inbound channel with the seed Domain target. The
     // pre-streaming `targets: vec![…]` field on ScanInput is gone;
     // seed targets now flow in via the same `target_rx` channel that
     // pipeline-stage targets do. Drop `inbound_tx` so the rx hits EOF
     // once the seed is consumed.
-    let (inbound_tx, inbound_rx) = mpsc::unbounded_channel::<Target>();
+    let (inbound_tx, inbound_rx) = mpsc::channel::<Target>(1024);
     let _ = inbound_tx.send(Target::Domain(DomainTarget {
         domain: "google.com".to_string(),
         source: DiscoverySource::Seed,
     }));
     drop(inbound_tx);
 
-    let resolver = Arc::new(hickory_resolver::TokioAsyncResolver::tokio_from_system_conf()?);
+    let resolver = Arc::new(hickory_resolver::TokioResolver::builder_tokio()?.build());
 
     let input = ScanInput {
         seed: "google.com".to_string(),

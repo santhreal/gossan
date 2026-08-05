@@ -1,28 +1,50 @@
 //! ASN resolution and BGP prefix lookup.
 
-use gossan_core::reqwest::Client;
+use gossan_core::reqwest::{Client, Url};
 
 /// Retrieves all BGP prefixes associated with the ASN of the given IP.
 pub async fn get_prefixes_for_ip(client: &Client, ip: &str) -> anyhow::Result<Vec<String>> {
-    let asn = lookup_asn(client, ip).await?;
-    get_prefixes_for_asn(client, &asn).await
+    get_prefixes_for_ip_with_base(client, ip, "https://api.hackertarget.com").await
 }
 
-/// Parse a HackerTarget ASN lookup response of the form "IP, ASN, Org"
-/// Returns the ASN if present.
-pub(crate) fn parse_asn_response(resp: &str) -> Option<String> {
-    resp.split(',')
-        .nth(1)
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+pub async fn get_prefixes_for_ip_with_base(
+    client: &Client,
+    ip: &str,
+    base: &str,
+) -> anyhow::Result<Vec<String>> {
+    let asn = lookup_asn_with_base(client, ip, base).await?;
+    get_prefixes_for_asn_with_base(client, &asn, base).await
+}
+
+/// Parse a HackerTarget ASN lookup response of the form "IP, ASN, Org".
+/// Returns the ASN only when it matches `AS` followed by digits.
+pub fn parse_asn_response(resp: &str) -> Option<String> {
+    let asn = resp.split(',').nth(1)?.trim();
+    if asn.len() > 2
+        && asn.as_bytes()[..2].eq_ignore_ascii_case(b"AS")
+        && asn[2..].bytes().all(|b| b.is_ascii_digit())
+    {
+        Some(asn.to_ascii_uppercase())
+    } else {
+        None
+    }
 }
 
 /// Look up the ASN for a given IP address via HackerTarget.
-async fn lookup_asn(client: &Client, ip: &str) -> anyhow::Result<String> {
-    let url = format!("https://api.hackertarget.com/aslookup/?q={}", ip);
+pub async fn lookup_asn(client: &Client, ip: &str) -> anyhow::Result<String> {
+    lookup_asn_with_base(client, ip, "https://api.hackertarget.com").await
+}
+
+pub async fn lookup_asn_with_base(
+    client: &Client,
+    ip: &str,
+    base: &str,
+) -> anyhow::Result<String> {
+    let mut url = Url::parse(&format!("{}/aslookup/", base))?;
+    url.query_pairs_mut().append_pair("q", ip);
     let resp = {
-        let r = client.get(&url).send().await?;
-        gossan_core::net::bounded_text(r, 1 * 1024 * 1024).await?
+        let r = client.get(url.as_str()).send().await?;
+        gossan_core::net::bounded_text(r, crate::MAX_HORIZONTAL_TEXT_BYTES).await?
     };
 
     if let Some(asn) = parse_asn_response(&resp) {
@@ -32,7 +54,7 @@ async fn lookup_asn(client: &Client, ip: &str) -> anyhow::Result<String> {
 }
 
 /// Parse a HackerTarget AS/prefix list response where each line is a prefix.
-pub(crate) fn parse_prefixes_response(resp: &str) -> Vec<String> {
+pub fn parse_prefixes_response(resp: &str) -> Vec<String> {
     resp.lines()
         .filter(|l| !l.trim().is_empty())
         .map(|l| l.trim().to_string())
@@ -40,11 +62,20 @@ pub(crate) fn parse_prefixes_response(resp: &str) -> Vec<String> {
 }
 
 /// Retrieve all IPv4 prefixes for a given ASN via HackerTarget.
-async fn get_prefixes_for_asn(client: &Client, asn: &str) -> anyhow::Result<Vec<String>> {
-    let url = format!("https://api.hackertarget.com/aslookup/?q={}", asn);
+pub async fn get_prefixes_for_asn(client: &Client, asn: &str) -> anyhow::Result<Vec<String>> {
+    get_prefixes_for_asn_with_base(client, asn, "https://api.hackertarget.com").await
+}
+
+pub async fn get_prefixes_for_asn_with_base(
+    client: &Client,
+    asn: &str,
+    base: &str,
+) -> anyhow::Result<Vec<String>> {
+    let mut url = Url::parse(&format!("{}/aslookup/", base))?;
+    url.query_pairs_mut().append_pair("q", asn);
     let resp = {
-        let r = client.get(&url).send().await?;
-        gossan_core::net::bounded_text(r, 1 * 1024 * 1024).await?
+        let r = client.get(url.as_str()).send().await?;
+        gossan_core::net::bounded_text(r, crate::MAX_HORIZONTAL_TEXT_BYTES).await?
     };
 
     let prefixes = parse_prefixes_response(&resp);
@@ -60,6 +91,16 @@ mod tests {
     fn parse_asn_handles_valid_and_invalid() {
         let good = "1.2.3.4, AS12345, Some Org";
         assert_eq!(parse_asn_response(good), Some("AS12345".to_string()));
+
+        let lowercase = "1.2.3.4, as99, Org";
+        assert_eq!(parse_asn_response(lowercase), Some("AS99".to_string()));
+
+        // Error payloads with commas must not become fake ASNs.
+        let error_csv = "error code, rate limited, try again later";
+        assert_eq!(parse_asn_response(error_csv), None);
+
+        let bare_number = "1.2.3.4, 12345, Org";
+        assert_eq!(parse_asn_response(bare_number), None);
 
         let bad = "no-asn-here";
         assert_eq!(parse_asn_response(bad), None);

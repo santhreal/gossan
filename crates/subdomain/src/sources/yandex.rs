@@ -23,7 +23,7 @@ impl SubdomainSource for Yandex {
     ) -> anyhow::Result<Vec<Target>> {
         let url = format!("https://yandex.com/search/?text=site:{}&numdoc=50", domain);
         limiter.until_ready().await;
-        let resp = client.get(&url).send().await?;
+        let resp = client.get(&url).send().await?.error_for_status()?;
         let max_size = config.max_response_size;
         let text = String::from_utf8(gossan_core::read_response_limited(resp, max_size).await?)?;
         let mut seen = std::collections::HashSet::new();

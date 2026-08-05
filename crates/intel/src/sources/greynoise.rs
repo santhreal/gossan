@@ -1,4 +1,4 @@
-//! GreyNoise source — IP reputation and internet noise context.
+//! GreyNoise source: IP reputation and internet noise context.
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -28,7 +28,12 @@ impl IntelSource for GreyNoiseSource {
     }
 
     async fn query_ip(&self, ip: &str) -> anyhow::Result<IntelEnrichment> {
-        let mut req = self.client.get(format!("{BASE_URL}/{ip}"));
+        let mut url = url::Url::parse(BASE_URL)?;
+        {
+            let mut segs = url.path_segments_mut().map_err(|_| anyhow::anyhow!("invalid base URL"))?;
+            segs.push(ip);
+        }
+        let mut req = self.client.get(url);
         if let Some(ref key) = self.api_key {
             req = req.header("key", key);
         }

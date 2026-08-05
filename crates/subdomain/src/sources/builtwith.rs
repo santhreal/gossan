@@ -26,23 +26,22 @@ impl SubdomainSource for BuiltWith {
         };
         let url = format!("https://api.builtwith.com/v21/api.json?KEY={key}&LOOKUP={}", domain);
         limiter.until_ready().await;
-        let resp = client.get(&url).send().await?;
+        let resp = client.get(&url).send().await?.error_for_status()?;
         let max_size = config.max_response_size;
         let bytes = gossan_core::read_response_limited(resp, max_size).await?;
         let mut seen = std::collections::HashSet::new();
         let domain_lower = domain.to_lowercase();
 
-        if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-            if let Some(results) = json.get("Results").and_then(|v| v.as_array()) {
-                for result in results {
-                    if let Some(meta) = result.get("Meta") {
-                        if let Some(verticals) = meta.get("Verticals").and_then(|v| v.as_array()) {
-                            for v in verticals {
-                                if let Some(d) = v.get("Domain").and_then(|v| v.as_str()) {
-                                    let candidate = d.trim().to_lowercase();
-                                    if crate::is_subdomain_of(&candidate, &domain_lower) {
-                                        seen.insert(candidate);
-                                    }
+        let json = serde_json::from_slice::<serde_json::Value>(&bytes)?;
+        if let Some(results) = json.get("Results").and_then(|v| v.as_array()) {
+            for result in results {
+                if let Some(meta) = result.get("Meta") {
+                    if let Some(verticals) = meta.get("Verticals").and_then(|v| v.as_array()) {
+                        for v in verticals {
+                            if let Some(d) = v.get("Domain").and_then(|v| v.as_str()) {
+                                let candidate = d.trim().to_lowercase();
+                                if crate::is_subdomain_of(&candidate, &domain_lower) {
+                                    seen.insert(candidate);
                                 }
                             }
                         }

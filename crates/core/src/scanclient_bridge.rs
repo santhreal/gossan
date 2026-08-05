@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::TokioResolver;
 use scanclient::{pool, HttpConfig};
 
 use crate::config::Config;
@@ -26,13 +26,23 @@ pub fn http_config_from_gossan(config: &Config) -> HttpConfig {
         http.custom_headers
             .insert("cookie".to_string(), cookie.clone());
     }
+    if let (Some(user), Some(pass)) = (&config.auth_user, &config.auth_pass) {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        let token = STANDARD.encode(format!("{user}:{pass}"));
+        http.custom_headers
+            .insert("Authorization".to_string(), format!("Basic {token}"));
+    } else if config.auth_user.is_some() ^ config.auth_pass.is_some() {
+        tracing::warn!(
+            "auth_user/auth_pass must both be set for HTTP Basic auth; ignoring partial credentials"
+        );
+    }
     http
 }
 
 /// Build a scanclient-pooled `reqwest::Client` with the supplied redirect policy.
 pub fn build_http_client(
     config: &Config,
-    resolver: Arc<TokioAsyncResolver>,
+    resolver: Arc<TokioResolver>,
     redirect: scanclient::reqwest::redirect::Policy,
 ) -> scanclient::Result<scanclient::reqwest::Client> {
     pool::build_client_with_redirect(&http_config_from_gossan(config), resolver, redirect)

@@ -20,12 +20,13 @@
 
 use std::sync::Arc;
 
-use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::TokioResolver;
 use scanclient::reqwest::{self, redirect::Policy};
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
+use guise_pacing::{BackoffKind, BackoffPolicy};
 
-use crate::config::Config;
+use crate::config::{Config, DEFAULT_MAX_RESPONSE_SIZE, MAX_HTTP_REDIRECTS};
 use crate::ratelimit::HostRateLimiter;
 use crate::scanclient_bridge;
 
@@ -70,11 +71,15 @@ impl ScanClient {
     ///
     /// Returns an error if the underlying HTTP client cannot be constructed
     /// (e.g. invalid proxy URL).
-    pub fn from_config(config: &Config, resolver: Arc<TokioAsyncResolver>) -> anyhow::Result<Self> {
+    pub fn from_config(config: &Config, resolver: Arc<TokioResolver>) -> anyhow::Result<Self> {
         warn_insecure_tls_once(config.insecure_tls);
-        let http = scanclient_bridge::build_http_client(config, resolver, Policy::limited(10))
-            .map_err(|e| anyhow::anyhow!("scanclient pool: {e}"))?;
-        let rate_limiter = Arc::new(HostRateLimiter::new(config.rate_limit.max(1)));
+        let http = scanclient_bridge::build_http_client(
+            config,
+            resolver,
+            Policy::limited(MAX_HTTP_REDIRECTS),
+        )
+        .map_err(|e| anyhow::anyhow!("scanclient pool: {e}"))?;
+        let rate_limiter = Arc::new(HostRateLimiter::from_config(config));
         Ok(Self {
             http,
             rate_limiter,
@@ -88,12 +93,12 @@ impl ScanClient {
     /// header analysis, CORS misconfiguration checks).
     pub fn from_config_no_redirect(
         config: &Config,
-        resolver: Arc<TokioAsyncResolver>,
+        resolver: Arc<TokioResolver>,
     ) -> anyhow::Result<Self> {
         warn_insecure_tls_once(config.insecure_tls);
         let http = scanclient_bridge::build_http_client(config, resolver, Policy::none())
             .map_err(|e| anyhow::anyhow!("scanclient pool: {e}"))?;
-        let rate_limiter = Arc::new(HostRateLimiter::new(config.rate_limit.max(1)));
+        let rate_limiter = Arc::new(HostRateLimiter::from_config(config));
         Ok(Self {
             http,
             rate_limiter,
@@ -104,11 +109,22 @@ impl ScanClient {
     /// Build a minimal `ScanClient` without DNS resolver or config.
     /// Useful for tests and one-off requests.
     #[must_use]
+    #[allow(clippy::expect_used)]
     pub fn default_client() -> Self {
+        let config = Config::default();
+        let resolver = Arc::new(
+            crate::net::build_resolver(&config).expect("default gossan DNS resolver must build"),
+        );
+        let http = scanclient_bridge::build_http_client(
+            &config,
+            resolver,
+            Policy::limited(MAX_HTTP_REDIRECTS),
+        )
+        .expect("default gossan scanclient HTTP pool must build");
         Self {
-            http: reqwest::Client::new(),
+            http,
             rate_limiter: Arc::new(HostRateLimiter::new(50)),
-            max_response_size: 10 * 1024 * 1024,
+            max_response_size: DEFAULT_MAX_RESPONSE_SIZE,
         }
     }
 
@@ -168,13 +184,57 @@ impl ScanClient {
     /// Rate limiting and backoff are still applied.
     pub async fn execute(&self, request: reqwest::Request) -> anyhow::Result<reqwest::Response> {
         let url = request.url().as_str().to_string();
-        let host = request.url().host_str().unwrap_or("").to_string();
-        self.rate_limiter.until_ready(&host).await;
-        let resp = self.http.execute(request).await?;
-        if resp.status().as_u16() == 429 {
-            anyhow::bail!("429 Too Many Requests for {url}");
+        let host = request
+            .url()
+            .host_str()
+            .ok_or_else(|| anyhow::anyhow!("request URL has no host for rate limiting: {url}"))?
+            .to_string();
+        // Prefer try_clone so 429 can be retried with the same backoff policy
+        // as get/post. Streaming-body requests cannot be cloned; those still
+        // get one attempt and an explicit error on 429 (never silent skip).
+        let Some(template) = request.try_clone() else {
+            self.rate_limiter.until_ready(&host).await;
+            let resp = self.http.execute(request).await?;
+            if resp.status().as_u16() == 429 {
+                anyhow::bail!(
+                    "429 Too Many Requests for {url} (request body not cloneable; cannot retry)"
+                );
+            }
+            return Ok(resp);
+        };
+
+        let backoff = BackoffPolicy::gossan_compatible();
+        for attempt in 0..backoff.max_retries() {
+            self.rate_limiter.until_ready(&host).await;
+            let req = template.try_clone().ok_or_else(|| {
+                anyhow::anyhow!("request body not cloneable for retry on {url}")
+            })?;
+            match self.http.execute(req).await {
+                Ok(resp) if resp.status().as_u16() == 429 => {
+                    let delay = backoff.delay(BackoffKind::RateLimited, attempt);
+                    tracing::debug!(
+                        url = %url,
+                        attempt,
+                        delay_ms = delay.as_millis(),
+                        "429 on execute, backing off"
+                    );
+                    tokio::time::sleep(delay).await;
+                }
+                Ok(resp) => return Ok(resp),
+                Err(e) if backoff.should_retry_after(attempt) && e.is_timeout() => {
+                    let delay = backoff.delay(BackoffKind::Timeout, attempt);
+                    tracing::debug!(
+                        url = %url,
+                        attempt,
+                        "timeout on execute, retrying in {}ms",
+                        delay.as_millis()
+                    );
+                    tokio::time::sleep(delay).await;
+                }
+                Err(e) => return Err(e.into()),
+            }
         }
-        Ok(resp)
+        anyhow::bail!("exhausted retries for {url}")
     }
 
     // ── Response handling ────────────────────────────────────────────
@@ -209,34 +269,35 @@ impl ScanClient {
         F: FnMut() -> Fut,
         Fut: std::future::Future<Output = Result<reqwest::Response, reqwest::Error>>,
     {
-        const MAX_RETRIES: u32 = 4;
+        let backoff = BackoffPolicy::gossan_compatible();
 
         let host = url::Url::parse(url)
-            .ok()
-            .and_then(|u| u.host_str().map(String::from))
-            .unwrap_or_default();
+            .map_err(|e| anyhow::anyhow!("invalid URL for rate limiting ({url}): {e}"))?
+            .host_str()
+            .ok_or_else(|| anyhow::anyhow!("URL has no host for rate limiting: {url}"))?
+            .to_string();
 
-        for attempt in 0..MAX_RETRIES {
+        for attempt in 0..backoff.max_retries() {
             self.rate_limiter.until_ready(&host).await;
 
             match send().await {
                 Ok(resp) if resp.status().as_u16() == 429 => {
-                    let delay = std::time::Duration::from_millis(500 * 2u64.pow(attempt));
+                    let delay = backoff.delay(BackoffKind::RateLimited, attempt);
                     tracing::debug!(
                         url,
                         attempt,
                         delay_ms = delay.as_millis(),
-                        "429 — backing off"
+                        "429, backing off"
                     );
                     tokio::time::sleep(delay).await;
                 }
                 Ok(resp) => return Ok(resp),
-                Err(e) if attempt + 1 < MAX_RETRIES && e.is_timeout() => {
-                    let delay = std::time::Duration::from_millis(200 * 2u64.pow(attempt));
+                Err(e) if backoff.should_retry_after(attempt) && e.is_timeout() => {
+                    let delay = backoff.delay(BackoffKind::Timeout, attempt);
                     tracing::debug!(
                         url,
                         attempt,
-                        "timeout — retrying in {}ms",
+                        "timeout, retrying in {}ms",
                         delay.as_millis()
                     );
                     tokio::time::sleep(delay).await;
@@ -260,10 +321,72 @@ impl std::ops::Deref for ScanClient {
 mod tests {
     use super::*;
 
+    fn captured_header<'a>(raw: &'a str, name: &str) -> Option<&'a str> {
+        raw.lines().find_map(|line| {
+            let (key, value) = line.split_once(':')?;
+            key.eq_ignore_ascii_case(name).then(|| value.trim())
+        })
+    }
+
+    async fn capture_scanclient_request(client: &ScanClient) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut buf = [0_u8; 1024];
+            loop {
+                let n = socket.read(&mut buf).await.unwrap();
+                if n == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buf[..n]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            socket
+                .write_all(
+                    b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .await
+                .unwrap();
+            String::from_utf8(request).unwrap()
+        });
+
+        let _ = client.get(&url).await.unwrap();
+        server.await.unwrap()
+    }
+
     #[test]
     fn default_client_builds() {
         let client = ScanClient::default_client();
         assert!(client.max_response_size > 0);
+    }
+
+    #[tokio::test]
+    async fn default_client_uses_scanclient_browser_headers() {
+        let client = ScanClient::default_client();
+        let raw_request = capture_scanclient_request(&client).await;
+        let config = Config::default();
+
+        assert_eq!(
+            captured_header(&raw_request, "User-Agent"),
+            Some(config.user_agent.as_str())
+        );
+        assert_eq!(
+            captured_header(&raw_request, "Accept"),
+            Some(
+                "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
+            )
+        );
+        assert_eq!(
+            captured_header(&raw_request, "Accept-Language"),
+            Some("en-US,en;q=0.9")
+        );
+        assert_eq!(captured_header(&raw_request, "Accept-Encoding"), None);
     }
 
     #[test]

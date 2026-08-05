@@ -1,13 +1,13 @@
 //! ScanInput streaming tests.
 //!
 //! Asserts the streaming contract: drop semantics, large bursts, channel
-//! exhaustion, and Arc<TokioAsyncResolver> sharing.
+//! exhaustion, and Arc<TokioResolver> sharing.
 
 use gossan_core::scanner::ScanInput;
 use gossan_core::target::{DiscoverySource, DomainTarget, Target};
 use gossan_core::{Finding, Severity};
 use hickory_resolver::config::{ResolverConfig, ResolverOpts};
-use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::TokioResolver;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -29,10 +29,17 @@ fn build_input() -> (
     let (target_tx_in, target_rx_in) = mpsc::channel::<Target>(64);
     let (live_tx, live_rx) = mpsc::channel::<Finding>(16384);
     let (target_tx, target_rx) = mpsc::channel::<Target>(64);
-    let resolver = Arc::new(TokioAsyncResolver::tokio(
-        ResolverConfig::default(),
-        ResolverOpts::default(),
-    ));
+    let resolver = {
+        use hickory_resolver::name_server::TokioConnectionProvider;
+        Arc::new(
+            hickory_resolver::TokioResolver::builder_with_config(
+                hickory_resolver::config::ResolverConfig::default(),
+                TokioConnectionProvider::default(),
+            )
+            .with_options(hickory_resolver::config::ResolverOpts::default())
+            .build(),
+        )
+    };
     let input = ScanInput {
         seed: "example.com".into(),
         target_rx: tokio::sync::Mutex::new(target_rx_in),
@@ -87,8 +94,8 @@ async fn emit_does_not_panic_after_live_rx_drop() {
     let (input, _target_tx_in, live_rx, _target_rx) = build_input();
     drop(live_rx);
     // unbounded channel send returns Err when receiver dropped; the helper swallows it
-    input.emit(finding());
-    input.emit(finding());
+    input.emit(finding()).await;
+    input.emit(finding()).await;
 }
 
 #[tokio::test]
@@ -98,7 +105,7 @@ async fn emit_target_does_not_panic_after_target_rx_drop() {
     input.emit_target(Target::Domain(DomainTarget {
         domain: "x.example.com".into(),
         source: DiscoverySource::Seed,
-    }));
+    })).await;
 }
 
 #[tokio::test]
@@ -126,7 +133,7 @@ async fn resolver_arc_clones_safely_across_tasks() {
 async fn live_tx_buffers_unbounded_emits_without_blocking() {
     let (input, _tx, mut live_rx, _target_rx) = build_input();
     for _ in 0..10_000 {
-        input.emit(finding());
+        input.emit(finding()).await;
     }
     let mut received = 0usize;
     while live_rx.try_recv().is_ok() {

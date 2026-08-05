@@ -2,7 +2,7 @@
 
 > Part of the [Santh](https://santh.dev) security research ecosystem.
 
-Discovers the true origin IP of web assets behind CDNs/WAFs — part of the Santh security research ecosystem.
+Discovers the true origin IP of web assets behind CDNs/WAFs (part of the Santh security research ecosystem).
 
 Part of [gossan](https://github.com/santhreal/gossan).
 

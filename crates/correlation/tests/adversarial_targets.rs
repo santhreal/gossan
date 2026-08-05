@@ -1,6 +1,6 @@
 //! Adversarial-target tests for the correlation engine.
 //!
-//! Per GOSSAN_LEGENDARY A12: unicode targets (RTL marks, CJK, emoji)
+//! Per GOSSAN_DEPTH_CONTRACT A12: unicode targets (RTL marks, CJK, emoji)
 //! and path-traversal payloads in finding.title() must not panic the
 //! engine. Asserts the engine runs to completion and never panics.
 

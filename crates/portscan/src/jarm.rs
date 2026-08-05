@@ -5,7 +5,7 @@
 //! cipher choice and ALPN response uniquely fingerprint the TLS implementation.
 //!
 //! Fingerprint format (62 chars, compatible with JARM):
-//!   [30 chars] fuzzy hash — lower 12 bits of each probe's chosen cipher (3 hex each)
+//!   [30 chars] fuzzy hash, lower 12 bits of each probe's chosen cipher (3 hex each)
 //!   [32 chars] SHA-256 of concatenated ALPN/extension strings from all 10 probes
 //!
 //! Known C2 fingerprints: Cobalt Strike, Metasploit, Sliver, Havoc, BruteRatel.
@@ -13,6 +13,8 @@
 
 use sha2::{Digest, Sha256};
 
+use std::collections::HashMap;
+use std::sync::OnceLock;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -334,10 +336,15 @@ pub async fn fingerprint(
     Some(format!("{}{}", cipher_parts, ext_hash))
 }
 
-/// Look up a known framework by JARM fingerprint.
+/// Lazily-built O(1) fingerprint → name index over `KNOWN`.
+static KNOWN_INDEX: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
+
+/// Look up a known framework by JARM fingerprint in O(1).
 ///
-/// Compares the given fingerprint against a database of known
-/// C2 frameworks, malware tools, and common server software.
+/// Compares the given fingerprint against a `HashMap` index built once
+/// from `KNOWN`.  The previous O(n) linear scan was called once per TLS
+/// port per scan; with a 100-port scan over 100 hosts that is 10 000
+/// iterations over the same 13-entry list.
 ///
 /// # Arguments
 ///
@@ -360,7 +367,8 @@ pub async fn fingerprint(
 /// }
 /// ```
 pub fn identify(fp: &str) -> Option<&'static str> {
-    KNOWN.iter().find(|(k, _)| *k == fp).map(|(_, v)| *v)
+    let index = KNOWN_INDEX.get_or_init(|| KNOWN.iter().copied().collect());
+    index.get(fp).copied()
 }
 
 // ── ClientHello builder ───────────────────────────────────────────────────────
@@ -540,7 +548,7 @@ async fn send_probe(
         .ok()?;
 
     let mut buf = vec![0u8; 8192];
-    let n = tokio::time::timeout(Duration::from_millis(1500), stream.read(&mut buf))
+    let n = tokio::time::timeout(timeout, stream.read(&mut buf))
         .await
         .ok()?
         .ok()?;
@@ -638,6 +646,39 @@ mod tests {
     #[test]
     fn identify_returns_none_for_unknown_fingerprint() {
         assert_eq!(identify("0".repeat(62).as_str()), None);
+    }
+
+    /// Invariant: the O(1) HashMap index agrees with the original O(n)
+    /// linear scan over `KNOWN` for every entry.
+    #[test]
+    fn identify_o1_agrees_with_linear_scan_for_all_known_entries() {
+        for (fp, expected_name) in KNOWN {
+            // O(1) path under test
+            let fast = identify(fp);
+            // Reference O(n) path
+            let slow = KNOWN.iter().find(|(k, _)| k == fp).map(|(_, v)| *v);
+            assert_eq!(
+                fast, slow,
+                "O(1) and O(n) identify() disagree for fingerprint {fp}"
+            );
+            assert_eq!(
+                fast,
+                Some(*expected_name),
+                "identify({fp}) should return Some({expected_name})"
+            );
+        }
+    }
+
+    #[test]
+    fn identify_empty_string_returns_none() {
+        assert_eq!(identify(""), None);
+    }
+
+    #[test]
+    fn identify_partial_fingerprint_returns_none() {
+        // A partial match must not fire (keys are exact).
+        let partial = &KNOWN[0].0[..30];
+        assert_eq!(identify(partial), None);
     }
 
     #[test]

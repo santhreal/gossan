@@ -1,6 +1,6 @@
 //! CIDR expansion tests.
 //!
-//! Per GOSSAN_LEGENDARY A17: `10.0.0.0/30` → 4 IPs (RFC says 2
+//! Per GOSSAN_DEPTH_CONTRACT A17: `10.0.0.0/30` → 4 IPs (RFC says 2
 //! usable + network + broadcast = 4 total in /30). The runtime path
 //! in `gossan_horizontal::lib` parses CIDRs via `ipnet::IpNet` and
 //! calls `.hosts()` to enumerate. These tests pin that contract.

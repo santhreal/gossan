@@ -1,4 +1,4 @@
-//! Gossan error types — typed scanner failures with context.
+//! Gossan error types (typed scanner failures with context).
 //!
 //! [`enum@Error`] covers every failure mode in the scanner pipeline:
 //! network I/O, DNS resolution, TLS handshakes, rate limiting,
@@ -20,7 +20,7 @@ use thiserror::Error;
 ///
 /// fn check_error(e: &Error) {
 ///     match e {
-///         Error::Timeout { .. } => eprintln!("timed out — consider increasing --timeout"),
+///         Error::Timeout { .. } => eprintln!("timed out, consider increasing --timeout"),
 ///         Error::RateLimit { provider, .. } => eprintln!("{provider} rate limited us"),
 ///         _ => eprintln!("other error: {e}"),
 ///     }
@@ -135,12 +135,15 @@ impl Error {
     }
 
     /// Convenience: create a network error from a reqwest error.
-    pub fn from_reqwest(target: &str, err: crate::reqwest::Error) -> Self {
+    ///
+    /// `timeout_secs` is the configured client timeout used for the
+    /// request; required so Timeout errors never claim "after 0s".
+    pub fn from_reqwest(target: &str, err: crate::reqwest::Error, timeout_secs: u64) -> Self {
         if err.is_timeout() {
             Self::Timeout {
                 target: target.to_string(),
                 stage: "http".to_string(),
-                timeout_secs: 0,
+                timeout_secs,
             }
         } else if err.is_connect() {
             Self::Network {

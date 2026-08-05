@@ -1,10 +1,10 @@
-//! Verification engine — honest stub.
+//! Verification engine (honest stub).
 //!
 //! Live verification (HTTP probes against AWS / Stripe / GitHub /
 //! etc.) lives in upstream `keyhog-verifier` and pulls in `tokio` +
 //! provider SDKs that we keep out of gossan's build graph. Instead of
 //! claiming to verify, every match comes back as
-//! [`VerificationResult::Unknown`] — gossan-js + gossan-scm callers
+//! [`VerificationResult::Unknown`], gossan-js + gossan-scm callers
 //! treat "unknown" as "do not elevate severity", which is the
 //! conservative default.
 
@@ -26,7 +26,7 @@ pub struct RawMatch {
     pub service: String,
     /// Severity carried from the detector.
     pub severity: Severity,
-    /// Raw credential — keep out of serialized outputs.
+    /// Raw credential (keep out of serialized outputs).
     pub credential: String,
     /// SHA-256 hex hash of the credential. Stable ID for correlation.
     pub credential_hash: String,
@@ -58,9 +58,9 @@ pub enum VerificationResult {
     Unknown,
 }
 
-/// A verified finding — the input `RawMatch` paired with whatever
+/// A verified finding, the input `RawMatch` paired with whatever
 /// outcome we landed on. `metadata` is provider-specific extra context
-/// (account id, key prefix, region) — empty in this slice.
+/// (account id, key prefix, region) (empty in this slice).
 #[derive(Debug, Clone)]
 pub struct VerifiedFinding {
     /// Original credential hash (so callers can correlate against
@@ -83,13 +83,17 @@ pub struct VerifyConfig {
     pub max_concurrent: usize,
 }
 
-/// Verification engine handle. Construction is infallible — the
+/// Verification engine handle. Construction is infallible, the
 /// underlying state is just the detector list passed in. We carry it
 /// around so future feature-gated live verification can read per-
 /// detector verify URLs without changing call sites.
 pub struct VerificationEngine {
-    #[allow(dead_code)]
     detectors_known: usize,
+    /// When set, `verify_all` returns this outcome for every match.
+    /// Used by gossan-secret-verify tests to exercise Live/Dead/Error
+    /// decoration without a live provider network. Production callers
+    /// leave this `None` (always `Unknown` in this lite slice).
+    fixed_result: Option<VerificationResult>,
 }
 
 impl VerificationEngine {
@@ -100,26 +104,48 @@ impl VerificationEngine {
     /// # Errors
     ///
     /// Returns `Err` only if upstream's `Result` shape grows a
-    /// failure mode — at the moment, none is reachable in this slice.
+    /// failure mode (at the moment, none is reachable in this slice).
     pub fn new(
         detectors: &[Detector],
         _config: VerifyConfig,
     ) -> Result<Self, std::convert::Infallible> {
         Ok(Self {
             detectors_known: detectors.len(),
+            fixed_result: None,
         })
+    }
+
+    /// Test / harness constructor: every match is stamped with `result`.
+    #[must_use]
+    pub fn with_fixed_result(result: VerificationResult) -> Self {
+        Self {
+            detectors_known: 0,
+            fixed_result: Some(result),
+        }
+    }
+
+    /// Number of detectors loaded into this engine.
+    ///
+    /// When swapped for a live-verification backend, this count drives
+    /// concurrency planning (one pool slot per detector).
+    #[must_use]
+    pub fn detector_count(&self) -> usize {
+        self.detectors_known
     }
 
     /// Verify a batch. This slice returns one `VerifiedFinding` per
     /// input with `VerificationResult::Unknown`. Async signature is
     /// kept to match upstream so call sites don't need a `cfg`-swap.
-    #[allow(clippy::unused_async)] // shape-compat with upstream — must stay async
+    #[allow(clippy::unused_async)] // shape-compat with upstream, must stay async
     pub async fn verify_all(&self, matches: Vec<RawMatch>) -> Vec<VerifiedFinding> {
         matches
             .into_iter()
             .map(|m| VerifiedFinding {
                 credential_hash: m.credential_hash,
-                verification: VerificationResult::Unknown,
+                verification: self
+                    .fixed_result
+                    .clone()
+                    .unwrap_or(VerificationResult::Unknown),
                 metadata: HashMap::new(),
             })
             .collect()
@@ -162,6 +188,26 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn with_fixed_result_returns_live() {
+        let e = VerificationEngine::with_fixed_result(VerificationResult::Live);
+        let out = e
+            .verify_all(vec![RawMatch {
+                detector_id: "d".into(),
+                detector_name: "D".into(),
+                service: "s".into(),
+                severity: crate::Severity::High,
+                credential: "raw".into(),
+                credential_hash: "h".into(),
+                companions: HashMap::new(),
+                location: MatchLocation::default(),
+                entropy: None,
+                confidence: None,
+            }])
+            .await;
+        assert!(matches!(out[0].verification, VerificationResult::Live));
+    }
+
+    #[tokio::test]
     async fn verify_all_empty_input_returns_empty() {
         let e = VerificationEngine::new(&[], VerifyConfig::default()).expect("ok");
         let out = e.verify_all(Vec::new()).await;

@@ -5,8 +5,8 @@ edition.workspace = true
 authors = ["Santh Project <security@santh.dev>"]
 license.workspace = true
 homepage = "https://santh.dev"
-repository = "https://github.com/santhsecurity/gossan"
-description = "Cloud asset discovery scanner for gossan (S3, GCS, Azure Blob, DigitalOcean Spaces) — part of the security research ecosystem"
+repository = "https://github.com/santhreal/gossan"
+description = "Cloud asset discovery scanner for gossan (S3, GCS, Azure Blob, DigitalOcean Spaces), part of the security research ecosystem"
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
@@ -22,9 +22,9 @@ tracing     = { workspace = true }
 tokio       = { workspace = true }
 reqwest = { workspace = true }
 futures     = { workspace = true }
-psl         = "2"
 secfinding  = { workspace = true }
 serde       = { workspace = true }
+bogon       = { workspace = true }
 toml        = { workspace = true }
 urlencoding = "2.1"
 
@@ -45,7 +45,7 @@ wiremock = "0.6"
 gossan-core = { version = "0.3", path = "../core" }
 proptest = "1.11.0"
 # Used by tests/test_cloud_adversarial_network.rs to construct a
-# resolver — production paths get one via ScanInput.resolver, tests
+# resolver: production paths get one via ScanInput.resolver, tests
 # need to build their own.
 hickory-resolver = { workspace = true }
 

@@ -43,7 +43,7 @@ async fn validator_confirms_known_good_origin() {
     // default client for tests; resolver does not matter because
     // mock servers respond directly.
     let resolver =
-        Arc::new(hickory_resolver::TokioAsyncResolver::tokio_from_system_conf().unwrap());
+        Arc::new(hickory_resolver::TokioResolver::builder_tokio().unwrap().build());
     let client = gossan_core::ScanClient::from_config(&config, resolver).unwrap();
     let validated =
         gossan_origin::validator::validate(vec![candidate], &domain, &config, &client).await;
@@ -87,7 +87,7 @@ async fn validator_rejects_generic_nginx_page() {
     // default client for tests; resolver does not matter because
     // mock servers respond directly.
     let resolver =
-        Arc::new(hickory_resolver::TokioAsyncResolver::tokio_from_system_conf().unwrap());
+        Arc::new(hickory_resolver::TokioResolver::builder_tokio().unwrap().build());
     let client = gossan_core::ScanClient::from_config(&config, resolver).unwrap();
     let validated =
         gossan_origin::validator::validate(vec![candidate], &domain, &config, &client).await;
@@ -97,7 +97,7 @@ async fn validator_rejects_generic_nginx_page() {
 }
 
 #[tokio::test]
-async fn validator_confirms_by_404_divergence() {
+async fn validator_does_not_confirm_by_404_divergence() {
     let cdn = MockServer::start().await;
     let origin = MockServer::start().await;
 
@@ -148,13 +148,13 @@ async fn validator_confirms_by_404_divergence() {
     // default client for tests; resolver does not matter because
     // mock servers respond directly.
     let resolver =
-        Arc::new(hickory_resolver::TokioAsyncResolver::tokio_from_system_conf().unwrap());
+        Arc::new(hickory_resolver::TokioResolver::builder_tokio().unwrap().build());
     let client = gossan_core::ScanClient::from_config(&config, resolver).unwrap();
     let validated =
         gossan_origin::validator::validate(vec![candidate], &domain, &config, &client).await;
 
     assert_eq!(validated.len(), 1);
-    assert_eq!(validated[0].validated, ValidationState::Confirmed);
-    assert_eq!(validated[0].confidence, 95);
-    assert_eq!(validated[0].method, "validated_origin_404");
+    // Differing 404 bodies are evidence of a different server, not the origin.
+    assert_eq!(validated[0].validated, ValidationState::Speculative);
+    assert_ne!(validated[0].method, "validated_origin_404");
 }

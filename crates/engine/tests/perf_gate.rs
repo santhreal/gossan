@@ -1,6 +1,6 @@
 //! Engine TX hot-loop perf gates.
 //!
-//! Per GOSSAN_LEGENDARY Section F:
+//! Per GOSSAN_DEPTH_CONTRACT Section F:
 //!   - 1-thread TX:  ≥ 12 Mpps
 //!   - 8-thread TX:  ≥ 80 Mpps
 //!
@@ -10,7 +10,7 @@
 //! path regresses past the documented baseline.
 //!
 //! Both gates exclude kernel send / NIC contention by using the
-//! counting-stub `PacketEngine` from the bench crate — so a CI
+//! counting-stub `PacketEngine` from the bench crate, so a CI
 //! runner with a slow NIC still passes, but a regression in the
 //! engine's own throughput is caught.
 
@@ -189,7 +189,7 @@ fn engine_tx_hot_loop_1_thread_meets_gate() {
         total_probes, elapsed, mpps
     );
     // CI runners are slower than the 17 Mpps dev baseline; hold the
-    // gate at 5 Mpps — a regression below that means the schedule /
+    // gate at 5 Mpps, a regression below that means the schedule /
     // stamp path got materially worse, not just slower hardware.
     assert!(
         mpps >= 5.0,

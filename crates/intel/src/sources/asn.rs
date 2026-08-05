@@ -1,4 +1,4 @@
-//! ASN source — ipinfo.io (free tier) or MaxMind fallback.
+//! ASN source (ipinfo.io (free tier) or MaxMind fallback).
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -28,11 +28,16 @@ impl IntelSource for AsnSource {
     }
 
     async fn query_ip(&self, ip: &str) -> anyhow::Result<IntelEnrichment> {
-        let mut url = format!("{BASE_URL}/{ip}/json");
-        if let Some(ref token) = self.token {
-            url.push_str(&format!("?token={token}"));
+        let mut url = url::Url::parse(BASE_URL)?;
+        {
+            let mut segs = url.path_segments_mut().map_err(|_| anyhow::anyhow!("invalid base URL"))?;
+            segs.push(ip);
+            segs.push("json");
         }
-        let resp = self.client.get(&url).send().await?.error_for_status()?;
+        if let Some(ref token) = self.token {
+            url.query_pairs_mut().append_pair("token", token);
+        }
+        let resp = self.client.get(url).send().await?.error_for_status()?;
         // ipinfo.io payloads are <16 KiB; 64 KiB is generous headroom
         // while bounding malformed/hostile responses.
         let body: IpInfoResp = gossan_core::net::bounded_json(resp, 64 * 1024).await?;
@@ -58,11 +63,16 @@ impl IntelSource for AsnSource {
 
     async fn query_domain(&self, domain: &str) -> anyhow::Result<IntelEnrichment> {
         // ipinfo.io supports domain lookup as well
-        let mut url = format!("{BASE_URL}/{domain}/json");
-        if let Some(ref token) = self.token {
-            url.push_str(&format!("?token={token}"));
+        let mut url = url::Url::parse(BASE_URL)?;
+        {
+            let mut segs = url.path_segments_mut().map_err(|_| anyhow::anyhow!("invalid base URL"))?;
+            segs.push(domain);
+            segs.push("json");
         }
-        let resp = self.client.get(&url).send().await?.error_for_status()?;
+        if let Some(ref token) = self.token {
+            url.query_pairs_mut().append_pair("token", token);
+        }
+        let resp = self.client.get(url).send().await?.error_for_status()?;
         // ipinfo.io payloads are <16 KiB; 64 KiB is generous headroom
         // while bounding malformed/hostile responses.
         let body: IpInfoResp = gossan_core::net::bounded_json(resp, 64 * 1024).await?;

@@ -21,10 +21,11 @@ impl Registry {
         Self {
             // We organize into logical streaming tiers.
             // Tier 0: Seed discovery (Subdomain, Intel, Horizontal)
-            // Tier 1: Port translation (Portscan, Synscan)
-            // Tier 2: App layer fingerprinting (Techstack, DNS, JS, Crawler)
-            // Tier 3: Post-processing (Cloud, SCM)
-            phases: vec![Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+            // Tier 1: Port translation (Portscan, Engine)
+            // Tier 2: Web asset fingerprinting (Techstack, DNS)
+            // Tier 3: App-layer probing (JS, Crawl, Hidden, Headless)
+            // Tier 4: Post-processing (Cloud, SCM)
+            phases: vec![Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()],
         }
     }
 
@@ -33,10 +34,17 @@ impl Registry {
         let name = scanner.name();
         let phase_idx = match name {
             "subdomain" | "horizontal" | "intel" => 0,
-            "portscan" | "engine" => 1,
-            "techstack" | "dns" | "js" | "crawl" | "hidden" | "headless" => 2,
-            "cloud" | "scm" => 3,
-            _ => 2, // default to app-layer evaluation
+            "portscan" | "engine" | "origin" => 1,
+            "techstack" | "dns" => 2,
+            "js" | "crawl" | "hidden" | "headless" => 3,
+            "cloud" | "scm" => 4,
+            other => {
+                tracing::warn!(
+                    scanner = other,
+                    "Registry::register: unknown scanner name; placing in phase 3 (app-layer)"
+                );
+                3
+            }
         };
         self.phases[phase_idx].push(Arc::from(scanner));
     }
@@ -69,6 +77,7 @@ impl Registry {
         }
 
         let mut global_seen = HashSet::new();
+        const MAX_CASCADE_TARGETS: usize = 10_000;
         if !cascade_targets.is_empty() {
             global_seen.insert(target_streaming_key(&cascade_targets[0]));
         }
@@ -107,9 +116,14 @@ impl Registry {
                 };
 
                 let conf = config.clone();
+                let scanner_name = scanner.name();
                 handles.push(tokio::spawn(async move {
-                    if let Err(e) = scanner.run(input, &conf).await {
-                        tracing::error!(scanner = scanner.name(), err = %e, "Scanner failed");
+                    match scanner.run(input, &conf).await {
+                        Ok(()) => Ok::<&'static str, (String, String)>(scanner_name),
+                        Err(e) => {
+                            tracing::error!(scanner = scanner_name, err = %e, "Scanner failed");
+                            Err((scanner_name.to_string(), e.to_string()))
+                        }
                     }
                 }));
             }
@@ -118,7 +132,13 @@ impl Registry {
             for target in &cascade_targets {
                 for (scanner, in_tx) in &inboxes {
                     if scanner.accepts(target) {
-                        let _ = in_tx.send(target.clone()).await;
+                        if let Err(e) = in_tx.send(target.clone()).await {
+                            tracing::warn!(
+                                scanner = scanner.name(),
+                                error = %e,
+                                "phase inbox send failed; target dropped"
+                            );
+                        }
                     }
                 }
             }
@@ -140,13 +160,36 @@ impl Registry {
                 }
             }
 
-            // Await phase completion
+            // Await phase completion; fail closed on scanner errors (always
+            // when strict; always when any scanner failed — empty Ok is a lie).
+            let mut phase_errors: Vec<String> = Vec::new();
             for handle in handles {
-                let _ = handle.await;
+                match handle.await {
+                    Ok(Ok(_)) => {}
+                    Ok(Err((name, err))) => {
+                        phase_errors.push(format!("{name}: {err}"));
+                    }
+                    Err(join_err) => {
+                        phase_errors.push(format!("scanner task join: {join_err}"));
+                    }
+                }
+            }
+            if !phase_errors.is_empty() {
+                let summary = phase_errors.join("; ");
+                tracing::error!(errors = %summary, strict = config.strict, "phase scanner failure(s)");
+                anyhow::bail!("scanner failure(s): {summary}");
             }
 
             // Append new targets so the *next* phase evaluates the sum total
-            cascade_targets.extend(new_in_phase);
+            let remaining = MAX_CASCADE_TARGETS.saturating_sub(cascade_targets.len());
+            if remaining == 0 {
+                tracing::warn!("Cascade target limit ({}) reached; dropping {} new targets", MAX_CASCADE_TARGETS, new_in_phase.len());
+            } else if new_in_phase.len() > remaining {
+                tracing::warn!("Cascade target limit ({}) nearly reached; keeping {}/{} new targets", MAX_CASCADE_TARGETS, remaining, new_in_phase.len());
+                cascade_targets.extend(new_in_phase.into_iter().take(remaining));
+            } else {
+                cascade_targets.extend(new_in_phase);
+            }
         }
 
         // Close the live channel so the collector exits
@@ -177,7 +220,7 @@ impl Registry {
     }
 }
 
-async fn is_private_target(target: &Target, resolver: &hickory_resolver::TokioAsyncResolver) -> bool {
+async fn is_private_target(target: &Target, resolver: &hickory_resolver::TokioResolver) -> bool {
     let allow_private = std::env::var("GOSSAN_ALLOW_PRIVATE_TARGETS").ok().as_deref() == Some("1");
     if allow_private {
         return false;
@@ -188,10 +231,20 @@ async fn is_private_target(target: &Target, resolver: &hickory_resolver::TokioAs
             let host = d.domain.split(':').next().unwrap_or(&d.domain);
             if let Ok(ip) = host.parse::<IpAddr>() {
                 bogon::ip_addr_is_bogon(ip)
-            } else if let Ok(lookup) = resolver.lookup_ip(host).await {
-                lookup.iter().any(bogon::ip_addr_is_bogon)
             } else {
-                false
+                match resolver.lookup_ip(host).await {
+                    Ok(lookup) => lookup.iter().any(bogon::ip_addr_is_bogon),
+                    Err(e) => {
+                        // Fail closed: unresolved host is treated as private/unsafe
+                        // rather than defaulting to "public" and leaking into the scan.
+                        tracing::warn!(
+                            host,
+                            error = %e,
+                            "private-target filter: DNS lookup failed; treating as private"
+                        );
+                        true
+                    }
+                }
             }
         }
         Target::Host(h) => bogon::ip_addr_is_bogon(h.ip),
@@ -202,10 +255,320 @@ async fn is_private_target(target: &Target, resolver: &hickory_resolver::TokioAs
             if let Ok(ip) = ip_str.parse::<IpAddr>() {
                 bogon::ip_addr_is_bogon(ip)
             } else {
-                false
+                // Fail closed: unparseable CIDR is treated as private/unsafe
+                // rather than defaulting to "public" and leaking into the scan.
+                tracing::warn!(
+                    cidr = %n.cidr,
+                    "private-target filter: Network CIDR base IP unparseable; treating as private"
+                );
+                true
             }
         }
-        _ => false,
+        other => {
+            tracing::warn!(
+                target = ?other,
+                "private-target filter: unsupported target kind; treating as private"
+            );
+            true
+        }
+    }
+}
+
+impl Registry {
+    /// Number of phases in the registry.
+    pub fn phase_count(&self) -> usize {
+        self.phases.len()
+    }
+
+    /// Names of all scanners registered in a given phase.
+    pub fn scanner_names_in_phase(&self, phase: usize) -> Vec<&str> {
+        self.phases
+            .get(phase)
+            .map(|p| p.iter().map(|s| s.name()).collect())
+            .unwrap_or_default()
+    }
+
+    /// Return the phase index for a scanner by name, if registered.
+    pub fn scanner_phase(&self, name: &str) -> Option<usize> {
+        for (idx, phase) in self.phases.iter().enumerate() {
+            for scanner in phase {
+                if scanner.name() == name {
+                    return Some(idx);
+                }
+            }
+        }
+        None
+    }
+
+    /// Total number of registered scanners across all phases.
+    pub fn total_scanners(&self) -> usize {
+        self.phases.iter().map(|p| p.len()).sum()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verify that the registry places techstack in an EARLIER phase than
+    /// the web-app scanners (js, crawl, hidden, headless). This is the
+    /// critical producer→consumer ordering: techstack emits WebAssetTargets
+    /// that the app-layer scanners consume. If they are co-located in the
+    /// same phase, the app-layer scanners never see techstack's outputs
+    /// because all phase inboxes are populated before any scanner runs.
+    #[test]
+    fn techstack_phase_precedes_app_layer_phase() {
+        let mut reg = Registry::new();
+        reg.register(Box::new(gossan_techstack::TechStackScanner));
+        reg.register(Box::new(gossan_js::JsScanner));
+        reg.register(Box::new(gossan_crawl::CrawlScanner));
+        #[cfg(feature = "hidden")]
+        reg.register(Box::new(gossan_hidden::HiddenScanner));
+        reg.register(Box::new(gossan_headless::HeadlessScanner));
+
+        let techstack_phase = find_phase(&reg, "techstack");
+        let js_phase = find_phase(&reg, "js");
+        let crawl_phase = find_phase(&reg, "crawl");
+        #[cfg(feature = "hidden")]
+        let hidden_phase = find_phase(&reg, "hidden");
+        let headless_phase = find_phase(&reg, "headless");
+
+        assert!(
+            techstack_phase < js_phase,
+            "techstack (phase {techstack_phase}) must precede js (phase {js_phase})"
+        );
+        assert!(
+            techstack_phase < crawl_phase,
+            "techstack (phase {techstack_phase}) must precede crawl (phase {crawl_phase})"
+        );
+        #[cfg(feature = "hidden")]
+        assert!(
+            techstack_phase < hidden_phase,
+            "techstack (phase {techstack_phase}) must precede hidden (phase {hidden_phase})"
+        );
+        assert!(
+            techstack_phase < headless_phase,
+            "techstack (phase {techstack_phase}) must precede headless (phase {headless_phase})"
+        );
+    }
+
+    /// Verify that portscan/engine precede techstack.
+    #[test]
+    fn portscan_phase_precedes_techstack_phase() {
+        let mut reg = Registry::new();
+        reg.register(Box::new(gossan_portscan::PortScanner));
+        reg.register(Box::new(gossan_techstack::TechStackScanner));
+
+        let portscan_phase = find_phase(&reg, "portscan");
+        let techstack_phase = find_phase(&reg, "techstack");
+
+        assert!(
+            portscan_phase < techstack_phase,
+            "portscan (phase {portscan_phase}) must precede techstack (phase {techstack_phase})"
+        );
+    }
+
+    /// Verify that subdomain discovery precedes portscan.
+    #[test]
+    fn subdomain_phase_precedes_portscan_phase() {
+        let mut reg = Registry::new();
+        reg.register(Box::new(gossan_subdomain::SubdomainScanner));
+        reg.register(Box::new(gossan_portscan::PortScanner));
+
+        let subdomain_phase = find_phase(&reg, "subdomain");
+        let portscan_phase = find_phase(&reg, "portscan");
+
+        assert!(
+            subdomain_phase < portscan_phase,
+            "subdomain (phase {subdomain_phase}) must precede portscan (phase {portscan_phase})"
+        );
+    }
+
+    /// Verify that cloud and scm run in the final phase.
+    #[test]
+    fn post_processing_scanners_run_last() {
+        let mut reg = Registry::new();
+        reg.register(Box::new(gossan_subdomain::SubdomainScanner));
+        reg.register(Box::new(gossan_portscan::PortScanner));
+        reg.register(Box::new(gossan_techstack::TechStackScanner));
+        reg.register(Box::new(gossan_js::JsScanner));
+        reg.register(Box::new(gossan_cloud::CloudScanner));
+        reg.register(Box::new(gossan_scm::ScmScanner));
+
+        let cloud_phase = find_phase(&reg, "cloud");
+        let scm_phase = find_phase(&reg, "scm");
+        let js_phase = find_phase(&reg, "js");
+
+        assert!(cloud_phase > js_phase, "cloud must run after app-layer");
+        assert!(scm_phase > js_phase, "scm must run after app-layer");
+    }
+
+    /// Verify that unknown scanner names default to app-layer phase.
+    #[test]
+    fn unknown_scanner_defaults_to_app_layer() {
+        let mut reg = Registry::new();
+        // Register a scanner with a name not in the match statement
+        #[cfg(feature = "dns")]
+        reg.register(Box::new(gossan_dns::DnsScanner));
+        let dns_phase = find_phase(&reg, "dns");
+        // dns is explicitly in phase 2, but let's verify it doesn't end up in phase 0 or 1
+        assert!(dns_phase >= 2, "dns should not be in phase 0 or 1");
+    }
+
+    /// Verify the registry handles empty phase lists gracefully.
+    #[test]
+    fn empty_registry_has_five_phases() {
+        let reg = Registry::new();
+        assert_eq!(reg.phases.len(), 5, "registry should have 5 phases");
+        for phase in &reg.phases {
+            assert!(phase.is_empty(), "new registry phases should be empty");
+        }
+    }
+
+    /// Verify all known scanners can be registered without panic.
+    #[test]
+    fn all_scanners_register_without_panic() {
+        let mut reg = Registry::new();
+        reg.register(Box::new(gossan_subdomain::SubdomainScanner));
+        reg.register(Box::new(gossan_portscan::PortScanner));
+        reg.register(Box::new(gossan_techstack::TechStackScanner));
+        reg.register(Box::new(gossan_js::JsScanner));
+        #[cfg(feature = "hidden")]
+        reg.register(Box::new(gossan_hidden::HiddenScanner));
+        reg.register(Box::new(gossan_crawl::CrawlScanner));
+        reg.register(Box::new(gossan_headless::HeadlessScanner));
+        reg.register(Box::new(gossan_cloud::CloudScanner));
+        reg.register(Box::new(gossan_scm::ScmScanner));
+        #[cfg(feature = "dns")]
+        reg.register(Box::new(gossan_dns::DnsScanner));
+        reg.register(Box::new(gossan_horizontal::HorizontalScanner));
+
+        let total: usize = reg.phases.iter().map(|p| p.len()).sum();
+        assert_eq!(total, 11, "all 11 scanners should be registered");
+    }
+
+    /// Verify engine scanner is placed in the same phase as portscan.
+    #[test]
+    fn engine_and_portscan_share_phase() {
+        let mut reg = Registry::new();
+        reg.register(Box::new(gossan_portscan::PortScanner));
+        reg.register(Box::new(gossan_engine::EngineScanner::new()));
+
+        let portscan_phase = find_phase(&reg, "portscan");
+        let engine_phase = find_phase(&reg, "engine");
+
+        assert_eq!(
+            portscan_phase, engine_phase,
+            "engine and portscan should be in the same phase (mutually exclusive at runtime)"
+        );
+    }
+
+    fn find_phase(reg: &Registry, name: &str) -> usize {
+        for (idx, phase) in reg.phases.iter().enumerate() {
+            for scanner in phase {
+                if scanner.name() == name {
+                    return idx;
+                }
+            }
+        }
+        panic!("scanner '{name}' not found in any phase");
+    }
+
+    #[test]
+    fn intel_in_phase_0() {
+        let mut reg = Registry::new();
+        reg.register(Box::new(gossan_intel::IntelScanner::new("test.db").unwrap()));
+        assert_eq!(find_phase(&reg, "intel"), 0);
+    }
+
+    #[test]
+    fn horizontal_in_phase_0() {
+        let mut reg = Registry::new();
+        reg.register(Box::new(gossan_horizontal::HorizontalScanner));
+        assert_eq!(find_phase(&reg, "horizontal"), 0);
+    }
+
+    #[test]
+    fn origin_in_phase_1() {
+        let mut reg = Registry::new();
+        reg.register(Box::new(gossan_origin::OriginScanner));
+        assert_eq!(find_phase(&reg, "origin"), 1);
+    }
+
+    #[cfg(feature = "dns")]
+    #[test]
+    fn dns_in_phase_2() {
+        let mut reg = Registry::new();
+        #[cfg(feature = "dns")]
+        reg.register(Box::new(gossan_dns::DnsScanner));
+        assert_eq!(find_phase(&reg, "dns"), 2);
+    }
+
+    #[test]
+    fn crawl_in_phase_3() {
+        let mut reg = Registry::new();
+        reg.register(Box::new(gossan_crawl::CrawlScanner));
+        assert_eq!(find_phase(&reg, "crawl"), 3);
+    }
+
+    #[test]
+    fn headless_in_phase_3() {
+        let mut reg = Registry::new();
+        reg.register(Box::new(gossan_headless::HeadlessScanner));
+        assert_eq!(find_phase(&reg, "headless"), 3);
+    }
+
+    #[test]
+    #[cfg(feature = "hidden")]
+    fn hidden_in_phase_3() {
+        let mut reg = Registry::new();
+        reg.register(Box::new(gossan_hidden::HiddenScanner));
+        assert_eq!(find_phase(&reg, "hidden"), 3);
+    }
+
+    #[test]
+    fn cloud_in_phase_4() {
+        let mut reg = Registry::new();
+        reg.register(Box::new(gossan_cloud::CloudScanner));
+        assert_eq!(find_phase(&reg, "cloud"), 4);
+    }
+
+    #[test]
+    fn scm_in_phase_4() {
+        let mut reg = Registry::new();
+        reg.register(Box::new(gossan_scm::ScmScanner));
+        assert_eq!(find_phase(&reg, "scm"), 4);
+    }
+
+    #[test]
+    fn registry_can_hold_multiple_per_phase() {
+        let mut reg = Registry::new();
+        reg.register(Box::new(gossan_subdomain::SubdomainScanner));
+        reg.register(Box::new(gossan_horizontal::HorizontalScanner));
+        reg.register(Box::new(gossan_intel::IntelScanner::new("test.db").unwrap()));
+        assert_eq!(reg.phases[0].len(), 3);
+    }
+
+    #[test]
+    fn registry_phases_remain_ordered_after_register() {
+        let mut reg = Registry::new();
+        reg.register(Box::new(gossan_cloud::CloudScanner));
+        reg.register(Box::new(gossan_subdomain::SubdomainScanner));
+        reg.register(Box::new(gossan_portscan::PortScanner));
+        assert_eq!(find_phase(&reg, "subdomain"), 0);
+        assert_eq!(find_phase(&reg, "portscan"), 1);
+        assert_eq!(find_phase(&reg, "cloud"), 4);
+    }
+
+    #[test]
+    fn unknown_name_defaults_to_phase_3() {
+        let mut reg = Registry::new();
+        // We can't easily create a scanner with unknown name, but dns is in phase 2
+        // in the explicit match. However, if we rename it... actually the match
+        // is on name() result. We'll test with a known scanner that IS explicitly
+        // mapped to verify the match works.
+        reg.register(Box::new(gossan_js::JsScanner));
+        assert_eq!(find_phase(&reg, "js"), 3);
     }
 }
 

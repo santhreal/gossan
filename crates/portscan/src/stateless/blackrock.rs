@@ -67,17 +67,17 @@ impl Blackrock {
         let mut r = m / self.a;
         for j in 1..=self.rounds {
             let tmp = if j & 1 == 1 {
-                (l + self.f(j, r)) % self.a
+                l.wrapping_add(self.f(j, r)) % self.a
             } else {
-                (l + self.f(j, r)) % self.b
+                l.wrapping_add(self.f(j, r)) % self.b
             };
             l = r;
             r = tmp;
         }
         if self.rounds & 1 == 1 {
-            self.a * l + r
+            self.a.wrapping_mul(l).wrapping_add(r)
         } else {
-            self.a * r + l
+            self.a.wrapping_mul(r).wrapping_add(l)
         }
     }
 
@@ -115,7 +115,10 @@ mod tests {
         let mut seen = HashSet::with_capacity(range as usize);
         for i in 0..range {
             let v = br.shuffle(i);
-            assert!(v < range, "range={range} seed={seed}: {i}->{v} out of range");
+            assert!(
+                v < range,
+                "range={range} seed={seed}: {i}->{v} out of range"
+            );
             assert!(
                 seen.insert(v),
                 "range={range} seed={seed}: collision at output {v}"
@@ -164,5 +167,46 @@ mod tests {
         assert_eq!(Blackrock::new(0, 9).iter().count(), 0);
         let one: Vec<u64> = Blackrock::new(1, 9).iter().collect();
         assert_eq!(one, vec![0]);
+    }
+
+    #[test]
+    fn large_range_does_not_panic_on_overflow() {
+        // Adversarial: u64::MAX range with wrapping arithmetic must not
+        // panic in debug builds.
+        let br = Blackrock::new(u64::MAX, 0xdeadbeef);
+        let _ = br.shuffle(0);
+        let _ = br.shuffle(u64::MAX - 1);
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn shuffle_never_panics(range in 0u64..u64::MAX, seed in any::<u64>(), index in any::<u64>()) {
+            let br = Blackrock::new(range, seed);
+            let _ = br.shuffle(index);
+        }
+
+        #[test]
+        fn bijection_holds_for_small_ranges(range in 1u64..1000, seed in any::<u64>()) {
+            let br = Blackrock::new(range, seed);
+            let mut seen = std::collections::HashSet::new();
+            for i in 0..range {
+                let v = br.shuffle(i);
+                prop_assert!(v < range, "out of range: {v} >= {range}");
+                prop_assert!(seen.insert(v), "collision at {v}");
+            }
+            prop_assert_eq!(seen.len() as u64, range);
+        }
+
+        #[test]
+        fn iter_yields_exactly_range_elements(range in 0u64..1000, seed in any::<u64>()) {
+            let br = Blackrock::new(range, seed);
+            prop_assert_eq!(br.iter().count() as u64, range);
+        }
     }
 }

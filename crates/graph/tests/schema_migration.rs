@@ -1,4 +1,4 @@
-//! Per GOSSAN_LEGENDARY A18 / B section: schema-migration v(N)→v(N+1)
+//! Per GOSSAN_DEPTH_CONTRACT A18 / B section: schema-migration v(N)→v(N+1)
 //! upgrade path. Existing implementation in
 //! `crates/graph/src/store/sqlite.rs::init_schema` runs `migrate(v,
 //! SCHEMA_VERSION)` whenever the on-disk version is older than the
@@ -35,7 +35,7 @@ fn old_schema_version_triggers_migration_to_current() {
             .expect("insert v0");
     }
 
-    // Reopen — `init_schema` should detect v0 and migrate to current.
+    // Reopen: `init_schema` should detect v0 and migrate to current.
     let _backend = SqliteBackend::open(&path).expect("reopen-after-downgrade");
 
     // Verify the migrated row exists.

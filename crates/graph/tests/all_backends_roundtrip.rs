@@ -1,4 +1,4 @@
-//! All-backend round-trip test (closes A18 of GOSSAN_LEGENDARY).
+//! All-backend round-trip test (closes A18 of GOSSAN_DEPTH_CONTRACT).
 //!
 //! Builds the same node/edge set, persists through every backend
 //! (sqlite / json / graphml / in-memory), reads it back, and asserts

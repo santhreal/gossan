@@ -24,7 +24,7 @@
 //!
 //! # Adding a new cloud provider
 //! 1. Create `src/{provider}.rs` and implement [`CloudProvider`].
-//! 2. Add it to the `providers()` constructor in this file — the only change needed.
+//! 2. Add it to the `providers()` constructor in this file (the only change needed).
 
 pub mod azure;
 pub mod common;
@@ -57,7 +57,19 @@ use secfinding::{Finding, FindingBuilder, Severity};
 
 use common::make_target;
 use provider::CloudProvider;
-/// Cloud storage asset scanner — discovers open buckets and containers.
+
+/// Maximum response body size to read when probing cloud storage endpoints.
+///
+/// Directory listings and object manifests are typically well under 1 MB;
+/// 4 MB gives headroom for densely-packed listings while bounding memory
+/// usage against decompression-bomb or infinite-chunked-transfer attacks.
+pub(crate) const MAX_CLOUD_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
+
+/// Maximum characters included in the `body_excerpt` field of cloud findings.
+/// 300 chars is long enough to capture structural error messages (e.g. AWS XML
+/// error codes) while keeping findings compact in JSON/JSONL output.
+pub(crate) const MAX_BODY_EXCERPT_CHARS: usize = 300;
+/// Cloud storage asset scanner (discovers open buckets and containers).
 pub struct CloudScanner;
 
 pub(crate) fn finding_builder(
@@ -101,7 +113,9 @@ impl Scanner for CloudScanner {
             let mut rx = input.target_rx.lock().await;
             let mut buf = Vec::new();
             let mut ssrf_detected = false;
-            while let Ok(t) = rx.try_recv() {
+            // recv() until the pipeline closes the inbox — try_recv races the
+            // sender and drops asynchronously delivered targets.
+            while let Some(t) = rx.recv().await {
                 // SSRF Protection: Filter out metadata service and private IPs
                 if !is_ssrf_protected_target_obj(&t) {
                     buf.push(t);
@@ -117,7 +131,7 @@ impl Scanner for CloudScanner {
         {
             // Inside-Out Discovery: use credentials to find unmapped
             // assets (S3, EC2, Route53, RDS). Emits directly via
-            // input.emit_target — no separate buffer parameter.
+            // input.emit_target (no separate buffer parameter).
             // Skip if we detected SSRF-protected targets to avoid hanging.
             if !has_ssrf_targets {
                 if let Err(e) = crate::inside_out::discover_aws(&input).await {
@@ -166,7 +180,7 @@ impl Scanner for CloudScanner {
             tracing::info!(
                 org = %org,
                 buckets = candidates.len(),
-                "cloud scan — probing {} providers",
+                "cloud scan, probing {} providers",
                 providers.len()
             );
 
@@ -180,7 +194,10 @@ impl Scanner for CloudScanner {
                             .iter()
                             .map(|p| p.probe(&client, &name, &target))
                             .collect();
-                        let results = futures::future::join_all(futs).await;
+                        let results = futures::stream::iter(futs)
+                            .buffer_unordered(2)
+                            .collect::<Vec<_>>()
+                            .await;
                         let mut f = Vec::new();
                         for (provider, result) in providers.iter().zip(results) {
                             match result {
@@ -202,7 +219,7 @@ impl Scanner for CloudScanner {
                 .await;
 
             for f in findings {
-                input.emit(f);
+                input.emit(f).await;
             }
         }
 
@@ -215,10 +232,10 @@ impl Scanner for CloudScanner {
 /// To add a new provider: implement [`CloudProvider`] and append it here.
 fn providers() -> Vec<Box<dyn CloudProvider>> {
     vec![
-        Box::new(s3::S3Provider),
-        Box::new(gcs::GcsProvider),
-        Box::new(azure::AzureProvider),
-        Box::new(do_spaces::DoSpacesProvider),
+        Box::new(s3::S3Provider::new()),
+        Box::new(gcs::GcsProvider::new()),
+        Box::new(azure::AzureProvider::new()),
+        Box::new(do_spaces::DoSpacesProvider::new()),
     ]
 }
 
@@ -229,29 +246,14 @@ fn providers() -> Vec<Box<dyn CloudProvider>> {
 /// - `"shop.example.co.uk"` → `"example"`
 /// - `"api.example.com.br"` → `"example"`
 /// - `"localhost"`           → `"localhost"`
-fn org_name(input: &str) -> String {
-    // Strip scheme and port
-    let host = input
-        .trim_start_matches("http://")
-        .trim_start_matches("https://")
-        .trim_end_matches('/')
-        .split(':')
-        .next()
-        .unwrap_or(input);
-
-    if host.parse::<std::net::IpAddr>().is_ok() {
-        return host.to_lowercase();
-    }
-
-    // Use PSL to find the registrable domain
-    if let Some(domain) = psl::domain(host.as_bytes()) {
-        // domain.as_bytes() = "example.co.uk" — first label is always the org name
-        let registrable = std::str::from_utf8(domain.as_bytes()).unwrap_or(host);
-        registrable.split('.').next().unwrap_or(host).to_lowercase()
-    } else {
-        // IP address, localhost, or unrecognised TLD — use first label as-is
-        host.split('.').next().unwrap_or(host).to_lowercase()
-    }
+///
+/// Delegates to the workspace-canonical [`gossan_core::domain::org_label`]
+/// rather than re-deriving the PSL org label inline. The canonical
+/// `normalize_host` it builds on also strips userinfo, handles bracketed /
+/// bare IPv6, and folds IDNA, strictly more correct than the previous
+/// scheme/port-only stripping here.
+pub fn org_name(input: &str) -> String {
+    gossan_core::domain::org_label(input)
 }
 
 #[cfg(test)]
@@ -305,6 +307,22 @@ mod ssrf_tests {
         assert!(!is_ssrf_protected_ip(&ip("172.32.0.1"))); // outside 172.16-31
         assert!(!is_ssrf_protected_ip(&ip("169.253.0.1"))); // adjacent /16
         assert!(!is_ssrf_protected_ip(&ip("2606:4700:4700::1111")));
+    }
+
+    #[test]
+    fn bogon_classifier_covers_cgn_and_documentation() {
+        // Carrier-Grade NAT and documentation ranges are covered by the bogon crate
+        // but were missing from the old hand-rolled checker.
+        assert!(is_ssrf_protected_ip(&ip("100.64.0.1")));
+        assert!(is_ssrf_protected_ip(&ip("192.0.2.1")));
+        assert!(is_ssrf_protected_ip(&ip("198.51.100.1")));
+        assert!(is_ssrf_protected_ip(&ip("203.0.113.1")));
+    }
+
+    #[test]
+    fn bogon_classifier_covers_ipv6_ula_and_documentation() {
+        assert!(is_ssrf_protected_ip(&ip("fc00::1")));
+        assert!(is_ssrf_protected_ip(&ip("2001:db8::1")));
     }
 }
 
@@ -393,43 +411,5 @@ fn is_ssrf_protected_target_obj(target: &Target) -> bool {
 
 /// Check if an IP address should be blocked due to SSRF protection.
 fn is_ssrf_protected_ip(ip: &IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(ipv4) => {
-            let octets = ipv4.octets();
-            // AWS metadata service
-            if octets == [169, 254, 169, 254] {
-                return true;
-            }
-            // RFC1918 private ranges
-            if octets[0] == 10 {
-                return true;
-            }
-            if octets[0] == 172 && (16..=31).contains(&octets[1]) {
-                return true;
-            }
-            if octets[0] == 192 && octets[1] == 168 {
-                return true;
-            }
-            // Loopback
-            if octets[0] == 127 {
-                return true;
-            }
-            // Link-local (169.254.0.0/16)
-            if octets[0] == 169 && octets[1] == 254 {
-                return true;
-            }
-        }
-        IpAddr::V6(ipv6) => {
-            // IPv6 loopback
-            if *ipv6 == std::net::Ipv6Addr::LOCALHOST {
-                return true;
-            }
-            // IPv6 link-local (fe80::/10)
-            let segments = ipv6.segments();
-            if (segments[0] & 0xffc0) == 0xfe80 {
-                return true;
-            }
-        }
-    }
-    false
+    bogon::ip_addr_is_bogon(*ip)
 }

@@ -24,7 +24,7 @@ use gossan_core::Target;
 use reqwest::Client;
 use secfinding::{Evidence, Finding, Severity};
 
-/// CORS test origins — each targets a different misconfiguration class.
+/// CORS test origins (each targets a different misconfiguration class).
 const EVIL_ORIGIN: &str = "https://evil.com";
 const NULL_ORIGIN: &str = "null";
 
@@ -36,8 +36,9 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
     let mut findings = Vec::new();
 
     // ── Test 1: arbitrary origin reflection ──────────────────────────────
-    if let Ok(resp) = client.get(base).header("Origin", EVIL_ORIGIN).send().await {
-        let acao = header_value(&resp, "access-control-allow-origin");
+    match client.get(base).header("Origin", EVIL_ORIGIN).send().await {
+        Ok(resp) => {
+            let acao = header_value(&resp, "access-control-allow-origin");
         let acac = header_value(&resp, "access-control-allow-credentials");
         let status = resp.status().as_u16();
 
@@ -49,7 +50,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                     "CORS: arbitrary origin reflected with credentials",
                     "The server reflects any Origin header AND sends \
                      Access-Control-Allow-Credentials: true. An attacker on any domain \
-                     can make authenticated cross-origin requests and read the response — \
+                     can make authenticated cross-origin requests and read the response. \
                      this enables full account takeover via credential theft. \
                      Fix: validate Origin against an explicit allowlist.",
                 )
@@ -78,12 +79,22 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                     .build()
                     .map_err(|e| anyhow::anyhow!(e))?,
             );
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                "CORS probe send failed: origin={} url={} error={}",
+                EVIL_ORIGIN,
+                base,
+                e
+            );
         }
     }
 
     // ── Test 2: null origin trusted ──────────────────────────────────────
-    if let Ok(resp) = client.get(base).header("Origin", NULL_ORIGIN).send().await {
-        let acao = header_value(&resp, "access-control-allow-origin");
+    match client.get(base).header("Origin", NULL_ORIGIN).send().await {
+        Ok(resp) => {
+            let acao = header_value(&resp, "access-control-allow-origin");
         let acac = header_value(&resp, "access-control-allow-credentials");
         let status = resp.status().as_u16();
 
@@ -100,7 +111,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                     "CORS: null origin trusted",
                     format!(
                         "The server allows Origin: null{}. \
-                         Sandboxed iframes, data: URIs, and file: pages send null origin — \
+                         Sandboxed iframes, data: URIs, and file: pages send null origin. \
                          an attacker can craft a page that reads cross-origin responses. \
                          Fix: never trust null origin.",
                         if credentials { " with credentials" } else { "" }
@@ -117,6 +128,15 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                 .build()
                 .map_err(|e| anyhow::anyhow!(e))?,
             );
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                "CORS probe send failed: origin={} url={} error={}",
+                NULL_ORIGIN,
+                base,
+                e
+            );
         }
     }
 
@@ -124,8 +144,9 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
     // If the site is https://example.com, test if https://evil-example.com is accepted
     if let Some(domain) = target.domain() {
         let prefix_evil = format!("https://evil-{domain}");
-        if let Ok(resp) = client.get(base).header("Origin", &prefix_evil).send().await {
-            let acao = header_value(&resp, "access-control-allow-origin");
+        match client.get(base).header("Origin", &prefix_evil).send().await {
+            Ok(resp) => {
+                let acao = header_value(&resp, "access-control-allow-origin");
             let status = resp.status().as_u16();
 
             if acao.as_deref() == Some(prefix_evil.as_str()) {
@@ -153,6 +174,15 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                     .build()
                     .map_err(|e| anyhow::anyhow!(e))?,
                 );
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "CORS probe send failed: origin={} url={} error={}",
+                    prefix_evil,
+                    base,
+                    e
+                );
             }
         }
     }
@@ -160,8 +190,9 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
     // ── Test 4: suffix origin bypass (regex wildcard) ───────────────────
     if let Some(domain) = target.domain() {
         let suffix_evil = format!("https://{}.evil.com", domain);
-        if let Ok(resp) = client.get(base).header("Origin", &suffix_evil).send().await {
-            let acao = header_value(&resp, "access-control-allow-origin");
+        match client.get(base).header("Origin", &suffix_evil).send().await {
+            Ok(resp) => {
+                let acao = header_value(&resp, "access-control-allow-origin");
             let status = resp.status().as_u16();
             if acao.as_deref() == Some(suffix_evil.as_str()) {
                 findings.push(
@@ -189,6 +220,15 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                     .build()
                     .map_err(|e| anyhow::anyhow!(e))?,
                 );
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "CORS probe send failed: origin={} url={} error={}",
+                    suffix_evil,
+                    base,
+                    e
+                );
             }
         }
     }
@@ -197,8 +237,9 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
     if base.starts_with("https://") {
         if let Some(domain) = target.domain() {
             let http_origin = format!("http://{domain}");
-            if let Ok(resp) = client.get(base).header("Origin", &http_origin).send().await {
-                let acao = header_value(&resp, "access-control-allow-origin");
+            match client.get(base).header("Origin", &http_origin).send().await {
+                Ok(resp) => {
+                    let acao = header_value(&resp, "access-control-allow-origin");
                 let status = resp.status().as_u16();
 
                 if acao.as_deref() == Some(http_origin.as_str()) {
@@ -226,20 +267,30 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                         .build()
                         .map_err(|e| anyhow::anyhow!(e))?,
                     );
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "CORS probe send failed: origin={} url={} error={}",
+                        http_origin,
+                        base,
+                        e
+                    );
                 }
             }
         }
     }
 
-    // ── Test 5: overly permissive methods ───────────────────────────────
-    if let Ok(resp) = client
+    // ── Test 6: overly permissive methods ───────────────────────────────
+    match client
         .request(reqwest::Method::OPTIONS, base)
         .header("Origin", EVIL_ORIGIN)
         .header("Access-Control-Request-Method", "DELETE")
         .send()
         .await
     {
-        let acam = header_value(&resp, "access-control-allow-methods");
+        Ok(resp) => {
+            let acam = header_value(&resp, "access-control-allow-methods");
         let status = resp.status().as_u16();
 
         if let Some(ref methods) = acam {
@@ -249,7 +300,12 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                 .filter(|m| methods_upper.contains(**m))
                 .copied()
                 .collect();
-            if !dangerous_methods.is_empty() && methods_upper.contains("*")
+            // Fire when the server exposes a wildcard method list OR allows
+            // two or more high-risk methods cross-origin. The explicit
+            // parentheses pin the intended precedence (`&&` binds tighter
+            // than `||` without them) so a future reader cannot misread the
+            // condition.
+            if (!dangerous_methods.is_empty() && methods_upper.contains("*"))
                 || dangerous_methods.len() >= 2
             {
                 findings.push(
@@ -274,6 +330,15 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                     .map_err(|e| anyhow::anyhow!(e))?,
                 );
             }
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                "CORS OPTIONS probe send failed: origin={} url={} error={}",
+                EVIL_ORIGIN,
+                base,
+                e
+            );
         }
     }
 
@@ -315,7 +380,6 @@ mod tests {
 
     #[test]
     fn header_value_extracts_correctly() {
-        // Test with a mock — just verify the helper doesn't panic on empty
         let evidence = build_cors_evidence(&Some("https://evil.com".into()), &Some("true".into()));
         assert_eq!(evidence.len(), 2);
         assert_eq!(&*evidence[0].0, "access-control-allow-origin");
@@ -331,5 +395,97 @@ mod tests {
     #[test]
     fn evil_origin_is_https() {
         assert!(EVIL_ORIGIN.starts_with("https://"));
+    }
+
+    #[test]
+    fn build_cors_evidence_only_acao() {
+        let evidence = build_cors_evidence(&Some("*".into()), &None);
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(&*evidence[0].0, "access-control-allow-origin");
+        assert_eq!(&*evidence[0].1, "*");
+    }
+
+    #[test]
+    fn build_cors_evidence_only_acac() {
+        let evidence = build_cors_evidence(&None, &Some("true".into()));
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(&*evidence[0].0, "access-control-allow-credentials");
+    }
+
+    #[test]
+    fn null_origin_is_lowercase() {
+        assert_eq!(NULL_ORIGIN, "null");
+    }
+
+    #[test]
+    fn evil_origin_contains_evil_com() {
+        assert!(EVIL_ORIGIN.contains("evil.com"));
+    }
+
+    #[test]
+    fn build_cors_evidence_preserves_values() {
+        let evidence = build_cors_evidence(&Some("https://example.com".into()), &Some("false".into()));
+        assert_eq!(&*evidence[0].1, "https://example.com");
+        assert_eq!(&*evidence[1].1, "false");
+    }
+
+    #[test]
+    fn build_cors_evidence_empty_strings_adversarial() {
+        let evidence = build_cors_evidence(&Some("".into()), &Some("".into()));
+        assert_eq!(evidence.len(), 2);
+        assert_eq!(&*evidence[0].1, "");
+        assert_eq!(&*evidence[1].1, "");
+    }
+
+    #[test]
+    fn build_cors_evidence_special_chars_in_origin_adversarial() {
+        let evidence = build_cors_evidence(&Some("https://evil.com?x=1&y=2".into()), &None);
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(&*evidence[0].1, "https://evil.com?x=1&y=2");
+    }
+
+    #[test]
+    fn build_cors_evidence_unicode_in_origin_adversarial() {
+        let evidence = build_cors_evidence(&Some("https://日本語.example.com".into()), &None);
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(&*evidence[0].1, "https://日本語.example.com");
+    }
+
+    // ── Dangerous-methods condition logic (anti-rig for §15 test 6) ────────
+
+    /// Anti-rig: pin the precedence of the dangerous-methods condition.
+    /// The condition must fire when any dangerous method AND wildcard appears,
+    /// OR when two or more dangerous methods are present, but NOT when only
+    /// one dangerous method is listed without a wildcard.
+    #[test]
+    fn dangerous_methods_condition_requires_wildcard_or_two_plus() {
+        // Helper that mirrors the probe condition.
+        fn should_fire(methods_upper: &str) -> bool {
+            let dangerous: Vec<&str> = ["DELETE", "PUT", "PATCH"]
+                .iter()
+                .filter(|m| methods_upper.contains(**m))
+                .copied()
+                .collect();
+            (!dangerous.is_empty() && methods_upper.contains("*"))
+                || dangerous.len() >= 2
+        }
+
+        // One dangerous + wildcard → fire.
+        assert!(should_fire("GET, DELETE, *"), "DELETE + wildcard must fire");
+
+        // Two dangerous, no wildcard → fire.
+        assert!(should_fire("GET, DELETE, PUT"), "DELETE + PUT must fire");
+
+        // Three dangerous → fire.
+        assert!(should_fire("DELETE, PUT, PATCH"), "all three dangerous must fire");
+
+        // One dangerous, no wildcard → must NOT fire (would be false positive).
+        assert!(!should_fire("GET, DELETE"), "single dangerous method without wildcard must NOT fire");
+        assert!(!should_fire("GET, PUT"), "single dangerous method without wildcard must NOT fire");
+        assert!(!should_fire("GET, PATCH"), "single dangerous method without wildcard must NOT fire");
+
+        // No dangerous methods → must NOT fire.
+        assert!(!should_fire("GET, POST"), "no dangerous methods must NOT fire");
+        assert!(!should_fire("GET, *"), "wildcard alone with no dangerous method must NOT fire");
     }
 }

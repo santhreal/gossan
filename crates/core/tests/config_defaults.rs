@@ -123,11 +123,7 @@ fn config_roundtrips_through_toml() {
     let c = Config::default();
     let toml = toml::to_string(&c).unwrap();
     let back: Config = toml::from_str(&toml).unwrap();
-    assert_eq!(back.rate_limit, c.rate_limit);
-    assert_eq!(back.timeout_secs, c.timeout_secs);
-    assert_eq!(back.concurrency, c.concurrency);
-    assert_eq!(back.host_delay_ms, c.host_delay_ms);
-    assert_eq!(back.max_response_size, c.max_response_size);
+    assert_eq!(back, c, "every Config field must survive TOML roundtrip");
 }
 
 #[test]

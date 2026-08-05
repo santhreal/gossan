@@ -25,10 +25,14 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 gossan-core = { version = "0.3", path = "../core" }
+ipnet = "2.9"
 hickory-resolver = { workspace = true }
 uuid = { workspace = true }
 dashmap = "6"
 clap = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
 
 [build-dependencies]
 tonic-build = "0.12"

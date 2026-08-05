@@ -1,4 +1,4 @@
-//! CSP probe integration tests — fires when the policy is missing
+//! CSP probe integration tests, fires when the policy is missing
 //! or weak; stays silent when the policy is sound.
 
 use gossan_core::{Target, WebAssetTarget};

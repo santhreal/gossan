@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# Gossan — attack-surface discovery CLI
+# Gossan: attack-surface discovery CLI
 #
 # Multi-stage build:
 #   1. `builder` compiles the cli binary against the pinned workspace.
@@ -28,7 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root execution by default. Engine mode (raw SYN scanning) needs
-# CAP_NET_RAW — grant it explicitly via `docker run --cap-add=NET_RAW`
+# CAP_NET_RAW: grant it explicitly via `docker run --cap-add=NET_RAW`
 # rather than running the container as root.
 RUN groupadd -r gossan && useradd -r -g gossan -m -d /home/gossan gossan
 USER gossan

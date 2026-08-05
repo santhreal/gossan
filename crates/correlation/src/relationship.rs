@@ -7,7 +7,7 @@
 //! graphml / memory).
 //!
 //! `Finding` is `Arc<...>`-backed and immutable on its
-//! evidence/tags lists, so we don't mutate findings here — we
+//! evidence/tags lists, so we don't mutate findings here, we
 //! produce graph-side data that lives alongside them.
 
 use gossan_graph::{schema::EdgeType, schema::NodeType, Edge, Node};

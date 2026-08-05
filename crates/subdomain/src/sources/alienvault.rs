@@ -24,13 +24,15 @@ impl SubdomainSource for Alienvault {
         
         let url = format!("https://otx.alienvault.com/api/v1/indicators/domain/{}/passive_dns", domain);
         limiter.until_ready().await;
-        let resp = client.get(&url).send().await?;
+        let resp = client.get(&url).send().await?.error_for_status()?;
         let max_size = config.max_response_size;
         let bytes = gossan_core::read_response_limited(resp, max_size).await?;
         let mut seen = std::collections::HashSet::new();
         let domain_lower = domain.to_lowercase();
-        
-        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
+
+        let json: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| {
+            anyhow::anyhow!("alienvault passive_dns JSON parse failed for {domain}: {e}")
+        })?;
         if let Some(arr) = json.get("passive_dns").and_then(|v| v.as_array()) {
             for item in arr {
                 if let Some(v) = item.get("hostname").and_then(|v| v.as_str()) {

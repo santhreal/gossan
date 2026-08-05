@@ -1,5 +1,5 @@
-//! Repo hygiene test — gitleaks finds zero secrets in the gossan
-//! source tree (per GOSSAN_LEGENDARY G).
+//! Repo hygiene test, gitleaks finds zero secrets in the gossan
+//! source tree (per GOSSAN_DEPTH_CONTRACT G).
 //!
 //! Skips if gitleaks is not installed. Treats *test fixtures* under
 //! `tests/competitor_corpus/known_secrets.txt` as known-fake-secrets
@@ -58,7 +58,7 @@ fn gitleaks_finds_no_secrets_outside_test_fixtures() {
         .unwrap_or(0);
 
     // The competitor_corpus/known_secrets.txt fixture contains 12
-    // intentional fake secrets. We expect gitleaks to flag those —
+    // intentional fake secrets. We expect gitleaks to flag those 
     // anything ABOVE that count means a real secret leaked into the
     // repo. The threshold is intentionally lenient (20) so false
     // positives in vendored test fixtures don't fail this gate.

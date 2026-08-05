@@ -4,7 +4,7 @@ use gossan_core::{ScanInput, Scanner, Finding, Evidence, Severity, make_finding}
 use gossan_core::CancellationToken;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use hickory_resolver::{config::{ResolverConfig, ResolverOpts}, TokioAsyncResolver};
+use hickory_resolver::{config::{ResolverConfig, ResolverOpts}, TokioResolver};
 use async_trait::async_trait;
 use url::Url;
 

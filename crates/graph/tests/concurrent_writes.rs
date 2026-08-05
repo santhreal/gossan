@@ -1,7 +1,7 @@
 //! 8 threads × 1000 nodes each must land in the SQLite store without
 //! data loss or deadlock.
 //!
-//! Per GOSSAN_LEGENDARY A18: prove SQLite WAL + busy_timeout=5000 are
+//! Per GOSSAN_DEPTH_CONTRACT A18: prove SQLite WAL + busy_timeout=5000 are
 //! enough that concurrent writers from gossan-engine + gossan-correlation
 //! don't lose or corrupt rows.
 //!
@@ -9,7 +9,7 @@
 //! file path (Arc<TempDir> keeps the file alive); SQLite WAL handles
 //! the rest. We assert the final node count matches the expected
 //! 8 * 1000 with a small budget for SQLite-replaced rows on PK collisions
-//! (we use unique node IDs so collisions should be zero — assert ==).
+//! (we use unique node IDs so collisions should be zero (assert ==)).
 
 use gossan_graph::store::sqlite::SqliteBackend;
 use gossan_graph::store::GraphBackend;

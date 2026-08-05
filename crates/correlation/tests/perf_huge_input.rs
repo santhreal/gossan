@@ -1,6 +1,6 @@
 //! Correlation engine perf gate.
 //!
-//! Per GOSSAN_LEGENDARY A12: 100k findings → chains computed in <500ms.
+//! Per GOSSAN_DEPTH_CONTRACT A12: 100k findings → chains computed in <500ms.
 
 use gossan_correlation::CorrelationEngine;
 use secfinding::{Finding, Severity};
@@ -37,7 +37,7 @@ fn correlation_runs_under_500ms_on_100k_findings() {
     eprintln!("correlation::run on {N} findings: {elapsed:?}");
     assert!(
         elapsed < MAX,
-        "correlation::run took {elapsed:?} on {N} findings — exceeded {MAX:?} gate"
+        "correlation::run took {elapsed:?} on {N} findings, exceeded {MAX:?} gate"
     );
 }
 

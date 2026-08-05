@@ -32,11 +32,18 @@ impl IntelSource for ShodanSource {
             .api_key
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Shodan requires an API key"))?;
-        let url = format!("{BASE_URL}/shodan/host/{ip}?key={key}");
-        let resp = self.client.get(&url).send().await?.error_for_status()?;
+        let mut url = url::Url::parse(BASE_URL)?;
+        {
+            let mut segs = url.path_segments_mut().map_err(|_| anyhow::anyhow!("invalid base URL"))?;
+            segs.push("shodan");
+            segs.push("host");
+            segs.push(ip);
+        }
+        url.query_pairs_mut().append_pair("key", key);
+        let resp = self.client.get(url).send().await?.error_for_status()?;
         // Shodan host records for busy hosts can carry many ports +
         // banners; 8 MiB bounds the realistic upper case.
-        let body: ShodanResp = gossan_core::net::bounded_json(resp, 8 * 1024 * 1024).await?;
+        let body: ShodanResp = gossan_core::net::bounded_json(resp, super::MAX_INTEL_JSON_BYTES).await?;
 
         let mut enrichment = IntelEnrichment::new("shodan", "ip", ip);
 
@@ -86,11 +93,18 @@ impl IntelSource for ShodanSource {
             .api_key
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Shodan requires an API key"))?;
-        let url = format!("{BASE_URL}/dns/domain/{domain}?key={key}");
-        let resp = self.client.get(&url).send().await?.error_for_status()?;
+        let mut url = url::Url::parse(BASE_URL)?;
+        {
+            let mut segs = url.path_segments_mut().map_err(|_| anyhow::anyhow!("invalid base URL"))?;
+            segs.push("dns");
+            segs.push("domain");
+            segs.push(domain);
+        }
+        url.query_pairs_mut().append_pair("key", key);
+        let resp = self.client.get(url).send().await?.error_for_status()?;
         // DNS records for a popular apex can include thousands of
         // subdomains; cap at 8 MiB to bound the worst case.
-        let body: ShodanDnsResp = gossan_core::net::bounded_json(resp, 8 * 1024 * 1024).await?;
+        let body: ShodanDnsResp = gossan_core::net::bounded_json(resp, super::MAX_INTEL_JSON_BYTES).await?;
 
         let mut enrichment = IntelEnrichment::new("shodan", "domain", domain);
         for sub in body.subdomains.unwrap_or_default() {

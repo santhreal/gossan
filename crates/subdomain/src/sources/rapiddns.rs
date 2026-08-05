@@ -24,7 +24,7 @@ impl SubdomainSource for Rapiddns {
         
         let url = format!("https://rapiddns.io/subdomain/{}?full=1", domain);
         limiter.until_ready().await;
-        let resp = client.get(&url).send().await?;
+        let resp = client.get(&url).send().await?.error_for_status()?;
         let max_size = config.max_response_size;
         let text = String::from_utf8(gossan_core::read_response_limited(resp, max_size).await?)?;
         let mut seen = std::collections::HashSet::new();

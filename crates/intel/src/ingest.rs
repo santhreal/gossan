@@ -5,14 +5,19 @@ use anyhow::Context;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
-/// Bulk dataset ingester — imports Project Sonar, Censys, and crt.sh dumps.
+
+/// Batch size for bulk DB inserts. Large enough to amortise per-transaction
+/// overhead, small enough that a malformed dump never allocates an unbounded
+/// Vec before the first flush.
+const INGEST_BATCH_SIZE: usize = 1_000;
+/// Bulk dataset ingester (imports Project Sonar, Censys, and crt.sh dumps).
 pub struct Ingester;
 
 impl Ingester {
     pub fn ingest_jsonl(db: &IntelDb, path: impl AsRef<Path>) -> anyhow::Result<usize> {
         let file = File::open(path).context("opening jsonl file for ingestion")?;
         let reader = BufReader::new(file);
-        let mut batch = Vec::with_capacity(1000);
+        let mut batch = Vec::with_capacity(INGEST_BATCH_SIZE);
         let mut total = 0;
 
         for line in reader.lines() {
@@ -33,7 +38,7 @@ impl Ingester {
             match serde_json::from_str::<IntelRecord>(trimmed_line) {
                 Ok(record) => {
                     batch.push(record);
-                    if batch.len() >= 1000 {
+                    if batch.len() >= INGEST_BATCH_SIZE {
                         db.insert_batch(&batch)?;
                         total += batch.len();
                         batch.clear();

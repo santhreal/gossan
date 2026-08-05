@@ -5,8 +5,8 @@ edition.workspace = true
 authors = ["Santh Project <security@santh.dev>"]
 license.workspace = true
 homepage = "https://santh.dev"
-repository = "https://github.com/santhsecurity/gossan"
-description = "Authenticated web crawler — form extraction, parameter discovery, link following — part of the security research ecosystem"
+repository = "https://github.com/santhreal/gossan"
+description = "Authenticated web crawler, form extraction, parameter discovery, link following, part of the security research ecosystem"
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
@@ -24,9 +24,14 @@ tracing = "0.1"
 url = "2"
 anyhow = "1"
 tokio = { workspace = true }
-runtime-headless = { path = "../../../../libs/runtime/headless" }
+runtime-headless = { workspace = true }
 gossan-js = { version = "0.3", path = "../js" }
 secfinding = { workspace = true }
+
+[dev-dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+proptest = { workspace = true }
 
 [lints]
 workspace = true

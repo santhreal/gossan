@@ -27,14 +27,14 @@ async fn test_portscan_network_expansion() {
     // returned a struct with `.targets` / `.findings`. Both retired:
     // targets flow in via `target_rx`, results flow out via the two
     // tx channels, and `run` returns `Result<()>`.
-    let (in_tx, in_rx) = tokio::sync::mpsc::unbounded_channel::<Target>();
-    let _ = in_tx.send(Target::Network(NetworkTarget {
+    let (in_tx, in_rx) = tokio::sync::mpsc::channel::<Target>(1024);
+    let _ = in_tx.try_send(Target::Network(NetworkTarget {
         cidr,
         source: DiscoverySource::Seed,
     }));
     drop(in_tx);
-    let (live_tx, _live_rx) = tokio::sync::mpsc::unbounded_channel();
-    let (target_tx, mut target_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (live_tx, _live_rx) = tokio::sync::mpsc::channel(1024);
+    let (target_tx, mut target_rx) = tokio::sync::mpsc::channel(1024);
     let input = ScanInput {
         seed: "example.com".into(),
         target_rx: tokio::sync::Mutex::new(in_rx),

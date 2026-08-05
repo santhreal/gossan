@@ -1,6 +1,6 @@
 # gossan-intel
 
-Global passive intel for Gossan — pulls IP / domain enrichment from
+Global passive intel for Gossan, pulls IP / domain enrichment from
 local bulk datasets and configured external sources without ever
 sending packets to the target.
 
@@ -16,7 +16,7 @@ sending packets to the target.
 Each source is a `dyn IntelSource` and is registered in
 `IntelScanner::from_config` based on which API keys / endpoints are
 present in `Config`. Missing keys are logged at INFO and the source is
-skipped — no scan failure.
+skipped: no scan failure.
 
 ## Output
 

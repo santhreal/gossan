@@ -17,13 +17,13 @@ fn get_test_config() -> Config {
 /// `live_tx: None`, `target_tx: None`, plus a `cancel` field that
 /// no longer exists) was retired during the streaming refactor.
 fn get_test_scan_input(targets: Vec<Target>) -> ScanInput {
-    let (in_tx, in_rx) = tokio::sync::mpsc::unbounded_channel::<Target>();
+    let (in_tx, in_rx) = tokio::sync::mpsc::channel::<Target>(1024);
     for t in targets {
-        let _ = in_tx.send(t);
+        let _ = in_tx.try_send(t);
     }
     drop(in_tx);
-    let (live_tx, _live_rx) = tokio::sync::mpsc::unbounded_channel();
-    let (target_tx, _target_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (live_tx, _live_rx) = tokio::sync::mpsc::channel(1024);
+    let (target_tx, _target_rx) = tokio::sync::mpsc::channel(1024);
     ScanInput {
         seed: "test".to_string(),
         target_rx: tokio::sync::Mutex::new(in_rx),
@@ -35,7 +35,7 @@ fn get_test_scan_input(targets: Vec<Target>) -> ScanInput {
 
 /// Run the scanner against synthetic targets and return everything
 /// it emitted on the live (Finding) channel. `Scanner::run` returns
-/// `Result<()>` now — findings flow through `live_tx`. Tests want
+/// `Result<()>` now, findings flow through `live_tx`. Tests want
 /// `Vec<Finding>` assertions, so this drains the channel after the
 /// scanner returns.
 async fn run_and_collect_findings(
@@ -43,13 +43,13 @@ async fn run_and_collect_findings(
     targets: Vec<Target>,
     config: &gossan_core::Config,
 ) -> Vec<secfinding::Finding> {
-    let (in_tx, in_rx) = tokio::sync::mpsc::unbounded_channel::<Target>();
+    let (in_tx, in_rx) = tokio::sync::mpsc::channel::<Target>(1024);
     for t in targets {
-        let _ = in_tx.send(t);
+        let _ = in_tx.try_send(t);
     }
     drop(in_tx);
-    let (live_tx, mut live_rx) = tokio::sync::mpsc::unbounded_channel();
-    let (target_tx, _target_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (live_tx, mut live_rx) = tokio::sync::mpsc::channel(1024);
+    let (target_tx, _target_rx) = tokio::sync::mpsc::channel(1024);
     let input = ScanInput {
         seed: "test".to_string(),
         target_rx: tokio::sync::Mutex::new(in_rx),
@@ -311,7 +311,7 @@ async fn test_09_timeout_on_slow_apis() {
     let _db = IntelDb::open(&db_path).unwrap();
     let scanner = IntelScanner::new(db_path.to_str().unwrap()).unwrap();
 
-    // The pre-streaming `ScanInput.cancel` field is gone — cancellation
+    // The pre-streaming `ScanInput.cancel` field is gone, cancellation
     // now flows in via dropping the live_tx/target_tx senders, which
     // happens automatically when the channels in `run_and_collect_findings`
     // go out of scope. There's no longer a way to "cancel immediately"

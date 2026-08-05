@@ -16,11 +16,12 @@ use gossan_core::Config;
 
 /// HTTP header definition from TOML with confidence score.
 #[derive(Debug, Clone, Deserialize)]
-struct LeakHeader {
-    name: String,
-    confidence: u8,
-    #[allow(dead_code)]
-    description: String,
+pub struct LeakHeader {
+    pub name: String,
+    pub confidence: u8,
+    /// Human-readable description of what this header leaks.
+    /// Included in the candidate source string for operator visibility.
+    pub description: String,
 }
 
 /// TOML file containing leak header definitions.
@@ -36,7 +37,7 @@ const BUILTIN_LEAK_HEADERS: &str = include_str!("../../rules/leak_headers.toml")
 static LEAK_HEADERS: OnceLock<Vec<LeakHeader>> = OnceLock::new();
 
 /// Initialize and return the built-in leak headers.
-fn builtin_leak_headers() -> &'static Vec<LeakHeader> {
+pub fn builtin_leak_headers() -> &'static Vec<LeakHeader> {
     LEAK_HEADERS.get_or_init(|| {
         match toml::from_str::<LeakHeadersFile>(BUILTIN_LEAK_HEADERS) {
             Ok(file) => file.header,
@@ -66,7 +67,7 @@ fn builtin_leak_headers() -> &'static Vec<LeakHeader> {
 }
 
 /// Get leak headers from TOML configuration.
-fn leak_headers() -> &'static [LeakHeader] {
+pub fn leak_headers() -> &'static [LeakHeader] {
     builtin_leak_headers()
 }
 
@@ -84,19 +85,30 @@ pub async fn scan(
     let mut seen_ips = HashSet::new();
 
     let urls = [format!("https://{}", domain), format!("http://{}", domain)];
-    let limit = config.max_response_size.min(2 * 1024 * 1024).max(1024);
+    let limit = config.max_response_size.min(crate::MAX_ORIGIN_HEADER_BYTES).max(1024);
 
     for url in &urls {
         let response = match client.get(url).await {
             Ok(r) => r,
-            Err(_) => continue,
+            Err(e) => {
+                tracing::warn!(url = %url, error = %e, "http_header request failed");
+                continue;
+            }
         };
 
         for header in leak_headers() {
             if let Some(value) = response.headers().get(&header.name) {
                 let val_str = match value.to_str() {
                     Ok(s) => s.to_string(),
-                    Err(_) => continue,
+                    Err(e) => {
+                        tracing::warn!(
+                            url = %url,
+                            header = %header.name,
+                            error = %e,
+                            "http_header value is not valid UTF-8"
+                        );
+                        continue;
+                    }
                 };
 
                 let cleaned_val = val_str.replace('"', "").replace('\'', "");
@@ -151,7 +163,10 @@ pub async fn scan(
 
                             candidates.push(OriginCandidate::new(
                                 ip,
-                                format!("http_header_leak ({}: {})", header.name, val_str),
+                                format!(
+                                    "http_header_leak ({}: {}. {})",
+                                    header.name, val_str, header.description
+                                ),
                                 confidence,
                             ));
                         }
@@ -161,7 +176,9 @@ pub async fn scan(
         }
 
         // Consume (and cap) the body so the connection can be reused.
-        let _ = bounded_text(response, limit).await;
+        if let Err(e) = bounded_text(response, limit).await {
+            tracing::debug!(error = %e, "http_header body drain failed after header parse");
+        }
     }
 
     Ok(candidates)

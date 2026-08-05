@@ -11,8 +11,12 @@ pub fn make_target(seed: &str) -> Target {
 }
 
 /// Returns `true` if `body` looks like an S3/GCS/Spaces XML directory listing.
+///
+/// Only the `<ListBucketResult` root element is checked; a bare `<Contents>`
+/// substring appears in unrelated XML APIs and HTML pages, so matching it
+/// would produce false-positive Critical findings.
 pub fn is_xml_listing(body: &str) -> bool {
-    body.contains("<ListBucketResult") || body.contains("<Contents>")
+    body.contains("<ListBucketResult")
 }
 
 #[cfg(test)]
@@ -30,7 +34,9 @@ mod tests {
         assert!(is_xml_listing(
             "<ListBucketResult><Contents>file</Contents></ListBucketResult>"
         ));
-        assert!(is_xml_listing("<Contents>file</Contents>"));
+        // A bare <Contents> tag is NOT sufficient, unrelated XML APIs and
+        // HTML pages can contain it, causing false-positive Critical findings.
+        assert!(!is_xml_listing("<Contents>file</Contents>"));
         assert!(!is_xml_listing("<html>not a bucket</html>"));
     }
 }

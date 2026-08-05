@@ -314,17 +314,25 @@ fn as_target_only_resolves_real_absolute_hosts() {
         line: 1,
     };
 
-    // Absolute https → Domain with the EXACT host.
+    // Absolute https → Web preserving scheme/port/path.
     match ep("https://api.evil-cdn.com/v1/x").as_target() {
-        Some(Target::Domain(d)) => assert_eq!(d.domain, "api.evil-cdn.com"),
-        other => panic!("expected Domain(api.evil-cdn.com), got {other:?}"),
-    }
-    // Absolute http with IP literal → Host with the parsed IP.
-    match ep("http://10.0.0.5/internal").as_target() {
-        Some(Target::Host(h)) => {
-            assert_eq!(h.ip.to_string(), "10.0.0.5");
+        Some(Target::Web(w)) => {
+            assert_eq!(w.url.as_str(), "https://api.evil-cdn.com/v1/x");
+            assert_eq!(w.service.host.domain.as_deref(), Some("api.evil-cdn.com"));
+            assert_eq!(w.service.port, 443);
+            assert!(w.service.tls);
         }
-        other => panic!("expected Host(10.0.0.5), got {other:?}"),
+        other => panic!("expected Web(api.evil-cdn.com), got {other:?}"),
+    }
+    // Absolute http with IP literal → Web with IP host + port 80.
+    match ep("http://10.0.0.5/internal").as_target() {
+        Some(Target::Web(w)) => {
+            assert_eq!(w.url.as_str(), "http://10.0.0.5/internal");
+            assert_eq!(w.service.host.ip.to_string(), "10.0.0.5");
+            assert_eq!(w.service.port, 80);
+            assert!(!w.service.tls);
+        }
+        other => panic!("expected Web(10.0.0.5), got {other:?}"),
     }
     // Relative path is NOT a pivot target.
     assert!(ep("/api/users").as_target().is_none());

@@ -1,6 +1,6 @@
 [Unit]
 Description=Gossan Fleet Worker (distributed scan executor)
-Documentation=https://github.com/santhsecurity/gossan
+Documentation=https://github.com/santhreal/gossan
 After=network-online.target
 Wants=network-online.target
 

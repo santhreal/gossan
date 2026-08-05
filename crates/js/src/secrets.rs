@@ -1,6 +1,6 @@
 //! KeyHog-powered secret detection in JavaScript source code.
 //!
-//! Integrates the legendary `keyhog-scanner` engine to identify hardcoded
+//! Integrates the full `keyhog-scanner` engine to identify hardcoded
 //! secrets using hundreds of high-confidence patterns, SIMD pre-filtering,
 //! and ML-based scoring.
 
@@ -25,10 +25,24 @@ pub(crate) fn store_raw_secret(hash: &str, secret: &str) {
     }
 }
 
+/// Peek a raw credential without consuming it. Prefer this when multiple
+/// findings may share one hash and all need verification in one batch.
+pub fn get_raw_secret(hash: &str) -> Option<String> {
+    RAW_STORE
+        .get()
+        .and_then(|map| map.read().ok().and_then(|r| r.get(hash).cloned()))
+}
+
+/// Recover (and consume) a raw credential by hash.
 pub fn take_raw_secret(hash: &str) -> Option<String> {
     RAW_STORE
         .get()
         .and_then(|map| map.write().ok().and_then(|mut w| w.remove(hash)))
+}
+
+/// Drop a raw credential after a verification batch finishes.
+pub fn clear_raw_secret(hash: &str) {
+    let _ = take_raw_secret(hash);
 }
 
 /// Initialize the KeyHog scanner by loading and compiling all detectors.
@@ -37,52 +51,28 @@ pub fn take_raw_secret(hash: &str) -> Option<String> {
 /// the curated corpus baked into the published `gossan-keyhog-lite`
 /// crate. This guarantees a working scanner under `cargo install`
 /// without depending on any sibling-checkout filesystem path.
-fn get_scanner() -> Option<&'static CompiledScanner> {
+///
+/// Fail closed: empty corpus or compile failure panics (same contract as
+/// `gossan_scm::git_scanner::get_scanner`). Never return a path that makes
+/// `scan()` look like a successful empty result.
+fn get_scanner() -> &'static CompiledScanner {
     KEYHOG_SCANNER.get_or_init(|| {
-        let empty_fallback = || -> CompiledScanner {
-            // Compile with zero detectors — a no-op scanner that matches nothing.
-            // This compile call with an empty vec genuinely cannot fail,
-            // but we log defensively if it somehow does.
-            match CompiledScanner::compile(Vec::new()) {
-                Ok(s) => s,
-                Err(e) => {
-                    tracing::error!("failed to compile empty keyhog scanner: {e}");
-                    CompiledScanner::compile(Vec::new()).unwrap_or_else(|e2| {
-                        tracing::error!(
-                            "keyhog scanner cannot compile even with zero detectors: {e2}"
-                        );
-                        std::process::exit(1);
-                    })
-                }
-            }
-        };
-
         let detectors = gossan_keyhog_lite::embedded_detectors();
-        if detectors.is_empty() {
-            tracing::warn!(
-                "embedded KeyHog detector corpus is empty; secret detection will be skipped"
-            );
-            return empty_fallback();
-        }
-
-        match CompiledScanner::compile(detectors) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!("failed to compile KeyHog scanner: {e}");
-                empty_fallback()
-            }
-        }
-    });
-    KEYHOG_SCANNER.get()
+        assert!(
+            !detectors.is_empty(),
+            "embedded KeyHog detector corpus is empty; refusing to disable JS secret detection"
+        );
+        CompiledScanner::compile(detectors).unwrap_or_else(|e| {
+            panic!("failed to compile embedded KeyHog detector corpus: {e}")
+        })
+    })
 }
 
 use sha2::{Digest, Sha256};
 
 /// Scan JS source for hardcoded secrets using the KeyHog engine.
 pub fn scan(js_url: &str, body: &str, target: &Target) -> Vec<Finding> {
-    let Some(scanner) = get_scanner() else {
-        return Vec::new();
-    };
+    let scanner = get_scanner();
 
     let mut findings = Vec::new();
 
@@ -128,7 +118,7 @@ pub fn scan(js_url: &str, body: &str, target: &Target) -> Vec<Finding> {
             .tag("keyhog")
             .tag(format!("det:{}", m.detector_id))
             .tag(format!("hash:{}", hash))
-            // raw credential intentionally NOT stored in tags — would leak secrets
+            // raw credential intentionally NOT stored in tags, would leak secrets
             // into reports, logs, and downstream systems. Use hash tag for correlation.
             .tag(m.service.to_string())
             .kind(secfinding::FindingKind::SecretLeak);
@@ -148,5 +138,89 @@ fn map_severity(s: gossan_keyhog_lite::Severity) -> Severity {
         gossan_keyhog_lite::Severity::Medium => Severity::Medium,
         gossan_keyhog_lite::Severity::High => Severity::High,
         gossan_keyhog_lite::Severity::Critical => Severity::Critical,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gossan_core::{HostTarget, Target};
+
+    fn dummy_target() -> Target {
+        Target::Host(HostTarget {
+            ip: "127.0.0.1".parse().unwrap(),
+            domain: Some("example.com".into()),
+        })
+    }
+
+    #[test]
+    fn get_scanner_compiles_embedded_corpus() {
+        // Regression: `get_scanner` used to return None / empty-success on
+        // empty corpus or compile failure. It must return a compiled
+        // non-empty scanner (fail closed), matching scm get_scanner.
+        let scanner = get_scanner();
+        assert!(
+            !scanner.is_empty(),
+            "embedded KeyHog scanner must expose at least one detector"
+        );
+    }
+
+    #[test]
+    fn scan_empty_body_returns_empty() {
+        let target = dummy_target();
+        let findings = scan("https://example.com/app.js", "", &target);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn scan_very_long_body_does_not_panic() {
+        let target = dummy_target();
+        let body = "x".repeat(1_000_000);
+        let findings = scan("https://example.com/app.js", &body, &target);
+        // Should return without panicking; exact count depends on KeyHog corpus.
+        let _ = findings.len();
+    }
+
+    #[test]
+    fn scan_multiline_body_does_not_panic() {
+        let target = dummy_target();
+        let body = "\n".repeat(100_000);
+        let findings = scan("https://example.com/app.js", &body, &target);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn get_raw_secret_does_not_consume() {
+        store_raw_secret("peek-hash", "super-secret");
+        assert_eq!(get_raw_secret("peek-hash").as_deref(), Some("super-secret"));
+        assert_eq!(get_raw_secret("peek-hash").as_deref(), Some("super-secret"));
+        clear_raw_secret("peek-hash");
+        assert_eq!(get_raw_secret("peek-hash"), None);
+    }
+
+    // ── proptest property tests ───────────────────────────────────────────
+
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn scan_never_panics(body in "\\PC{0,4096}") {
+            let target = dummy_target();
+            let _ = scan("https://example.com/app.js", &body, &target);
+        }
+
+        #[test]
+        fn scan_never_panics_on_arbitrary_url(js_url in "\\PC{0,256}", body in "\\PC{0,4096}") {
+            let target = dummy_target();
+            let _ = scan(&js_url, &body, &target);
+        }
+
+        #[test]
+        fn store_and_take_raw_secret_roundtrips(secret in "\\PC{1,128}") {
+            let hash = format!("hash_{}", secret.len());
+            store_raw_secret(&hash, &secret);
+            let taken = take_raw_secret(&hash);
+            prop_assert_eq!(taken, Some(secret));
+        }
     }
 }

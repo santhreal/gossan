@@ -16,7 +16,7 @@
     clippy::missing_errors_doc
 )]
 
-//! Intelligence scanner — online enrichment + offline bulk datasets.
+//! Intelligence scanner (online enrichment + offline bulk datasets).
 //!
 //! # Sources
 //! - GreyNoise
@@ -43,6 +43,11 @@ pub mod ingest;
 pub mod query;
 pub mod ratelimit;
 pub mod sources;
+
+#[cfg(test)]
+mod edge_tests;
+#[cfg(test)]
+mod url_tests;
 
 use cache::IntelCache;
 use sources::IntelSource;
@@ -179,27 +184,36 @@ impl IntelScanner {
             let db = Arc::clone(db);
             let target = target.clone();
             let live_tx = input.live_tx.clone();
-            let count = tokio::task::spawn_blocking(move || {
+            let count = tokio::task::spawn_blocking(move || -> anyhow::Result<usize> {
                 let mut count = 0usize;
                 let records_by_ip = if let Some(ip_addr) = target.ip() {
-                    db.query_by_ip(&ip_addr.to_string()).unwrap_or_default()
+                    db.query_by_ip(&ip_addr.to_string())?
                 } else {
                     vec![]
                 };
                 let records_by_host = if let Some(host) = target.domain() {
-                    db.query_by_host(host).unwrap_or_default()
+                    db.query_by_host(host)?
                 } else {
                     vec![]
                 };
                 for r in records_by_ip.iter().chain(records_by_host.iter()) {
                     if let Some(finding) = query::record_to_finding(r) {
-                        let _ = live_tx.send(finding);
-                        count += 1;
+                        // spawn_blocking context: blocking_send applies
+                        // backpressure instead of dropping under Full.
+                        match live_tx.blocking_send(finding) {
+                            Ok(()) => count += 1,
+                            Err(e) => {
+                                tracing::error!(
+                                    err = %e,
+                                    "offline intel finding dropped: live channel closed"
+                                );
+                            }
+                        }
                     }
                 }
-                count
+                Ok(count)
             })
-            .await?;
+            .await??;
             emitted += count;
         }
 
@@ -219,7 +233,13 @@ impl IntelScanner {
                     } else {
                         let result = source.query_ip(ip).await;
                         if let Ok(ref e) = result {
-                            let _ = cache.put(e);
+                            if let Err(err) = cache.put(e) {
+                                tracing::warn!(
+                                    source = source.name(),
+                                    error = %err,
+                                    "intel enrichment cache put failed"
+                                );
+                            }
                         }
                         result
                     }
@@ -235,7 +255,13 @@ impl IntelScanner {
                     } else {
                         let result = source.query_domain(domain).await;
                         if let Ok(ref e) = result {
-                            let _ = cache.put(e);
+                            if let Err(err) = cache.put(e) {
+                                tracing::warn!(
+                                    source = source.name(),
+                                    error = %err,
+                                    "intel enrichment cache put failed"
+                                );
+                            }
                         }
                         result
                     }
@@ -249,7 +275,7 @@ impl IntelScanner {
             match enrichment {
                 Ok(e) => {
                     if let Some(finding) = query::enrichment_to_finding(&e) {
-                        input.emit(finding);
+                        input.emit(finding).await;
                         emitted += 1;
                     }
                 }

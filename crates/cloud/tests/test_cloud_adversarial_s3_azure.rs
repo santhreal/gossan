@@ -47,8 +47,7 @@ async fn test_s3_adversarial_xml_listing() {
             n: &str,
             t: &Target,
         ) -> anyhow::Result<Vec<secfinding::Finding>> {
-            let s3 = S3Provider;
-            s3.probe(c, n, t).await
+            S3Provider::default().probe(c, n, t).await
         }
     }
 
@@ -96,7 +95,7 @@ async fn test_s3_adversarial_put_success() {
 
 #[tokio::test]
 async fn test_azure_adversarial_container_name() {
-    let azure = AzureProvider;
+    let azure = AzureProvider::default();
 
     // Azure account names are 3-24 lowercase alphanumeric chars
     assert_eq!(
@@ -206,7 +205,7 @@ fn test_azure_account_name_length_bounds() {
 
 #[test]
 fn test_s3_endpoint_generation() {
-    let s3 = S3Provider;
+    let s3 = S3Provider::default();
     assert_eq!(
         s3.endpoint("test-bucket"),
         "https://test-bucket.s3.amazonaws.com/"

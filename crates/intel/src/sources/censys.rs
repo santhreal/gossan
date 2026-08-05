@@ -8,6 +8,11 @@ use crate::sources::IntelSource;
 
 const BASE_URL: &str = "https://search.censys.io/api/v2/hosts";
 
+/// Maximum bytes for a Censys host JSON response.
+/// A Censys host record can carry hundreds of services; 4 MiB bounds
+/// worst-case payloads while admitting legitimate large-host records.
+const MAX_CENSYS_JSON_BYTES: usize = 4 * 1024 * 1024;
+
 /// Censys API client.
 pub struct CensysSource {
     client: reqwest::Client,
@@ -45,10 +50,14 @@ impl IntelSource for CensysSource {
             .api_secret
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Censys requires API secret"))?;
-        let url = format!("{BASE_URL}/{ip}");
+        let mut url = url::Url::parse(BASE_URL)?;
+        {
+            let mut segs = url.path_segments_mut().map_err(|_| anyhow::anyhow!("invalid base URL"))?;
+            segs.push(ip);
+        }
         let resp = self
             .client
-            .get(&url)
+            .get(url)
             .basic_auth(api_id, Some(api_secret))
             .send()
             .await?
@@ -56,7 +65,7 @@ impl IntelSource for CensysSource {
         // A Censys host record can carry hundreds of services; cap at
         // 4 MiB to bound the worst-case payload while still admitting
         // the legitimate large-host case.
-        let body: CensysResp = gossan_core::net::bounded_json(resp, 4 * 1024 * 1024).await?;
+        let body: CensysResp = gossan_core::net::bounded_json(resp, MAX_CENSYS_JSON_BYTES).await?;
 
         let mut enrichment = IntelEnrichment::new("censys", "ip", ip);
 

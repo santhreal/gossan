@@ -24,13 +24,13 @@ impl SubdomainSource for Ask {
         
         let url = format!("https://www.ask.com/web?q=site:{}&page=1", domain);
         limiter.until_ready().await;
-        let resp = client.get(&url).send().await?;
+        let resp = client.get(&url).send().await?.error_for_status()?;
         let max_size = config.max_response_size;
         let text = String::from_utf8(gossan_core::read_response_limited(resp, max_size).await?)?;
         let mut seen = std::collections::HashSet::new();
         let domain_lower = domain.to_lowercase();
         
-        let re = regex::Regex::new(&format!(r"([a-zA-Z0-9_-]+\\.{})", regex::escape(domain)))?;
+        let re = regex::Regex::new(&format!(r"([a-zA-Z0-9_-]+\.{})", regex::escape(domain)))?;
         for cap in re.captures_iter(&text) {
             if let Some(m) = cap.get(1) {
                 let candidate = m.as_str().to_lowercase();

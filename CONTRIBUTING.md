@@ -5,8 +5,8 @@ Part of the [Santh](https://santh.dev) ecosystem.
 ## Quick start
 
 1. Fork and clone.
-2. `cargo test --workspace --no-fail-fast` — must be all green.
-3. `cargo clippy --workspace --all-targets -- -D warnings` — must
+2. `cargo test --workspace --no-fail-fast`: must be all green.
+3. `cargo clippy --workspace --all-targets -- -D warnings`: must
    exit 0.
 4. Make your change.
 5. `cargo test` again.
@@ -26,14 +26,14 @@ Part of the [Santh](https://santh.dev) ecosystem.
 ## The 10-test contract
 
 For every shipped feature / rule / probe the contract from
-`GOSSAN_LEGENDARY.md` requires:
+`GOSSAN_DEPTH.md` requires:
 
-1. **Positive truth** — known-good fixtures, exact metadata
+1. **Positive truth**: known-good fixtures, exact metadata
    asserted (`assert_eq!(findings.iter().filter(|f| f.rule == "X"
    && f.line == 12).count(), 1)`, never `assert!(!findings.
    is_empty())`).
-2. **Negative precision** — sanitized variants must NOT fire.
-3. **Adversarial / evasion** — hostile inputs; each successful
+2. **Negative precision**: sanitized variants must NOT fire.
+3. **Adversarial / evasion**: hostile inputs; each successful
    evasion is a real finding to fix in the engine, not a test to
    weaken.
 4. **Cross-file / interprocedural** where applicable.

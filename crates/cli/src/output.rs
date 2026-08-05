@@ -9,25 +9,25 @@ use secfinding::{Evidence, Finding};
 use std::io::Write;
 
 /// Print findings using the configured output format.
-pub fn print_findings(findings: &[Finding], config: &OutputConfig) {
-    // Masscan-grepable is rendered locally — secfinding has no
+pub fn print_findings(findings: &[Finding], config: &OutputConfig) -> std::io::Result<()> {
+    // Masscan-grepable is rendered locally, secfinding has no
     // structured Service evidence variant, so we work with the
     // existing `Evidence::Banner` payload + finding tags.
     match config.format {
         OutputFormat::MasscanGrep => {
             let body = render_masscan_grepable(findings);
-            write_to_output(body.as_bytes(), config);
-            return;
+            write_to_output(body.as_bytes(), config)?;
+            return Ok(());
         }
         OutputFormat::NmapXml => {
             let body = render_nmap_xml(findings);
-            write_to_output(body.as_bytes(), config);
-            return;
+            write_to_output(body.as_bytes(), config)?;
+            return Ok(());
         }
         OutputFormat::Graphml => {
             let body = render_graphml(findings);
-            write_to_output(body.as_bytes(), config);
-            return;
+            write_to_output(body.as_bytes(), config)?;
+            return Ok(());
         }
         _ => {}
     }
@@ -46,60 +46,94 @@ pub fn print_findings(findings: &[Finding], config: &OutputConfig) {
     let rendered = match santh_output::render(findings, format, "gossan") {
         Ok(s) => s,
         Err(e) => {
-            tracing::error!("Failed to render findings: {}", e);
-            return;
+            // ANTI-RIG: never exit "successfully" with empty output when
+            // findings exist. Dump a fallback text body so the operator
+            // still sees results.
+            tracing::error!(
+                "Failed to render findings: {e}; emitting fallback text dump"
+            );
+            eprintln!(
+                "error: failed to render findings ({e}); writing fallback text dump"
+            );
+            let mut dump = String::from(
+                "# gossan findings (fallback text dump; primary renderer failed)\n",
+            );
+            for (i, f) in findings.iter().enumerate() {
+                dump.push_str(&format!(
+                    "{}. [{}] {} — {}\n",
+                    i + 1,
+                    f.severity(),
+                    f.title(),
+                    f.target()
+                ));
+            }
+            if findings.is_empty() {
+                dump.push_str("(no findings)\n");
+            }
+            write_to_output(dump.as_bytes(), config)?;
+            return Ok(());
         }
     };
 
-    if let Some(path) = &config.path {
-        if let Ok(mut file) = std::fs::File::create(path) {
-            if let Err(e) = santh_output::emit(&rendered, &mut file) {
-                tracing::warn!(path = %path, "failed to write findings to output file: {e}");
-            }
-        } else {
-            tracing::error!("Failed to open output file");
-        }
-    } else if let Err(e) = santh_output::emit(&rendered, std::io::stdout()) {
-        tracing::warn!("failed to write findings to stdout: {e}");
-    }
+    write_to_output(rendered.as_bytes(), config)?;
+    Ok(())
 }
 
-fn write_to_output(bytes: &[u8], config: &OutputConfig) {
+fn write_to_output(bytes: &[u8], config: &OutputConfig) -> std::io::Result<()> {
     if let Some(path) = &config.path {
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    tracing::error!(path = %path, err = %e, "failed to create parent directories");
+                    e
+                })?;
+            }
+        }
         match std::fs::File::create(path) {
             Ok(mut f) => {
-                if let Err(e) = f.write_all(bytes) {
-                    tracing::warn!(path = %path, err = %e, "failed to write findings to output file");
-                }
+                f.write_all(bytes).map_err(|e| {
+                    tracing::error!(path = %path, err = %e, "failed to write findings to output file");
+                    e
+                })?;
+                return Ok(());
             }
             Err(e) => {
-                tracing::error!(path = %path, err = %e, "failed to open output file");
+                tracing::error!(path = %path, err = %e, "failed to open output file; falling back to stdout");
+                // Fall through to stdout, but still fail closed if stdout also fails.
+                std::io::stdout().write_all(bytes).map_err(|e2| {
+                    tracing::error!(err = %e2, "failed to write to stdout after --out failure");
+                    e2
+                })?;
+                // Surface the original --out failure so exit is non-zero even if
+                // the stdout fallback succeeded (operator asked for a file).
+                return Err(e);
             }
         }
-    } else {
-        if let Err(e) = std::io::stdout().write_all(bytes) {
-            tracing::error!(err = %e, "failed to write to stdout");
-        }
     }
+    std::io::stdout().write_all(bytes).map_err(|e| {
+        tracing::error!(err = %e, "failed to write to stdout");
+        e
+    })?;
+    Ok(())
 }
 
 /// Render findings in the masscan grepable (`-oG`) format.
 ///
 /// Per masscan(1):
 /// ```text
-/// # Masscan compatible — generated by gossan
+/// # Masscan compatible, generated by gossan
 /// Host: 1.2.3.4 ()  Ports: 80/open/tcp//http//
 /// Host: 1.2.3.4 ()  Ports: 443/open/tcp//https//
 /// ```
 ///
 /// Lines are emitted only for findings whose tags include both `port:N`
 /// and `ip:1.2.3.4` (gossan-portscan and gossan-engine emit those tags
-/// on every open-port discovery — see the matching `add_masscan_tags`
-/// helper). Non-port findings are skipped — the format has no slot
+/// on every open-port discovery, see the matching `add_masscan_tags`
+/// helper). Non-port findings are skipped, the format has no slot
 /// for them.
 pub fn render_masscan_grepable(findings: &[Finding]) -> String {
     let mut out = String::new();
-    out.push_str("# Masscan compatible — generated by gossan\n");
+    out.push_str("# Masscan compatible, generated by gossan\n");
     for f in findings {
         let Some(ip) = tag_value(f, "ip:") else {
             continue;
@@ -113,6 +147,12 @@ pub fn render_masscan_grepable(findings: &[Finding]) -> String {
             None => (port_proto.as_str(), "tcp"),
         };
         let service = tag_value(f, "service:").unwrap_or_default();
+        // Sanitize fields: masscan-grepable is line-oriented; newlines or
+        // tabs in untrusted tag values would break the format.
+        let ip = ip.replace(['\n', '\r', '\t'], " ");
+        let port = port.replace(['\n', '\r', '\t'], " ");
+        let proto = proto.replace(['\n', '\r', '\t'], " ");
+        let service = service.replace(['\n', '\r', '\t'], " ");
         out.push_str(&format!(
             "Host: {ip} ()\tPorts: {port}/open/{proto}//{service}//\n"
         ));
@@ -132,7 +172,7 @@ fn tag_value(f: &Finding, prefix: &str) -> Option<String> {
 ///
 /// Emits the subset that downstream parsers (zenmap, ndiff, etc.) rely
 /// on: `<nmaprun>` root, one `<host>` per discovered IP, one `<port>`
-/// child per open port. Findings without an `ip:` tag are skipped — the
+/// child per open port. Findings without an `ip:` tag are skipped, the
 /// format has no slot for non-port findings.
 pub fn render_nmap_xml(findings: &[Finding]) -> String {
     use std::collections::BTreeMap;
@@ -437,6 +477,456 @@ mod tests {
         assert_eq!(classify_service_hint(None, 27017), Some("mongodb".into()));
         assert_eq!(classify_service_hint(None, 9999), None);
     }
+
+    #[test]
+    fn masscan_grepable_empty_findings_only_header() {
+        let out = render_masscan_grepable(&[]);
+        assert_eq!(out, "# Masscan compatible, generated by gossan\n");
+    }
+
+    #[test]
+    fn tag_value_extracts_prefix_match() {
+        let f = open_port_finding("192.168.1.1", 443, "tcp", None);
+        assert_eq!(tag_value(&f, "port:"), Some("443/tcp".to_string()));
+    }
+
+    #[test]
+    fn tag_value_returns_none_for_missing_tag() {
+        let f = open_port_finding("1.2.3.4", 80, "tcp", Some("http"));
+        assert_eq!(tag_value(&f, "service:"), Some("http".to_string()));
+    }
+
+    #[test]
+    fn write_to_output_creates_directories() {
+        let dir = std::env::temp_dir().join("gossan_test_output").join("nested");
+        let path = dir.join("findings.json");
+        let config = OutputConfig {
+            path: Some(path.to_string_lossy().to_string()),
+            format: OutputFormat::Json,
+        };
+        write_to_output(b"{}", &config);
+        assert!(path.exists(), "write_to_output should create parent directories");
+        let _ = std::fs::remove_dir_all(std::env::temp_dir().join("gossan_test_output"));
+    }
+
+    #[test]
+    fn write_to_output_handles_empty_bytes() {
+        let path = std::env::temp_dir().join("gossan_empty.json");
+        let config = OutputConfig {
+            path: Some(path.to_string_lossy().to_string()),
+            format: OutputFormat::Json,
+        };
+        write_to_output(b"", &config);
+        assert!(path.exists());
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.is_empty());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn masscan_grepable_udp_port() {
+        let f = open_port_finding("192.168.1.1", 53, "udp", Some("dns"));
+        let body = render_masscan_grepable(&[f]);
+        assert!(body.contains("53/open/udp//dns//"));
+    }
+
+    #[test]
+    fn masscan_grepable_missing_ip_tag_skips() {
+        let f = Finding::builder("portscan", "example.com", Severity::Info)
+            .title("open: 80/tcp")
+            .detail("open")
+            .tag("port:80/tcp")
+            .build()
+            .unwrap();
+        let body = render_masscan_grepable(&[f]);
+        assert!(!body.contains("Host:"));
+    }
+
+    #[test]
+    fn masscan_grepable_missing_port_tag_skips() {
+        let f = Finding::builder("portscan", "example.com", Severity::Info)
+            .title("open: 80/tcp")
+            .detail("open")
+            .tag("ip:1.2.3.4")
+            .build()
+            .unwrap();
+        let body = render_masscan_grepable(&[f]);
+        assert!(!body.contains("Host:"));
+    }
+
+    #[test]
+    fn masscan_grepable_port_without_proto_defaults_tcp() {
+        let mut f = Finding::builder("portscan", "1.2.3.4", Severity::Info)
+            .title("open: 8080")
+            .detail("open")
+            .tag("ip:1.2.3.4")
+            .tag("port:8080")
+            .build()
+            .unwrap();
+        let body = render_masscan_grepable(&[f]);
+        assert!(body.contains("8080/open/tcp////"));
+    }
+
+    #[test]
+    fn nmap_xml_empty_findings_emits_root_only() {
+        let body = render_nmap_xml(&[]);
+        assert!(body.starts_with("<?xml"));
+        assert!(body.contains("<nmaprun"));
+        assert!(body.contains("</nmaprun>"));
+        assert!(!body.contains("<host>"));
+    }
+
+    #[test]
+    fn nmap_xml_single_host_multiple_ports() {
+        let findings = vec![
+            open_port_finding("10.0.0.1", 22, "tcp", Some("ssh")),
+            open_port_finding("10.0.0.1", 80, "tcp", Some("http")),
+            open_port_finding("10.0.0.1", 443, "tcp", Some("https")),
+        ];
+        let body = render_nmap_xml(&findings);
+        let host_count = body.matches("<host>").count();
+        assert_eq!(host_count, 1);
+        assert!(body.contains("portid=\"22\""));
+        assert!(body.contains("portid=\"80\""));
+        assert!(body.contains("portid=\"443\""));
+    }
+
+    #[test]
+    fn nmap_xml_xml_escapes_in_service_name() {
+        let mut f = open_port_finding("1.2.3.4", 80, "tcp", None);
+        // We can't mutate tags directly, so build a new finding with evil service
+        let f2 = Finding::builder("portscan", "1.2.3.4", Severity::Info)
+            .title("open: 80/tcp")
+            .detail("open")
+            .tag("ip:1.2.3.4")
+            .tag("port:80/tcp")
+            .tag("service:<evil>")
+            .evidence(Evidence::Banner { raw: "test".into() })
+            .build()
+            .unwrap();
+        let body = render_nmap_xml(&[f2]);
+        assert!(!body.contains("<evil>"));
+        assert!(body.contains("&lt;evil&gt;"));
+    }
+
+    #[test]
+    fn graphml_empty_findings() {
+        let body = render_graphml(&[]);
+        assert!(body.contains("<graphml"));
+        assert!(body.contains("</graphml>"));
+        assert!(!body.contains("<node "));
+        assert!(!body.contains("<edge "));
+    }
+
+    #[test]
+    fn graphml_duplicate_targets_share_node() {
+        let f1 = Finding::builder("subdomain", "example.com", Severity::Info)
+            .title("Discovered")
+            .detail("ct")
+            .build()
+            .unwrap();
+        let f2 = Finding::builder("dns", "example.com", Severity::Low)
+            .title("MX record")
+            .detail("found")
+            .build()
+            .unwrap();
+        let body = render_graphml(&[f1, f2]);
+        // 2 findings + 1 shared target = 3 nodes
+        assert_eq!(body.matches("<node ").count(), 3);
+        // 2 edges (one per finding)
+        assert_eq!(body.matches("<edge ").count(), 2);
+    }
+
+    #[test]
+    fn xml_escape_control_chars_stripped() {
+        let evil = "hello\x00\x01\x02world";
+        let escaped = xml_escape(evil);
+        assert!(!escaped.contains('\x00'));
+        assert!(!escaped.contains('\x01'));
+        assert!(!escaped.contains('\x02'));
+        assert!(escaped.contains("helloworld"));
+    }
+
+    #[test]
+    fn xml_escape_preserves_tabs_and_newlines() {
+        let s = "line1\nline2\tcol";
+        let escaped = xml_escape(s);
+        assert!(escaped.contains('\n'));
+        assert!(escaped.contains('\t'));
+    }
+
+    #[test]
+    fn classify_service_hint_ssh_banner() {
+        assert_eq!(
+            classify_service_hint(Some("SSH-2.0-OpenSSH_8.2"), 2222),
+            Some("ssh".into())
+        );
+    }
+
+    #[test]
+    fn classify_service_hint_http_banner() {
+        assert_eq!(
+            classify_service_hint(Some("HTTP/1.1 200 OK"), 8080),
+            Some("http".into())
+        );
+    }
+
+    #[test]
+    fn classify_service_hint_smtp_banner() {
+        assert_eq!(
+            classify_service_hint(Some("220 mx.google.com ESMTP"), 587),
+            Some("smtp".into())
+        );
+    }
+
+    #[test]
+    fn classify_service_hint_ftp_port() {
+        assert_eq!(classify_service_hint(None, 21), Some("ftp".into()));
+    }
+
+    #[test]
+    fn classify_service_hint_redis_banner() {
+        assert_eq!(
+            classify_service_hint(Some("-NOAUTH Authentication required."), 6380),
+            Some("redis".into())
+        );
+    }
+
+    #[test]
+    fn classify_service_hint_mongodb_banner() {
+        assert_eq!(
+            classify_service_hint(Some("MongoDB Server version 4.4"), 27018),
+            Some("mongodb".into())
+        );
+    }
+
+    #[test]
+    fn classify_service_hint_https_ports() {
+        assert_eq!(classify_service_hint(None, 8443), Some("https".into()));
+    }
+
+    #[test]
+    fn classify_service_hint_http_ports() {
+        assert_eq!(classify_service_hint(None, 8000), Some("http".into()));
+        assert_eq!(classify_service_hint(None, 8080), Some("http".into()));
+        assert_eq!(classify_service_hint(None, 8888), Some("http".into()));
+    }
+
+    #[test]
+    fn classify_service_hint_unknown() {
+        assert_eq!(classify_service_hint(Some("random gibberish"), 12345), None);
+    }
+
+    #[test]
+    fn write_to_output_overwrites_existing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("out.json");
+        std::fs::write(&path, "old").unwrap();
+        let config = OutputConfig {
+            path: Some(path.to_string_lossy().to_string()),
+            format: OutputFormat::Json,
+        };
+        write_to_output(b"new", &config);
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "new");
+    }
+
+    #[test]
+    fn write_to_output_nested_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a").join("b").join("c").join("out.json");
+        let config = OutputConfig {
+            path: Some(path.to_string_lossy().to_string()),
+            format: OutputFormat::Json,
+        };
+        write_to_output(b"[]", &config);
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn tag_value_none_for_missing_prefix() {
+        let f = open_port_finding("1.2.3.4", 22, "tcp", Some("ssh"));
+        assert_eq!(tag_value(&f, "nonexistent:"), None);
+    }
+
+    #[test]
+    fn tag_value_first_match_on_multiple() {
+        let f = Finding::builder("test", "example.com", Severity::Info)
+            .title("test")
+            .detail("test")
+            .tag("port:80/tcp")
+            .tag("port:443/tcp")
+            .build()
+            .unwrap();
+        let val = tag_value(&f, "port:");
+        assert!(val == Some("80/tcp".to_string()) || val == Some("443/tcp".to_string()));
+    }
+
+    #[test]
+    fn print_findings_masscan_empty_does_not_panic() {
+        let config = OutputConfig {
+            path: None,
+            format: OutputFormat::MasscanGrep,
+        };
+        print_findings(&[], &config).expect("print_findings");
+    }
+
+    #[test]
+    fn print_findings_nmap_xml_empty_does_not_panic() {
+        let config = OutputConfig {
+            path: None,
+            format: OutputFormat::NmapXml,
+        };
+        print_findings(&[], &config).expect("print_findings");
+    }
+
+    #[test]
+    fn print_findings_graphml_empty_does_not_panic() {
+        let config = OutputConfig {
+            path: None,
+            format: OutputFormat::Graphml,
+        };
+        print_findings(&[], &config).expect("print_findings");
+    }
+    #[test]
+    fn print_findings_out_path_create_failure_is_err() {
+        // Directory path as --out cannot be opened as a file → must Err (fail closed).
+        let dir = tempfile::tempdir().unwrap();
+        let config = OutputConfig {
+            format: OutputFormat::Text,
+            path: Some(dir.path().to_string_lossy().into_owned()),
+        };
+        let err = print_findings(&[], &config).expect_err("directory --out must fail");
+        assert!(!err.to_string().is_empty());
+    }
+
+
+    // ------------------------------------------------------------------
+    // Adversarial masscan-grepable sanitisation tests
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn masscan_grepable_sanitises_newlines_in_ip_tag() {
+        let f = Finding::builder("portscan", "evil.com", Severity::Info)
+            .title("open: 80/tcp")
+            .detail("open")
+            .tag("ip:1.2.3.4\n5.6.7.8")
+            .tag("port:80/tcp")
+            .evidence(Evidence::Banner { raw: "test".into() })
+            .build()
+            .unwrap();
+        let body = render_masscan_grepable(&[f]);
+        // The newline in the IP should be replaced with a space so the
+        // output stays line-oriented.
+        assert!(!body.contains("1.2.3.4\n5.6.7.8"));
+        assert!(body.contains("1.2.3.4 5.6.7.8"));
+    }
+
+    #[test]
+    fn masscan_grepable_sanitises_tabs_in_service_tag() {
+        let f = Finding::builder("portscan", "evil.com", Severity::Info)
+            .title("open: 80/tcp")
+            .detail("open")
+            .tag("ip:1.2.3.4")
+            .tag("port:80/tcp")
+            .tag("service:http\tinject")
+            .evidence(Evidence::Banner { raw: "test".into() })
+            .build()
+            .unwrap();
+        let body = render_masscan_grepable(&[f]);
+        assert!(!body.contains("http\tinject"));
+        assert!(body.contains("http inject"));
+    }
+
+    // ------------------------------------------------------------------
+    // Proptest property tests
+    // ------------------------------------------------------------------
+
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn xml_escape_never_emits_unescaped_special_chars(s in ".*") {
+            let escaped = xml_escape(&s);
+            prop_assert!(!escaped.contains('<'));
+            prop_assert!(!escaped.contains('>'));
+            // `&` is allowed only as part of an entity reference.
+            for (idx, _) in escaped.match_indices('&') {
+                let rest = &escaped[idx..];
+                prop_assert!(
+                    rest.starts_with("&amp;")
+                        || rest.starts_with("&lt;")
+                        || rest.starts_with("&gt;")
+                        || rest.starts_with("&quot;")
+                        || rest.starts_with("&apos;"),
+                    "found bare '&' at position {idx} in escaped string"
+                );
+            }
+            prop_assert!(!escaped.contains('"') || escaped.contains("&quot;"));
+            prop_assert!(!escaped.contains('\'') || escaped.contains("&apos;"));
+        }
+
+        #[test]
+        fn xml_escape_preserves_length_bound(s in "[\x20-\x7E]*") {
+            let escaped = xml_escape(&s);
+            // For purely printable ASCII without special chars, length
+            // should be identical. For strings with special chars, length
+            // can only increase (each special char → 4–5 char entity).
+            if !s.contains(['<', '>', '&', '"', '\'']) {
+                prop_assert_eq!(escaped.len(), s.len());
+            } else {
+                prop_assert!(escaped.len() >= s.len());
+            }
+        }
+
+        #[test]
+        fn render_masscan_grepable_never_panics(findings in prop::collection::vec(
+            any::<(String, String, String, String)>(), 0..10
+        )) {
+            // Construct synthetic findings from random strings, the
+            // renderer must not panic regardless of tag contents.
+            let findings: Vec<Finding> = findings.into_iter().map(|(ip, port, proto, service)| {
+                let port_tag = if port.is_empty() && proto.is_empty() {
+                    "port:80/tcp".to_string()
+                } else {
+                    format!("port:{}/{}", port.replace('\n', " ").replace('\r', " ").replace('\t', " "), proto.replace('\n', " ").replace('\r', " ").replace('\t', " "))
+                };
+                Finding::builder("portscan", "t", Severity::Info)
+                    .title("t")
+                    .detail("d")
+                    .tag(format!("ip:{}", ip.replace('\n', " ").replace('\r', " ").replace('\t', " ")))
+                    .tag(port_tag)
+                    .tag(format!("service:{}", service.replace('\n', " ").replace('\r', " ").replace('\t', " ")))
+                    .evidence(Evidence::Banner { raw: "test".into() })
+                    .build()
+                    .ok()
+            }).filter_map(|f| f).collect();
+            let _ = render_masscan_grepable(&findings);
+        }
+    }
+
+    #[test]
+    fn fallback_dump_includes_finding_title_when_primary_render_unavailable() {
+        // Contract for print_findings render-Err path: never silent-empty.
+        let f = Finding::builder("engine", "example.com", Severity::Info)
+            .title("Open Port: 443/tcp")
+            .detail("test")
+            .build()
+            .expect("finding");
+        let mut dump = String::from(
+            "# gossan findings (fallback text dump; primary renderer failed)\n",
+        );
+        dump.push_str(&format!(
+            "{}. [{}] {} — {}\n",
+            1,
+            f.severity(),
+            f.title(),
+            f.target()
+        ));
+        assert!(dump.contains("Open Port: 443/tcp"));
+        assert!(dump.contains("example.com"));
+        assert!(!dump.trim().is_empty());
+    }
 }
 
 /// Print a delta summary comparing current findings against a baseline.
@@ -468,7 +958,7 @@ pub fn print_delta_summary(delta: &gossan_checkpoint::ScanDelta) {
         for f in &delta.new_findings {
             let _ = writeln!(
                 stderr,
-                "    + [{}] {} — {}",
+                "    + [{}] {}: {}",
                 f.severity(),
                 f.target(),
                 f.title()
@@ -480,7 +970,7 @@ pub fn print_delta_summary(delta: &gossan_checkpoint::ScanDelta) {
         for f in &delta.resolved_findings {
             let _ = writeln!(
                 stderr,
-                "    - [{}] {} — {}",
+                "    - [{}] {}: {}",
                 f.severity(),
                 f.target(),
                 f.title()

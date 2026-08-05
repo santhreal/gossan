@@ -1,4 +1,4 @@
-//! Gossan CLI entry point — parses arguments, builds config, runs pipeline.
+//! Gossan CLI entry point (parses arguments, builds config, runs pipeline).
 
 mod output;
 mod pipeline;
@@ -14,12 +14,12 @@ use args::*;
 async fn main() -> anyhow::Result<()> {
     // Install ring as the process-wide rustls crypto provider.
     // Required when multiple rustls backends (ring + aws-lc-rs) are both
-    // transitively enabled — reqwest/rustls-tls pulls in aws-lc-rs while the
+    // transitively enabled, reqwest/rustls-tls pulls in aws-lc-rs while the
     // portscan TLS prober uses ring directly.
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     // Structured logging: when GOSSAN_LOG_JSON=1 emit one JSON event
-    // per line (operator-facing — pipe into Loki/CloudWatch/Datadog).
+    // per line (operator-facing (pipe into Loki/CloudWatch/Datadog)).
     // Default stays compact for human terminal use.
     let json_logs = std::env::var("GOSSAN_LOG_JSON").is_ok_and(|v| v == "1" || v == "true");
     if json_logs {
@@ -149,12 +149,21 @@ async fn main() -> anyhow::Result<()> {
             if !no_fleet {
                 active_modules.insert("fleet".to_string(), true);
             }
+            // Engine is the privileged port scanner; --no-ports must disable
+            // it too or root scans keep SYN-scanning after the operator asked
+            // for no port work.
             #[cfg(feature = "engine")]
             if !no_engine {
-                active_modules.insert("engine".to_string(), true);
+                #[cfg(feature = "portscan")]
+                let ports_enabled = !no_ports;
+                #[cfg(not(feature = "portscan"))]
+                let ports_enabled = true;
+                if ports_enabled {
+                    active_modules.insert("engine".to_string(), true);
+                }
             }
             config.modules = active_modules;
-            let seeds = resolve_targets(target);
+            let seeds = resolve_targets(target)?;
             let output_config = config.output.clone();
             let mut all = Vec::new();
             for seed in &seeds {
@@ -168,7 +177,7 @@ async fn main() -> anyhow::Result<()> {
                     .await?,
                 );
             }
-            output::print_findings(&all, &output_config);
+            output::print_findings(&all, &output_config)?;
         }
 
         #[cfg(feature = "subdomain")]
@@ -185,7 +194,11 @@ async fn main() -> anyhow::Result<()> {
         }
         #[cfg(feature = "fleet")]
         Command::FleetWorker { master } => {
-            gossan_fleet::worker::run_worker(&master, &config).await?;
+            let cfg = config.clone();
+            gossan_fleet::worker::run_worker(&master, &config, move |name| {
+                pipeline::scanner_for_module(name, &cfg)
+            })
+            .await?;
         }
         #[cfg(feature = "portscan")]
         Command::Ports { target } => exec_module(target, "portscan", config).await?,
@@ -234,41 +247,41 @@ mod tests {
 
     #[test]
     fn test_parse_port_mode() {
-        assert!(matches!(parse_port_mode(None), PortMode::Default));
+        assert!(matches!(parse_port_mode(None), Ok(PortMode::Default)));
         assert!(matches!(
             parse_port_mode(Some("default")),
-            PortMode::Default
+            Ok(PortMode::Default)
         ));
-        assert!(matches!(parse_port_mode(Some("top100")), PortMode::Top100));
+        assert!(matches!(
+            parse_port_mode(Some("top100")),
+            Ok(PortMode::Top100)
+        ));
         assert!(matches!(
             parse_port_mode(Some("top1000")),
-            PortMode::Top1000
+            Ok(PortMode::Top1000)
         ));
-        assert!(matches!(parse_port_mode(Some("full")), PortMode::Full));
+        assert!(matches!(parse_port_mode(Some("full")), Ok(PortMode::Full)));
 
         let custom = parse_port_mode(Some("80, 443, 8080"));
-        if let PortMode::Custom(ports) = custom {
+        if let Ok(PortMode::Custom(ports)) = custom {
             assert_eq!(ports, vec![80, 443, 8080]);
         } else {
             panic!("Expected Custom mode");
         }
 
-        let empty_custom = parse_port_mode(Some("invalid, ports"));
-        assert!(matches!(empty_custom, PortMode::Default));
+        let invalid = parse_port_mode(Some("invalid, ports"));
+        assert!(invalid.is_err());
     }
 
     #[test]
-    fn parse_port_mode_ignores_invalid_entries_inside_custom_lists() {
-        let custom = parse_port_mode(Some("80, invalid, 443"));
-        let PortMode::Custom(ports) = custom else {
-            panic!("expected custom mode");
-        };
-        assert_eq!(ports, vec![80, 443]);
+    fn parse_port_mode_rejects_invalid_entries_inside_custom_lists() {
+        assert!(parse_port_mode(Some("80, invalid, 443")).is_err());
+        assert!(parse_port_mode(Some("80, 70000, 443")).is_err());
     }
 
     #[test]
     fn cli_parses_markdown_alias() {
         let cli = Cli::parse_from(["gossan", "--format", "md", "scan", "example.com"]);
-        assert_eq!(cli.format, "md");
+        assert_eq!(cli.format.as_deref(), Some("md"));
     }
 }

@@ -1990,7 +1990,7 @@ def main() -> int:
     rules = gitleaks.get("rules", [])
     output_lines = [
         '# Auto-generated from gitleaks config + custom augmentations',
-        '# DO NOT EDIT MANUALLY — run scripts/gen_gitleaks_rules.py to regenerate',
+        '# DO NOT EDIT MANUALLY, run scripts/gen_gitleaks_rules.py to regenerate',
         '',
     ]
 

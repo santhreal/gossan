@@ -8,7 +8,7 @@ use serde::Deserialize;
 use std::path::Path;
 use thiserror::Error;
 
-/// One detector — corresponds 1:1 with a `[detector]` block in TOML.
+/// One detector (corresponds 1:1 with a `[detector]` block in TOML).
 #[derive(Debug, Clone, Deserialize)]
 pub struct Detector {
     /// The `[detector]` block.
@@ -69,7 +69,7 @@ pub struct Companion {
     /// If true, the detector MUST NOT fire unless this companion is
     /// also found within `within_lines` of the primary match. Used by
     /// providers like Twilio / Stripe / Avalara where the secret-side
-    /// of the credential is the strong signal — finding the public
+    /// of the credential is the strong signal, finding the public
     /// `SK...` ID alone is too noisy on its own to report.
     #[serde(default)]
     pub required: bool,
@@ -84,7 +84,7 @@ pub enum DetectorError {
     #[error("detector directory not found: {0}")]
     DirNotFound(String),
     /// A specific TOML file failed to parse. Other files in the
-    /// directory are still loaded — see `load_detectors` for the
+    /// directory are still loaded, see `load_detectors` for the
     /// best-effort semantics.
     #[error("parse error in {path}: {source}")]
     Parse {
@@ -93,6 +93,15 @@ pub enum DetectorError {
         /// Underlying serde / toml error.
         #[source]
         source: toml::de::Error,
+    },
+    /// A detector loaded successfully but carries no patterns, so it
+    /// can never fire and would silently waste scan resources.
+    #[error("detector {id} in {path} has no patterns")]
+    EmptyPatterns {
+        /// Path of the file.
+        path: String,
+        /// Detector id.
+        id: String,
     },
     /// An I/O failure that the loader couldn't recover from.
     #[error("io: {0}")]
@@ -109,73 +118,65 @@ const EMBEDDED_DETECTORS: include_dir::Dir<'_> =
 
 /// Load the detector corpus that ships baked into this crate.
 ///
-/// Always succeeds — never returns an error — because the corpus is
-/// validated at compile time by the build itself: any TOML that fails
-/// to parse is skipped with a `tracing::warn` exactly the way
-/// [`load_detectors`] handles on-disk corruption. Use this in any
-/// downstream code that runs from `cargo install`-style binaries
-/// (gossan-js, gossan-scm, gossan-crawl, etc.) where no monorepo
-/// sibling path exists.
+/// # Panics
+///
+/// Panics if any baked-in TOML is malformed, is not valid UTF-8, or
+/// describes a detector with zero patterns. The embedded corpus is
+/// validated at compile time; a panic here means the crate was shipped
+/// with a broken corpus and must not silently degrade scan recall.
 #[must_use]
+#[allow(clippy::panic)]
 pub fn embedded_detectors() -> Vec<Detector> {
     let mut out = Vec::with_capacity(EMBEDDED_DETECTORS.files().count());
     for file in EMBEDDED_DETECTORS.files() {
         if file.path().extension().and_then(|e| e.to_str()) != Some("toml") {
             continue;
         }
+        let path = file.path().display().to_string();
         let Some(s) = file.contents_utf8() else {
-            tracing::warn!(
-                path = %file.path().display(),
-                "keyhog-lite: embedded detector is not utf-8, skipping"
-            );
-            continue;
+            panic!("keyhog-lite: embedded detector {path} is not valid utf-8");
         };
-        match toml::from_str::<Detector>(s) {
-            Ok(d) => out.push(d),
-            Err(e) => tracing::warn!(
-                path = %file.path().display(),
-                err = %e,
-                "keyhog-lite: skipping malformed embedded detector"
-            ),
+        let d: Detector = toml::from_str(s).unwrap_or_else(|e| {
+            panic!("keyhog-lite: embedded detector {path} is malformed: {e}")
+        });
+        if d.meta.patterns.is_empty() {
+            panic!("keyhog-lite: embedded detector {path} has no patterns");
         }
+        out.push(d);
     }
     out
 }
 
-/// Load every `*.toml` in `dir` as a detector. Files that fail to parse
-/// are skipped with a `tracing::warn` — a single malformed contribution
-/// MUST NOT block the rest of the scan. Returns an error only when the
-/// directory itself is missing.
+/// Load every `*.toml` in `dir` as a detector.
+///
+/// Fail-closed: any malformed TOML, unreadable file, or detector with
+/// zero patterns aborts the load and returns an error. Callers that
+/// want best-effort semantics should validate the directory before
+/// calling.
 pub fn load_detectors(dir: &Path) -> Result<Vec<Detector>, DetectorError> {
     if !dir.exists() {
         return Err(DetectorError::DirNotFound(dir.display().to_string()));
     }
     let mut out = Vec::new();
     let read = std::fs::read_dir(dir)?;
-    for entry in read.flatten() {
+    for entry in read {
+        let entry = entry?;
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) != Some("toml") {
             continue;
         }
-        match std::fs::read_to_string(&path) {
-            Ok(s) => match toml::from_str::<Detector>(&s) {
-                Ok(d) => out.push(d),
-                Err(e) => {
-                    tracing::warn!(
-                        path = %path.display(),
-                        err = %e,
-                        "keyhog-lite: skipping malformed detector"
-                    );
-                }
-            },
-            Err(e) => {
-                tracing::warn!(
-                    path = %path.display(),
-                    err = %e,
-                    "keyhog-lite: failed to read detector file"
-                );
-            }
+        let s = std::fs::read_to_string(&path)?;
+        let d = toml::from_str::<Detector>(&s).map_err(|e| DetectorError::Parse {
+            path: path.display().to_string(),
+            source: e,
+        })?;
+        if d.meta.patterns.is_empty() {
+            return Err(DetectorError::EmptyPatterns {
+                path: path.display().to_string(),
+                id: d.meta.id.clone(),
+            });
         }
+        out.push(d);
     }
     Ok(out)
 }
@@ -217,7 +218,7 @@ description = "AWS AKIA prefix"
     }
 
     #[test]
-    fn load_detectors_skips_malformed_and_keeps_valid() {
+    fn load_detectors_fails_on_malformed_toml() {
         let tmp = tempfile::tempdir().expect("tmpdir");
         write(
             &tmp.path().join("good.toml"),
@@ -232,9 +233,31 @@ regex = "foo"
 "#,
         );
         write(&tmp.path().join("bad.toml"), "this is not [[ valid toml");
-        let detectors = load_detectors(tmp.path()).expect("load");
-        assert_eq!(detectors.len(), 1);
-        assert_eq!(detectors[0].meta.id, "good");
+        let r = load_detectors(tmp.path());
+        assert!(
+            matches!(r, Err(DetectorError::Parse { .. })),
+            "expected parse error, got {r:?}"
+        );
+    }
+
+    #[test]
+    fn load_detectors_rejects_zero_pattern_detector() {
+        let tmp = tempfile::tempdir().expect("tmpdir");
+        write(
+            &tmp.path().join("empty.toml"),
+            r#"
+[detector]
+id = "empty"
+name = "Empty"
+service = "test"
+severity = "low"
+"#,
+        );
+        let r = load_detectors(tmp.path());
+        assert!(
+            matches!(r, Err(DetectorError::EmptyPatterns { .. })),
+            "expected empty-patterns error, got {r:?}"
+        );
     }
 
     #[test]
@@ -284,7 +307,7 @@ regex = "x"
                 d.meta.id
             );
         }
-        // Ids must be unique — duplicate ids would let a detector
+        // Ids must be unique, duplicate ids would let a detector
         // shadow another and silently change scan output.
         let mut ids: Vec<&str> = corpus.iter().map(|d| d.meta.id.as_str()).collect();
         ids.sort_unstable();

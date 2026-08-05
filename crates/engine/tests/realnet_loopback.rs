@@ -20,7 +20,7 @@
 //! Marked `#[ignore]` because:
 //!   - It requires sudo (CI without root will be flaky)
 //!   - It hits the loopback interface (some sandboxes block this)
-//!   - It's a perf test, not a correctness test — the workspace
+//!   - It's a perf test, not a correctness test, the workspace
 //!     `cargo test` should not run it by default
 //!
 //! Headline metric: wall-time pps for a sweep of 65k probes against
@@ -40,18 +40,20 @@ use tokio::sync::{mpsc, Mutex};
 /// the scanner. The streaming receiver is pre-loaded with the target;
 /// no resolver lookups happen.
 fn make_scan_input(target: Target, seed: String) -> ScanInput {
-    let (target_tx_loaded, target_rx) = mpsc::unbounded_channel();
-    target_tx_loaded.send(target).expect("send target");
+    let (target_tx_loaded, target_rx) = mpsc::channel(1024);
+    target_tx_loaded.try_send(target).expect("send target");
     drop(target_tx_loaded);
-    let (live_tx, _live_rx) = mpsc::unbounded_channel();
-    let (downstream_tx, _downstream_rx) = mpsc::unbounded_channel();
+    let (live_tx, _live_rx) = mpsc::channel(1024);
+    let (downstream_tx, _downstream_rx) = mpsc::channel(1024);
     ScanInput {
         seed,
         target_rx: Mutex::new(target_rx),
         live_tx,
         target_tx: downstream_tx,
         resolver: Arc::new(
-            hickory_resolver::AsyncResolver::tokio_from_system_conf().expect("system DNS config"),
+            hickory_resolver::TokioResolver::builder_tokio()
+                .expect("tokio resolver builder")
+                .build(),
         ),
     }
 }
@@ -74,7 +76,7 @@ async fn loopback_engine_throughput() {
 
     // Top-100 ports against a single host = 100 probes. That's tiny;
     // the wall-time number is dominated by the per-batch syscall cost.
-    // For a more representative number, repeat the scan N times — the
+    // For a more representative number, repeat the scan N times, the
     // sustained pps is what matters, not single-scan latency.
     const REPEATS: usize = 50;
 

@@ -3,7 +3,7 @@ use gossan_dns::*;
 use hickory_resolver::{
     config::{NameServerConfigGroup, ResolverConfig, ResolverOpts},
     proto::rr::RecordType,
-    TokioAsyncResolver,
+    TokioResolver,
 };
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;

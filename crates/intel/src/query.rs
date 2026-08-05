@@ -7,7 +7,7 @@ use crate::db::{IntelDb, IntelRecord};
 use crate::enrichment::IntelEnrichment;
 
 /// Offline SQLite lookup for a target.
-pub fn lookup_target_offline(
+pub async fn lookup_target_offline(
     db: &IntelDb,
     target: &Target,
     input: &gossan_core::ScanInput,
@@ -21,7 +21,7 @@ pub fn lookup_target_offline(
         let records = db.query_by_ip(&ip_str)?;
         for r in records {
             if let Some(finding) = record_to_finding(&r) {
-                input.emit(finding);
+                input.emit(finding).await;
             }
         }
     }
@@ -31,7 +31,7 @@ pub fn lookup_target_offline(
         let records = db.query_by_host(host)?;
         for r in records {
             if let Some(finding) = record_to_finding(&r) {
-                input.emit(finding);
+                input.emit(finding).await;
             }
         }
     }
@@ -57,9 +57,13 @@ pub fn record_to_finding(r: &IntelRecord) -> Option<secfinding::Finding> {
         builder = builder.tag(format!("tech:{tech}"));
     }
 
-    let f = builder.build().ok()?;
-
-    Some(f)
+    match builder.build() {
+        Ok(f) => Some(f),
+        Err(e) => {
+            tracing::warn!(error = %e, ip = %r.ip, "intel record_to_finding build failed");
+            None
+        }
+    }
 }
 
 /// Convert an online enrichment into a finding.
@@ -84,7 +88,7 @@ pub fn enrichment_to_finding(e: &IntelEnrichment) -> Option<secfinding::Finding>
         .detail(detail)
         .kind(secfinding::FindingKind::InfoDisclosure)
         .tag("enrichment")
-        .tag(&e.source);
+        .tag(e.source.as_str());
 
     for tag in &e.tags {
         builder = builder.tag(tag.as_str());
@@ -97,7 +101,11 @@ pub fn enrichment_to_finding(e: &IntelEnrichment) -> Option<secfinding::Finding>
     }
     builder = builder.tag(format!("intel_version:{}", e.version));
 
-    let finding = builder.build().ok()?;
-
-    Some(finding)
+    match builder.build() {
+        Ok(finding) => Some(finding),
+        Err(e) => {
+            tracing::warn!(error = %e, "intel enrichment_to_finding build failed");
+            None
+        }
+    }
 }

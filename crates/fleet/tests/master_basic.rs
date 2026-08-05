@@ -1,12 +1,12 @@
-//! Master-side smoke tests — no real gRPC transport, just the
+//! Master-side smoke tests, no real gRPC transport, just the
 //! `Master` struct's task-dispatch contract.
 //!
-//! Per GOSSAN_LEGENDARY A21:
+//! Per GOSSAN_DEPTH_CONTRACT A21:
 //!  - With zero workers, `dispatch_task` returns `Err("No workers connected")`.
 //!  - `Master::new()` produces a workers-empty / tasks-empty state.
 //!
 //! End-to-end gRPC + 2 workers + result-merge tests live in
-//! `tests/cluster_e2e.rs` (open work — needs a tonic transport
+//! `tests/cluster_e2e.rs` (open work, needs a tonic transport
 //! harness to exercise the worker-registration handshake).
 
 use gossan_fleet::master::Master;

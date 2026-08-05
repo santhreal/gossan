@@ -5,7 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "SCM Mapping (Source Control Mapping) for Gossan"
-repository = "https://github.com/santhsecurity/gossan"
+repository = "https://github.com/santhreal/gossan"
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
@@ -28,6 +28,7 @@ octocrab    = { workspace = true }
 gitlab      = { workspace = true }
 gix         = { workspace = true, features = ["blocking-network-client"] }
 gossan-keyhog-lite = { version = "0.3", path = "../keyhog-lite" }
+gossan-secret-verify = { version = "0.3", path = "../secret-verify" }
 secfinding  = { workspace = true }
 tempfile    = "3"
 regex       = { workspace = true }

@@ -26,12 +26,24 @@ impl CloudProvider for ApiGatewayProvider {
         name: &str,
         target: &Target,
     ) -> anyhow::Result<Vec<Finding>> {
+        const MAX_NAME_LEN: usize = 100;
+        if name.len() > MAX_NAME_LEN {
+            return Ok(vec![]);
+        }
         let url = self.endpoint(name);
         let mut findings = Vec::new();
 
         let resp = match client.get(&url).send().await {
             Ok(r) => r,
-            Err(_) => return Ok(vec![]),
+            Err(e) => {
+                tracing::warn!(
+                    api = %name,
+                    url = %url,
+                    error = %e,
+                    "API Gateway probe send failed"
+                );
+                return Ok(vec![]);
+            }
         };
 
         let status = resp.status().as_u16();
@@ -39,9 +51,18 @@ impl CloudProvider for ApiGatewayProvider {
         // An active API Gateway typically returns 403 Missing Authentication Token if accessed directly
         // at the root without a valid stage/route, or potentially a 200/404 if a root route is defined.
         if status == 403 || status == 404 || status == 200 || status == 401 {
-            let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
-                .await
-                .unwrap_or_default();
+            let body = match gossan_core::net::bounded_text(resp, crate::MAX_CLOUD_RESPONSE_BYTES).await {
+                Ok(b) => b,
+                Err(e) => {
+                    tracing::warn!(
+                        api = %name,
+                        url = %url,
+                        error = %e,
+                        "API Gateway body read failed"
+                    );
+                    return Ok(vec![]);
+                }
+            };
 
             // "Missing Authentication Token" is the classic AWS API Gateway error for a missing route
             if body.contains("Missing Authentication Token")
@@ -59,7 +80,7 @@ impl CloudProvider for ApiGatewayProvider {
                     .evidence(Evidence::HttpResponse {
                         status,
                         headers: vec![("url".into(), url.clone().into())],
-                        body_excerpt: Some(body.chars().take(300).collect::<String>().into()),
+                        body_excerpt: Some(body.chars().take(crate::MAX_BODY_EXCERPT_CHARS).collect::<String>().into()),
                     })
                     .tag("apigateway").tag("cloud").tag("aws"), &mut findings);
             }

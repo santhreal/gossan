@@ -5,8 +5,8 @@ edition.workspace = true
 authors = ["Santh Project <security@santh.dev>"]
 license.workspace = true
 homepage.workspace = true
-repository = "https://github.com/santhsecurity/gossan"
-description = "Fast, modular attack surface discovery — subdomains, ports, tech stack, secrets, hidden endpoints, cloud assets — part of the security research ecosystem"
+repository = "https://github.com/santhreal/gossan"
+description = "Fast, modular attack surface discovery, subdomains, ports, tech stack, secrets, hidden endpoints, cloud assets, part of the security research ecosystem"
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
@@ -24,7 +24,7 @@ path = "src/main.rs"
 #
 #   cargo build --no-default-features --features subdomain,techstack
 #
-# This produces a binary with only subdomain discovery + tech-stack scanning —
+# This produces a binary with only subdomain discovery + tech-stack scanning 
 # no port scanner, no DNS audit, no JS analysis, no cloud enumeration compiled in.
 
 [features]
@@ -106,6 +106,7 @@ url       = { workspace = true }
 tempfile  = "3"
 santh-output = { workspace = true }
 serde_json = { workspace = true }
+proptest  = "1.2"
 
 [lints]
 workspace = true

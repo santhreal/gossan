@@ -45,7 +45,13 @@ impl Node {
     /// Attach a JSON payload.
     #[must_use]
     pub fn with_payload(mut self, payload: impl Serialize) -> Self {
-        self.payload = serde_json::to_value(payload).ok();
+        self.payload = match serde_json::to_value(payload) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                tracing::warn!(error = %e, "graph: payload serialization failed; payload omitted");
+                None
+            }
+        };
         self
     }
 }

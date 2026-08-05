@@ -1,6 +1,6 @@
 //! `gossan subdomain -` reads target domains from stdin.
 //!
-//! Per GOSSAN_LEGENDARY A2: pipe a domain list, assert all consumed.
+//! Per GOSSAN_DEPTH_CONTRACT A2: pipe a domain list, assert all consumed.
 //! We can't run a full scan against real DNS in CI; instead we
 //! assert the parse path accepts `-` and exits cleanly when stdin
 //! is empty.
@@ -26,7 +26,7 @@ fn stdin_dash_target_with_empty_stdin_does_not_panic() {
         let _ = stdin.write_all(b"");
     }
     let out = child.wait_with_output().expect("wait");
-    // We don't pin the exit code — cli today returns 0 on empty
+    // We don't pin the exit code, cli today returns 0 on empty
     // stdin. The contract this test holds is "no panic".
     assert!(
         out.status.code().is_some(),

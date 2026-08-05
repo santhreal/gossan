@@ -21,26 +21,27 @@ members = [
     "crates/engine",
     "crates/classify",
     "crates/keyhog-lite",
+    "crates/secret-verify",
 ]
 default-members = ["crates/cli"]
 resolver = "2"
 
 [workspace.package]
-version = "0.3.2"
+version = "0.3.3"
 edition = "2021"
 authors = ["Santh Project <security@santh.dev>"]
 license = "MIT"
-repository = "https://github.com/santhsecurity/gossan"
+repository = "https://github.com/santhreal/gossan"
 homepage = "https://santh.dev"
-description = "security research tool"
+description = "Attack surface management and recon: subdomain enumeration, port scanning, tech fingerprinting, hidden endpoints, cloud discovery"
 readme = "README.md"
-keywords = [ "security", "recon", "attack-surface", "pentest" ]
+keywords = [ "security", "recon", "attack-surface", "pentest", "osint" ]
 categories = ["command-line-utilities", "network-programming"]
 rust-version = "1.80"
 
 # CI runs `cargo clippy --workspace --all-targets -- -D warnings`. We
 # keep `pedantic` enabled (warn) at the workspace level but allow the
-# specific cosmetic lints below — the pedantic group fires on missing
+# specific cosmetic lints below, the pedantic group fires on missing
 # backticks in doc strings, format-arg inlining, manual range-contains,
 # etc., none of which reflect real bugs and which would require bulk
 # rewrites per release. Real correctness lints (unwrap_used, panic,
@@ -226,7 +227,7 @@ clap         = { version = "4", features = ["derive", "env"] }
 base64       = "0.22"
 hex          = "0.4"
 rusqlite     = { version = "0.32", features = ["bundled"] }
-# Santh shared libraries — pulled from crates.io so this workspace
+# Santh shared libraries, pulled from crates.io so this workspace
 # stands alone outside the Santh monorepo. Path-deps to the monorepo
 # would re-couple the standalone repo to internal layout.
 secfinding     = "0.4"
@@ -235,7 +236,6 @@ scantarget     = "0.2"
 scanclient     = "0.2"
 scanstate      = "0.2"
 codewalk       = "0.2"
-multimatch     = "0.1"
 simdsieve      = "0.1"
 keyhog-core    = "0.5"
 keyhog-scanner = { version = "0.2", default-features = false }
@@ -244,8 +244,11 @@ truestack      = "0.2"
 wafrift-detect = "0.2"
 hashkit        = "0.1"
 netforge       = "0.1"
-proxywire      = "0.1"
-bogon          = { version = "0.1.0", path = "../../libs/scanner/bogon" }
+proxywire      = "0.2"
+bogon          = { package = "santh-bogon", version = "0.1" }
+ctlog          = { package = "santh-ctlog", version = "0.1" }
+guise-pacing   = "0.1"
+runtime-headless = "0.1"
 
 toml = "0.8"
 fastrand = "2"
@@ -264,12 +267,8 @@ gitlab = "0.1703"
 gix = "0.67"
 
 [patch.crates-io]
-secfinding = { path = "../../libs/scanner/secfinding" }
-secreport  = { path = "../../libs/scanner/secreport" }
-scantarget = { path = "../../libs/scanner/scantarget" }
-scanclient = { path = "../../libs/scanner/scanclient" }
-scanstate  = { path = "../../libs/scanner/scanstate" }
-codewalk   = { path = "../../libs/runtime/codewalk" }
-truestack  = { path = "../../web/truestack" }
-
+# crates.io truestack 0.2.0 pins clap =4.6.0 while runtime-headless → secmatch
+# pins clap =4.6.1. Git main uses caret 4.6.0 so the graph can unify on 4.6.1
+# and a clean GitHub clone / release build does not need the Santh monorepo.
+truestack = { git = "https://github.com/santhreal/truestack" }
 

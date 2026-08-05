@@ -6,10 +6,10 @@ Persists discovered targets and findings as a typed graph (nodes:
 endpoints, hosts, services, repos, packages; edges: hosted-on,
 serves, depends-on, owned-by, discovered-via). Backends:
 
-- **SQLite** (default) — single-file local store, good for single-node
+- **SQLite** (default), single-file local store, good for single-node
   scans and ad-hoc queries.
-- **JSON** — human-inspectable export.
-- **GraphML** — interop with Gephi / yEd / Cytoscape.
+- **JSON** (human-inspectable export).
+- **GraphML** (interop with Gephi / yEd / Cytoscape).
 
 ## Usage
 

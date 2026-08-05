@@ -21,7 +21,23 @@ impl super::super::CorrelationRule for CorsSecretChainRule {
     }
 
     fn check(&self, findings: &[Finding], _targets: &[Target]) -> Vec<Finding> {
+        // The chain claims an attacker on any domain can make AUTHENTICATED
+        // cross-origin requests AND read the response, the precondition is
+        // that a browser will actually honour the misconfig. `gossan_hidden::
+        // cors` emits "CORS: wildcard origin with credentials" at Medium
+        // precisely because browsers REJECT `Access-Control-Allow-Origin: *`
+        // combined with credentials (spec-required); it's a config-correctness
+        // bug, not a live credential-theft path. Inflating that Medium into a
+        // Critical "Credential Theft" chain was a false claim against a
+        // browser-mitigated case. Real credential-theft titles
+        // ("CORS: arbitrary origin reflected with credentials", "(preflight)",
+        // "CORS: null origin trusted with credentials") are all emitted at
+        // Critical by the same scanner, so a severity gate of High|Critical
+        // is the right precision floor here.
         let is_cors_with_creds = |f: &&Finding| -> bool {
+            if !matches!(f.severity(), Severity::High | Severity::Critical) {
+                return false;
+            }
             let lower = f.title().to_lowercase();
             lower.contains("cors") && lower.contains("credential")
         };
@@ -32,7 +48,7 @@ impl super::super::CorrelationRule for CorsSecretChainRule {
         };
 
         // Group by normalized host. The chain only fires when both
-        // signals are on the SAME target — otherwise unrelated
+        // signals are on the SAME target, otherwise unrelated
         // findings (CORS misconfig on app.example.com + secret on
         // unrelated.com) would emit a false-positive Critical chain
         // claiming attacker movement between them.
@@ -86,7 +102,17 @@ mod tests {
     use crate::CorrelationRule;
 
     fn finding(scanner: &str, target: &str, title: &str, tags: &[&str]) -> Finding {
-        let mut b = Finding::builder(scanner, target, Severity::High).title(title);
+        finding_sev(scanner, target, title, tags, Severity::High)
+    }
+
+    fn finding_sev(
+        scanner: &str,
+        target: &str,
+        title: &str,
+        tags: &[&str],
+        sev: Severity,
+    ) -> Finding {
+        let mut b = Finding::builder(scanner, target, sev).title(title);
         for t in tags {
             b = b.tag(*t);
         }
@@ -123,16 +149,71 @@ mod tests {
     fn cors_secret_chain_fires_when_both_on_same_host() {
         let rule = CorsSecretChainRule;
         let findings = vec![
-            finding(
+            finding_sev(
                 "hidden",
                 "app.example.com",
-                "CORS allows arbitrary origin with credentials",
-                &[],
+                "CORS: arbitrary origin reflected with credentials",
+                &["cors"],
+                Severity::Critical,
             ),
             finding("js", "app.example.com", "AWS Access Key in JS", &["secret"]),
         ];
         let chains = rule.check(&findings, &[]);
         assert_eq!(chains.len(), 1);
         assert_eq!(chains[0].target(), "app.example.com");
+    }
+
+    /// PRECISION (the real defect). `gossan_hidden::cors` emits
+    /// "CORS: wildcard origin with credentials" at Medium with an
+    /// explicit comment noting that browsers reject `*+credentials`.
+    /// The chain claims an attacker can read authenticated cross-origin
+    /// responses (a claim the browser invalidates for this exact case).
+    /// A Medium browser-rejected misconfig MUST NOT escalate to
+    /// Critical "Credential Theft" when paired with a JS secret.
+    #[test]
+    fn cors_secret_chain_does_not_fire_on_browser_rejected_wildcard_creds() {
+        let rule = CorsSecretChainRule;
+        let findings = vec![
+            finding_sev(
+                "hidden",
+                "app.example.com",
+                "CORS: wildcard origin with credentials",
+                &["cors", "misconfiguration"],
+                Severity::Medium,
+            ),
+            finding("js", "app.example.com", "AWS Access Key in JS", &["secret"]),
+        ];
+        assert!(
+            rule.check(&findings, &[]).is_empty(),
+            "browser-rejected `*+credentials` finding wrongly escalated to credential-theft chain"
+        );
+    }
+
+    /// PROVING: each real credential-theft CORS title still chains  
+    /// the severity gate must not over-correct away the real cases.
+    #[test]
+    fn cors_secret_chain_still_fires_on_each_real_credential_theft_title() {
+        let rule = CorsSecretChainRule;
+        for (title, sev) in [
+            (
+                "CORS: arbitrary origin reflected with credentials",
+                Severity::Critical,
+            ),
+            (
+                "CORS: null origin trusted with credentials",
+                Severity::Critical,
+            ),
+        ] {
+            let findings = vec![
+                finding_sev("hidden", "app.example.com", title, &["cors"], sev),
+                finding("js", "app.example.com", "AWS Access Key in JS", &["secret"]),
+            ];
+            let chains = rule.check(&findings, &[]);
+            assert_eq!(
+                chains.len(),
+                1,
+                "real credential-theft title {title:?} must still chain"
+            );
+        }
     }
 }

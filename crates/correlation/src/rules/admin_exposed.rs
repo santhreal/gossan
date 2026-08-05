@@ -6,7 +6,7 @@ use secfinding::{Evidence, Finding, FindingKind, Severity};
 
 use crate::utils::normalize_host;
 use crate::CorrelationRule;
-/// AdminExposedRule correlation rule — detects multi-signal attack chains.
+/// AdminExposedRule correlation rule (detects multi-signal attack chains).
 pub struct AdminExposedRule;
 
 impl CorrelationRule for AdminExposedRule {
@@ -66,21 +66,45 @@ impl CorrelationRule for AdminExposedRule {
 
         for host in admin_hosts.intersection(&unauth_hosts) {
             // Find all relevant findings for evidence
+            let is_admin = |f: &Finding| {
+                f.scanner() == "hidden"
+                    && normalize_host(f.target()) == *host
+                    && {
+                        let t = f.title().to_lowercase();
+                        t.contains("admin") || t.contains("dashboard") || t.contains("console")
+                    }
+            };
             let admin_findings: Vec<&Finding> = findings
                 .iter()
-                .filter(|f| {
-                    f.scanner() == "hidden"
-                        && normalize_host(f.target()) == *host
-                        && (f.title().to_lowercase().contains("admin")
-                            || f.title().to_lowercase().contains("dashboard")
-                            || f.title().to_lowercase().contains("console"))
-                })
+                .filter(|f| is_admin(f))
                 .collect();
 
             let auth_findings: Vec<&Finding> = findings
                 .iter()
                 .filter(|f| normalize_host(f.target()) == *host && is_unauth_finding(f))
                 .collect();
+
+            // Self-chain guard: require two *distinct* findings. A single
+            // finding whose title matches both predicates (e.g. "Admin
+            // console accessible, no authentication required") is one
+            // finding already reported by its own scanner; re-emitting it
+            // as a Critical correlation is a duplicate, not a correlation.
+            let has_distinct_pair = {
+                let a = admin_findings.iter().copied().next();
+                let b = auth_findings.iter().copied().next();
+                match (a, b) {
+                    (Some(fa), Some(fb)) if !std::ptr::eq(fa, fb) => true,
+                    (Some(fa), Some(fb)) => {
+                        let a2 = admin_findings.iter().copied().find(|f| !std::ptr::eq(*f, fb));
+                        let b2 = auth_findings.iter().copied().find(|f| !std::ptr::eq(*f, fa));
+                        a2.is_some() || b2.is_some()
+                    }
+                    _ => false,
+                }
+            };
+            if !has_distinct_pair {
+                continue;
+            }
 
             let mut evidence_ids = Vec::new();
             for finding in admin_findings.iter().chain(auth_findings.iter()) {
@@ -89,7 +113,7 @@ impl CorrelationRule for AdminExposedRule {
             let evidence_string = evidence_ids.join(", ");
 
             // The chain output preserves the *original* target (path,
-            // unicode, port) of the contributing admin finding — only
+            // unicode, port) of the contributing admin finding, only
             // grouping uses the normalized form. Tests assert the chain
             // target round-trips the original verbatim.
             let display_target = admin_findings
@@ -185,7 +209,7 @@ mod tests {
     }
 
     /// The auth-bypass chain still fires for a real auth-related
-    /// title — proving the tightened filter didn't over-correct.
+    /// title (proving the tightened filter didn't over-correct).
     #[test]
     fn admin_exposed_rule_chains_on_explicit_auth_bypass_signal() {
         let findings = vec![
@@ -198,5 +222,49 @@ mod tests {
         ];
         let chains = AdminExposedRule.check(&findings, &[]);
         assert_eq!(chains.len(), 1);
+    }
+
+    /// ADVERSARIAL: one hidden-scanner finding that already states both
+    /// halves ("Admin console accessible, no authentication required")
+    /// must NOT self-chain. It is a single finding already reported by
+    /// its own scanner; re-emitting it as a Critical correlation is a
+    /// duplicate, not a correlation of two independent signals.
+    #[test]
+    fn admin_exposed_rule_does_not_self_chain_single_combined_finding() {
+        for title in [
+            "Admin console accessible, no authentication required",
+            "Unauthenticated admin dashboard exposed",
+            "Admin panel reachable, authentication missing",
+        ] {
+            let findings = vec![finding("hidden", "admin.example.com", title)];
+            let chains = AdminExposedRule.check(&findings, &[]);
+            assert!(
+                chains.is_empty(),
+                "single combined finding {title:?} self-chained: {:?}",
+                chains.iter().map(Finding::title).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// PROVING (regression twin): the combined dual-signal finding,
+    /// when accompanied by a *distinct* second admin finding on the
+    /// same host, must still chain.
+    #[test]
+    fn admin_exposed_rule_chains_combined_finding_with_distinct_partner() {
+        let findings = vec![
+            finding(
+                "hidden",
+                "admin.example.com",
+                "Admin console accessible, no authentication required",
+            ),
+            finding("hidden", "admin.example.com", "Admin login panel discovered"),
+        ];
+        let chains = AdminExposedRule.check(&findings, &[]);
+        assert_eq!(
+            chains.len(),
+            1,
+            "combined finding + distinct admin finding must still chain"
+        );
+        assert_eq!(chains[0].severity(), Severity::Critical);
     }
 }

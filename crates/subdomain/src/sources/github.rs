@@ -35,7 +35,7 @@ impl SubdomainSource for GitHub {
 
         limiter.until_ready().await;
         let max_size = config.max_response_size;
-        let resp = req.send().await?;
+        let resp = req.send().await?.error_for_status()?;
         let bytes = gossan_core::read_response_limited(resp, max_size).await?;
         let json: serde_json::Value = serde_json::from_slice(&bytes)?;
 

@@ -1,4 +1,4 @@
-//! Origin discovery data types — candidate origins and evidence.
+//! Origin discovery data types (candidate origins and evidence).
 
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
@@ -68,6 +68,7 @@ impl OriginCandidate {
 mod tests {
     use super::*;
     use serde_json::json;
+    use proptest::prelude::*;
 
     #[test]
     fn origin_candidate_orders_by_fields() {
@@ -96,5 +97,37 @@ mod tests {
         assert_eq!(value["method"], json!("http_header"));
         assert_eq!(value["confidence"], json!(75));
         assert_eq!(value["validated"], json!("Speculative"));
+    }
+
+    proptest! {
+        #[test]
+        fn origin_candidate_new_never_panics(
+            ip_octets in any::<[u8; 4]>(),
+            method in ".*",
+            confidence in any::<u8>(),
+        ) {
+            let ip = IpAddr::V4(std::net::Ipv4Addr::new(ip_octets[0], ip_octets[1], ip_octets[2], ip_octets[3]));
+            let cand = OriginCandidate::new(ip, &method, confidence);
+            prop_assert_eq!(cand.ip, ip);
+            prop_assert_eq!(cand.method, method);
+            prop_assert_eq!(cand.confidence, confidence);
+            prop_assert_eq!(cand.validated, ValidationState::Speculative);
+            prop_assert!(cand.port.is_none());
+        }
+
+        #[test]
+        fn origin_candidate_new_with_port_never_panics(
+            ip_octets in any::<[u8; 4]>(),
+            port in any::<u16>(),
+            method in ".*",
+            confidence in any::<u8>(),
+        ) {
+            let ip = IpAddr::V4(std::net::Ipv4Addr::new(ip_octets[0], ip_octets[1], ip_octets[2], ip_octets[3]));
+            let cand = OriginCandidate::new_with_port(ip, port, &method, confidence);
+            prop_assert_eq!(cand.ip, ip);
+            prop_assert_eq!(cand.port, Some(port));
+            prop_assert_eq!(cand.method, method);
+            prop_assert_eq!(cand.confidence, confidence);
+        }
     }
 }

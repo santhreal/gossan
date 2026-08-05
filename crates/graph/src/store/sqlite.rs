@@ -43,6 +43,49 @@ impl SqliteBackend {
         }
     }
 
+    fn require_node_kind(kind_str: &str) -> Result<NodeType, rusqlite::Error> {
+        super::parse_node_type(kind_str).ok_or_else(|| {
+            rusqlite::Error::FromSqlConversionFailure(
+                1,
+                rusqlite::types::Type::Text,
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("unknown graph node kind: {kind_str}"),
+                )),
+            )
+        })
+    }
+
+    fn require_edge_kind(kind_str: &str) -> Result<EdgeType, rusqlite::Error> {
+        super::parse_edge_type(kind_str).ok_or_else(|| {
+            rusqlite::Error::FromSqlConversionFailure(
+                2,
+                rusqlite::types::Type::Text,
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("unknown graph edge kind: {kind_str}"),
+                )),
+            )
+        })
+    }
+
+    fn parse_payload_json(
+        data_str: &str,
+        col: usize,
+    ) -> Result<Option<serde_json::Value>, rusqlite::Error> {
+        if data_str.is_empty() {
+            return Ok(None);
+        }
+        serde_json::from_str(data_str).map(Some).map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(
+                col,
+                rusqlite::types::Type::Text,
+                Box::new(e),
+            )
+        })
+    }
+
+
     /// Open or create a SQLite graph database.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, SqliteError> {
         let conn = Connection::open(path)?;
@@ -180,7 +223,7 @@ impl SqliteBackend {
             // edge on it. Callers may legitimately persist findings
             // without first persisting the matching Target (e.g. an
             // out-of-band scanner that only emits findings). Insert a
-            // stub Target node — INSERT OR IGNORE means real Target
+            // stub Target node: INSERT OR IGNORE means real Target
             // payloads from a same-transaction targets[] entry win.
             Self::insert_stub_target_for_finding(&tx, &target_id, finding)?;
             let edge = Edge::new(&target_id, &node.id, EdgeType::HasFinding);
@@ -228,8 +271,17 @@ impl SqliteBackend {
             match existing {
                 None => diff.added_targets.push(target.clone()),
                 Some(old) => {
-                    let stored_val: serde_json::Value =
-                        serde_json::from_str(&old).unwrap_or(serde_json::Value::Null);
+                    let stored_val: serde_json::Value = match serde_json::from_str(&old) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            tracing::warn!(
+                                target_id = %id,
+                                error = %e,
+                                "skipping corrupt stored target JSON in temporal diff"
+                            );
+                            continue;
+                        }
+                    };
                     let new_val = serde_json::to_value(target)?;
                     if stored_val != new_val {
                         diff.changed_targets.push(target.clone());
@@ -251,8 +303,17 @@ impl SqliteBackend {
             match existing {
                 None => diff.added_findings.push(finding.clone()),
                 Some(old) => {
-                    let stored_val: serde_json::Value =
-                        serde_json::from_str(&old).unwrap_or(serde_json::Value::Null);
+                    let stored_val: serde_json::Value = match serde_json::from_str(&old) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            tracing::warn!(
+                                finding_id = %id,
+                                error = %e,
+                                "skipping corrupt stored finding JSON in temporal diff"
+                            );
+                            continue;
+                        }
+                    };
                     let new_val = serde_json::to_value(finding)?;
                     if stored_val != new_val {
                         diff.changed_findings.push(finding.clone());
@@ -267,21 +328,26 @@ impl SqliteBackend {
 
         let mut stmt = self.conn.prepare(
             "SELECT data FROM targets 
-             WHERE kind IN ('domain','host','service','web','network','repository','package')
+             WHERE kind IN ('domain','subdomain','ip','port','service','tech','endpoint','secret','cloud')
                AND last_seen <= datetime('now', ?1)",
         )?;
         let rows = stmt.query_map(params![threshold_datetime], |row| {
             let data: String = row.get(0)?;
-            serde_json::from_str::<gossan_core::Target>(&data).map_err(|e| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    0,
-                    rusqlite::types::Type::Text,
-                    Box::new(e),
-                )
-            })
+            if data.is_empty() {
+                return Ok(None);
+            }
+            match serde_json::from_str::<gossan_core::Target>(&data) {
+                Ok(t) => Ok(Some(t)),
+                Err(e) => {
+                    tracing::warn!("skipping corrupted target payload: {e}");
+                    Ok(None)
+                }
+            }
         })?;
         for r in rows {
-            diff.removed_targets.push(r?);
+            if let Some(t) = r? {
+                diff.removed_targets.push(t);
+            }
         }
 
         let mut stmt = self.conn.prepare(
@@ -290,16 +356,21 @@ impl SqliteBackend {
         )?;
         let rows = stmt.query_map(params![threshold_datetime], |row| {
             let data: String = row.get(0)?;
-            serde_json::from_str::<secfinding::Finding>(&data).map_err(|e| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    0,
-                    rusqlite::types::Type::Text,
-                    Box::new(e),
-                )
-            })
+            if data.is_empty() {
+                return Ok(None);
+            }
+            match serde_json::from_str::<secfinding::Finding>(&data) {
+                Ok(f) => Ok(Some(f)),
+                Err(e) => {
+                    tracing::warn!("skipping corrupted finding payload: {e}");
+                    Ok(None)
+                }
+            }
         })?;
         for r in rows {
-            diff.removed_findings.push(r?);
+            if let Some(f) = r? {
+                diff.removed_findings.push(f);
+            }
         }
 
         Ok(diff)
@@ -339,10 +410,10 @@ impl SqliteBackend {
         )?;
 
         let update_query = format!(
-            "UPDATE {} SET last_seen = ?2, data = ?3 WHERE id = ?1",
+            "UPDATE {} SET kind = ?2, label = ?3, last_seen = ?4, data = ?5 WHERE id = ?1",
             table
         );
-        tx.execute(&update_query, params![node.id, last_seen, data])?;
+        tx.execute(&update_query, params![node.id, node.kind.to_string(), node.label, last_seen, data])?;
         Ok(())
     }
 
@@ -394,6 +465,9 @@ impl SqliteBackend {
             Some("host") => NodeType::Ip,
             Some("service") => NodeType::Service,
             Some("web") => NodeType::Endpoint,
+            Some("network") => NodeType::Ip,
+            Some("repo") => NodeType::Endpoint,
+            Some("pkg") => NodeType::Endpoint,
             _ => NodeType::Endpoint,
         };
         let label = finding.target().to_string();
@@ -402,7 +476,7 @@ impl SqliteBackend {
             .unwrap_or_default()
             .as_millis() as u64;
         let now_dt = Self::ms_to_datetime(now);
-        // INSERT OR IGNORE only — never clobber a real Target row that
+        // INSERT OR IGNORE only, never clobber a real Target row that
         // was upserted earlier in the same transaction with a real
         // payload.
         tx.execute(
@@ -503,13 +577,9 @@ impl GraphBackend for SqliteBackend {
             let last_seen_str: String = row.get(5)?;
             Ok(Node {
                 id: row.get(0)?,
-                kind: parse_node_type(&kind_str).unwrap_or(NodeType::Domain),
+                kind: Self::require_node_kind(&kind_str)?,
                 label: row.get(2)?,
-                payload: if data_str.is_empty() {
-                    None
-                } else {
-                    serde_json::from_str(&data_str).ok()
-                },
+                payload: Self::parse_payload_json(&data_str, 3)?,
                 first_seen_ms: Self::datetime_to_ms(&first_seen_str),
                 last_seen_ms: Self::datetime_to_ms(&last_seen_str),
             })
@@ -529,13 +599,9 @@ impl GraphBackend for SqliteBackend {
             let last_seen_str: String = row.get(5)?;
             Ok(Node {
                 id: row.get(0)?,
-                kind: parse_node_type(&kind_str).unwrap_or(NodeType::Finding),
+                kind: Self::require_node_kind(&kind_str)?,
                 label: row.get(2)?,
-                payload: if data_str.is_empty() {
-                    None
-                } else {
-                    serde_json::from_str(&data_str).ok()
-                },
+                payload: Self::parse_payload_json(&data_str, 3)?,
                 first_seen_ms: Self::datetime_to_ms(&first_seen_str),
                 last_seen_ms: Self::datetime_to_ms(&last_seen_str),
             })
@@ -559,12 +625,8 @@ impl GraphBackend for SqliteBackend {
             Ok(Edge {
                 source_id: row.get(0)?,
                 target_id: row.get(1)?,
-                kind: parse_edge_type(&kind_str).unwrap_or(EdgeType::HasFinding),
-                payload: if data_str.is_empty() {
-                    None
-                } else {
-                    serde_json::from_str(&data_str).ok()
-                },
+                kind: Self::require_edge_kind(&kind_str)?,
+                payload: Self::parse_payload_json(&data_str, 3)?,
                 first_seen_ms: Self::datetime_to_ms(&first_seen_str),
                 last_seen_ms: Self::datetime_to_ms(&last_seen_str),
             })
@@ -593,11 +655,7 @@ impl GraphBackend for SqliteBackend {
                 id: row.get(0)?,
                 kind: kind.clone(),
                 label: row.get(2)?,
-                payload: if data_str.is_empty() {
-                    None
-                } else {
-                    serde_json::from_str(&data_str).ok()
-                },
+                payload: Self::parse_payload_json(&data_str, 3)?,
                 first_seen_ms: Self::datetime_to_ms(&first_seen_str),
                 last_seen_ms: Self::datetime_to_ms(&last_seen_str),
             })
@@ -629,12 +687,8 @@ impl GraphBackend for SqliteBackend {
             Ok(Edge {
                 source_id: row.get(0)?,
                 target_id: row.get(1)?,
-                kind: parse_edge_type(&kind_str).unwrap_or(EdgeType::HasFinding),
-                payload: if data_str.is_empty() {
-                    None
-                } else {
-                    serde_json::from_str(&data_str).ok()
-                },
+                kind: Self::require_edge_kind(&kind_str)?,
+                payload: Self::parse_payload_json(&data_str, 3)?,
                 first_seen_ms: Self::datetime_to_ms(&first_seen_str),
                 last_seen_ms: Self::datetime_to_ms(&last_seen_str),
             })
@@ -669,7 +723,7 @@ pub enum SqliteError {
 /// by the SQLite backend (as the `target_id` column on `edges` /
 /// `findings`) and by external callers that want to round-trip
 /// Target identity through a graph store. Promoted to `pub` so the
-/// legendary unit test can pin the ID format
+/// depth unit test can pin the ID format
 /// (`domain:<host>` / `host:<ip>` / `service:<ip>:<port>` / etc.)
 /// without depending on the `target_id_from_finding` flavour, which
 /// works on findings instead of targets.
@@ -683,7 +737,15 @@ pub fn target_id(target: &gossan_core::Target) -> String {
         gossan_core::Target::Repository(r) => format!("repo:{}", r.url),
         gossan_core::Target::InternalPackage(p) => format!("pkg:{}", p.name),
         _ => {
-            let data = serde_json::to_string(target).unwrap_or_default();
+            // Prefer Debug over JSON unwrap_or_default — serialize failure must not
+            // collapse distinct unknown variants into identical empty `unknown:` ids.
+            let data = match serde_json::to_string(target) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!(error = %e, "graph target_id JSON serialize failed; using Debug");
+                    format!("{target:?}")
+                }
+            };
             format!("unknown:{}", &data[..data.len().min(120)])
         }
     }
@@ -730,14 +792,31 @@ fn finding_to_node(finding: &secfinding::Finding) -> Node {
 pub fn target_id_from_finding(finding: &secfinding::Finding) -> Result<String, SqliteError> {
     let t = finding.target();
 
-    // Try URL first — but only treat it as a Web target if the parser
+    // Repository / package targets have their own prefix namespaces and
+    // must be detected before generic URL parsing so they map to the
+    // same target_id used by persist_scan for real Repository and
+    // InternalPackage nodes.
+    if let Some(rest) = t.strip_prefix("network:") {
+        return Ok(format!("network:{rest}"));
+    }
+    if let Some(rest) = t.strip_prefix("repo:") {
+        return Ok(format!("repo:{rest}"));
+    }
+    if let Some(rest) = t.strip_prefix("pkg:") {
+        return Ok(format!("pkg:{rest}"));
+    }
+    if t.starts_with("git://") || t.starts_with("git+ssh://") {
+        return Ok(format!("repo:{t}"));
+    }
+
+    // Try URL first, but only treat it as a Web target if the parser
     // actually saw a recognized HTTP-family scheme. `url::Url::parse`
     // is happy to interpret `"example.com:443"` as `scheme=example.com,
     // path=443`, which would misclassify a bare host:port pair as a
     // Web URL.
     if let Ok(url) = url::Url::parse(t) {
         if matches!(url.scheme(), "http" | "https" | "ws" | "wss" | "ftp") {
-            return Ok(format!("web:{}", url));
+            return Ok(format!("web:{url}"));
         }
     }
 
@@ -756,7 +835,7 @@ pub fn target_id_from_finding(finding: &secfinding::Finding) -> Result<String, S
         }
     }
 
-    // host:port or ip:port — but avoid misclassifying domains like example.com:443
+    // host:port or ip:port, but avoid misclassifying domains like example.com:443
     if let Some((host, port)) = t.rsplit_once(':') {
         if port.parse::<u16>().is_ok() {
             if host.parse::<std::net::IpAddr>().is_ok() {
@@ -775,35 +854,8 @@ pub fn target_id_from_finding(finding: &secfinding::Finding) -> Result<String, S
     Ok(format!("domain:{t}"))
 }
 
-fn parse_node_type(s: &str) -> Option<NodeType> {
-    match s {
-        "domain" => Some(NodeType::Domain),
-        "subdomain" => Some(NodeType::Subdomain),
-        "ip" => Some(NodeType::Ip),
-        "port" => Some(NodeType::Port),
-        "service" => Some(NodeType::Service),
-        "tech" => Some(NodeType::Tech),
-        "endpoint" => Some(NodeType::Endpoint),
-        "secret" => Some(NodeType::Secret),
-        "cloud" => Some(NodeType::Cloud),
-        "finding" => Some(NodeType::Finding),
-        _ => None,
-    }
-}
-
-fn parse_edge_type(s: &str) -> Option<EdgeType> {
-    match s {
-        "RESOLVES_TO" => Some(EdgeType::ResolvesTo),
-        "HOSTS" => Some(EdgeType::Hosts),
-        "RUNS" => Some(EdgeType::Runs),
-        "EXPOSES" => Some(EdgeType::Exposes),
-        "LEAKS" => Some(EdgeType::Leaks),
-        "MISCONFIGURED" => Some(EdgeType::Misconfigured),
-        "HAS_FINDING" => Some(EdgeType::HasFinding),
-        "HAS_SERVICE" => Some(EdgeType::HasService),
-        _ => None,
-    }
-}
+// parse_node_type / parse_edge_type are now canonical in super (store/mod.rs).
+// Use super::parse_node_type / super::parse_edge_type at every call site below.
 
 #[cfg(test)]
 mod tests {
@@ -855,6 +907,171 @@ mod tests {
             target_id_from_finding(&f).unwrap(),
             "domain:example.com:443"
         );
+    }
+
+    #[test]
+    fn target_id_from_finding_network_prefix() {
+        let f = secfinding::Finding::new(
+            "s",
+            "network:10.0.0.0/8",
+            secfinding::Severity::Info,
+            "t",
+            "",
+        )
+        .unwrap();
+        assert_eq!(target_id_from_finding(&f).unwrap(), "network:10.0.0.0/8");
+    }
+
+    #[test]
+    fn target_id_from_finding_repo_prefix() {
+        let f = secfinding::Finding::new(
+            "s",
+            "repo:https://github.com/org/repo",
+            secfinding::Severity::Info,
+            "t",
+            "",
+        )
+        .unwrap();
+        assert_eq!(
+            target_id_from_finding(&f).unwrap(),
+            "repo:https://github.com/org/repo"
+        );
+    }
+
+    #[test]
+    fn target_id_from_finding_pkg_prefix() {
+        let f = secfinding::Finding::new(
+            "s",
+            "pkg:@org/package",
+            secfinding::Severity::Info,
+            "t",
+            "",
+        )
+        .unwrap();
+        assert_eq!(target_id_from_finding(&f).unwrap(), "pkg:@org/package");
+    }
+
+    #[test]
+    fn target_id_from_finding_git_url() {
+        let f = secfinding::Finding::new(
+            "s",
+            "git+ssh://git@github.com/org/repo.git",
+            secfinding::Severity::Info,
+            "t",
+            "",
+        )
+        .unwrap();
+        assert_eq!(
+            target_id_from_finding(&f).unwrap(),
+            "repo:git+ssh://git@github.com/org/repo.git"
+        );
+    }
+
+    #[test]
+    fn upsert_node_updates_kind_and_label() {
+        let mut backend = SqliteBackend::open_in_memory().unwrap();
+        let first = Node::new("n1", NodeType::Domain, "example.com");
+        backend.write_nodes(&[first]).unwrap();
+
+        let second = Node::new("n1", NodeType::Ip, "1.2.3.4");
+        backend.write_nodes(&[second]).unwrap();
+
+        let nodes = backend.read_nodes().unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].kind, NodeType::Ip);
+        assert_eq!(nodes[0].label, "1.2.3.4");
+    }
+
+    #[test]
+    fn stub_target_for_finding_maps_network_to_ip() {
+        let mut backend = SqliteBackend::open_in_memory().unwrap();
+        let f = secfinding::Finding::new(
+            "s",
+            "network:10.0.0.0/8",
+            secfinding::Severity::Info,
+            "t",
+            "",
+        )
+        .unwrap();
+        // persist_scan with no targets inserts the stub target.
+        backend.persist_scan(&[], &[f.clone()]).unwrap();
+        let rows: Vec<(String, String)> = backend
+            .conn()
+            .prepare("SELECT id, kind FROM targets WHERE id = ?1")
+            .unwrap()
+            .query_map(params![target_id_from_finding(&f).unwrap()], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, "network:10.0.0.0/8");
+        assert_eq!(rows[0].1, "ip");
+    }
+
+    #[test]
+    fn compute_diff_skips_corrupted_target_payload() {
+        let mut backend = SqliteBackend::open_in_memory().unwrap();
+        backend
+            .conn()
+            .execute(
+                "INSERT INTO targets (id, kind, label, data, first_seen, last_seen)
+                 VALUES ('t:bad', 'ip', 'bad', 'not valid json', '1970-01-01', '1970-01-01')",
+                [],
+            )
+            .unwrap();
+
+        let diff = backend
+            .compute_diff(&[], &[], std::time::Duration::from_secs(1))
+            .unwrap();
+        // Corrupted payload is skipped rather than failing the whole diff.
+        assert!(diff.removed_targets.is_empty());
+    }
+
+    #[test]
+    fn temporal_diff_filters_correct_target_kinds() {
+        let mut backend = SqliteBackend::open_in_memory().unwrap();
+
+        // Helper to insert a targets row with the given kind and valid Host data.
+        let insert = |backend: &mut SqliteBackend, kind: &str, id: &str| {
+            let data = serde_json::json!({
+                "kind": "host",
+                "ip": "1.2.3.4",
+                "domain": null,
+            })
+            .to_string();
+            backend
+                .conn()
+                .execute(
+                    "INSERT INTO targets (id, kind, label, data, first_seen, last_seen)
+                     VALUES (?1, ?2, ?3, ?4, '1970-01-01', '1970-01-01')",
+                    params![id, kind, id, data],
+                )
+                .unwrap();
+        };
+
+        // New correct kind must be included.
+        insert(&mut backend, "ip", "t:ip");
+        // Old invalid kind must NOT be included anymore.
+        insert(&mut backend, "host", "t:host");
+        // 'web' was an old kind; the new canonical kind is 'endpoint'.
+        insert(&mut backend, "web", "t:web");
+        insert(&mut backend, "endpoint", "t:endpoint");
+        // Other new canonical kinds must not crash the diff.
+        for kind in [
+            "domain", "subdomain", "port", "service", "tech", "secret", "cloud",
+        ] {
+            insert(&mut backend, kind, &format!("t:{kind}"));
+        }
+
+        let diff = backend
+            .compute_diff(&[], &[], std::time::Duration::from_secs(1))
+            .unwrap();
+
+        // 9 of the 11 inserted kinds are in the new IN clause; the old
+        // 'host' and 'web' kinds are excluded.
+        assert_eq!(diff.removed_targets.len(), 9);
     }
 
     #[test]

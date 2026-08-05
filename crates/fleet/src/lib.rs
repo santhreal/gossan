@@ -16,7 +16,7 @@
     clippy::missing_errors_doc
 )]
 
-//! Distributed gossan scanning — master/worker fleet coordination.
+//! Distributed gossan scanning (master/worker fleet coordination).
 //!
 //! The master distributes targets across workers and aggregates findings.
 
@@ -27,3 +27,8 @@ pub mod worker;
 pub mod proto {
     tonic::include_proto!("gossan.fleet");
 }
+
+#[cfg(test)]
+mod adversarial;
+#[cfg(test)]
+mod empty_targets_test;

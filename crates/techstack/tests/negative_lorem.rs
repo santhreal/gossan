@@ -1,6 +1,6 @@
 //! Negative test for tech-stack fingerprinting.
 //!
-//! Per GOSSAN_LEGENDARY A7: random Lorem Ipsum HTML must trigger
+//! Per GOSSAN_DEPTH_CONTRACT A7: random Lorem Ipsum HTML must trigger
 //! zero rules. We exercise the same detection pipeline the runtime
 //! bridge uses (`truestack::fingerprints::detect` against an empty
 //! header map and a Lorem body).

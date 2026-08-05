@@ -64,7 +64,7 @@ impl CorrelationRule for TlsWeaknessRule {
                     } else {
                         original_target.clone()
                     };
-                Finding::builder("correlation", target_for_chain, Severity::High)
+                Finding::builder("correlation", target_for_chain, Severity::Medium)
                     .title(format!("Multiple TLS weaknesses on {}", normalized_host))
                     .detail(format!(
                         "{} has {} distinct TLS/transport-security issues: {}. \

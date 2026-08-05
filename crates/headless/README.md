@@ -2,7 +2,7 @@
 
 > Part of the [Santh](https://santh.dev) security research ecosystem.
 
-Headless Chromium browser engine for executing JavaScript and trapping dynamic XHRs in gossan — part of the Santh security research ecosystem.
+Headless Chromium browser engine for executing JavaScript and trapping dynamic XHRs in gossan (part of the Santh security research ecosystem).
 
 Part of [gossan](https://github.com/santhreal/gossan).
 

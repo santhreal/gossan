@@ -15,7 +15,7 @@ pub async fn expand(
     root_domain: &str,
     config: &Config,
     wildcard_ips: &HashSet<IpAddr>,
-    resolver: &hickory_resolver::TokioAsyncResolver,
+    resolver: &hickory_resolver::TokioResolver,
 ) -> anyhow::Result<Vec<Target>> {
     let known: HashSet<String> = found
         .iter()
@@ -66,6 +66,10 @@ pub async fn expand(
     Ok(targets)
 }
 
+/// Maximum tokens extracted from a single domain to prevent unbounded
+/// memory growth on pathological input.
+const MAX_TOKENS: usize = 200;
+
 fn tokenize(domain: &str, root_domain: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let without_root = domain
@@ -77,6 +81,9 @@ fn tokenize(domain: &str, root_domain: &str) -> Vec<String> {
     }
 
     for part in without_root.split(|c| c == '.' || c == '-') {
+        if tokens.len() >= MAX_TOKENS {
+            break;
+        }
         if part.len() >= 2 {
             let mut current = String::new();
             let mut is_num = false;
@@ -91,6 +98,9 @@ fn tokenize(domain: &str, root_domain: &str) -> Vec<String> {
                 } else {
                     if current.len() >= 2 {
                         tokens.push(current.clone());
+                        if tokens.len() >= MAX_TOKENS {
+                            return tokens;
+                        }
                     }
                     current.clear();
                     current.push(c);
@@ -106,6 +116,10 @@ fn tokenize(domain: &str, root_domain: &str) -> Vec<String> {
     }
     tokens
 }
+
+/// Maximum candidates generated to prevent unbounded memory growth on
+/// pathological input (e.g. a domain with thousands of hyphenated labels).
+const MAX_CANDIDATES: usize = 100_000;
 
 fn generate_markov_and_dictionary_candidates(
     found: &[Target],
@@ -126,7 +140,10 @@ fn generate_markov_and_dictionary_candidates(
 
     for t in found {
         if let Some(domain) = t.domain() {
-            if domain == root_domain || !domain.ends_with(root_domain) {
+            if domain == root_domain {
+                continue;
+            }
+            if !domain.ends_with(&format!(".{root_domain}")) {
                 continue;
             }
             let tks = tokenize(domain, root_domain);
@@ -144,11 +161,17 @@ fn generate_markov_and_dictionary_candidates(
     }
 
     // 2. Synthesize Markov Chain Candidates
-    for start_node in &tokens {
+    'markov: for start_node in &tokens {
         if let Some(next_nodes) = transitions.get(start_node) {
             for next in next_nodes {
                 for sep in SEPS {
+                    if candidates.len() >= MAX_CANDIDATES {
+                        break 'markov;
+                    }
                     candidates.insert(format!("{}{}{}.{}", start_node, sep, next, root_domain));
+                    if candidates.len() >= MAX_CANDIDATES {
+                        break 'markov;
+                    }
                     candidates.insert(format!("{}{}{}.{}", next, sep, start_node, root_domain));
                 }
             }
@@ -156,15 +179,27 @@ fn generate_markov_and_dictionary_candidates(
     }
 
     // 3. Classical Dictionary Pollination
-    for prefix in &tokens {
+    'dict: for prefix in &tokens {
         for variant in &all_variants {
             for sep in SEPS {
+                if candidates.len() >= MAX_CANDIDATES {
+                    break 'dict;
+                }
                 candidates.insert(format!("{}{}{}.{}", prefix, sep, variant, root_domain));
+                if candidates.len() >= MAX_CANDIDATES {
+                    break 'dict;
+                }
                 candidates.insert(format!("{}{}{}.{}", variant, sep, prefix, root_domain));
             }
         }
         for i in 1..=5 {
+            if candidates.len() >= MAX_CANDIDATES {
+                break 'dict;
+            }
             candidates.insert(format!("{}{}.{}", prefix, i, root_domain));
+            if candidates.len() >= MAX_CANDIDATES {
+                break 'dict;
+            }
             candidates.insert(format!("{}-{}.{}", prefix, i, root_domain));
         }
     }
@@ -179,6 +214,7 @@ fn generate_markov_and_dictionary_candidates(
 mod tests {
     use super::*;
     use gossan_core::{DiscoverySource, DomainTarget};
+    use proptest::prelude::*;
 
     fn domain_target(domain: &str) -> Target {
         Target::Domain(DomainTarget {
@@ -217,5 +253,117 @@ mod tests {
         let candidates = generate_markov_and_dictionary_candidates(&found, "example.com", &known);
         assert!(candidates.iter().any(|c| c == "auth1.example.com"));
         assert!(candidates.iter().any(|c| c == "auth-2.example.com"));
+    }
+
+    /// Regression: a domain that merely ends with the root string but is not
+    /// a real subdomain (e.g. notexample.com vs example.com) must not leak
+    /// its labels into the Markov candidate pool.
+    #[test]
+    fn partial_suffix_does_not_leak_tokens() {
+        let found = vec![domain_target("notexample.com")];
+        let known = HashSet::new();
+        let candidates = generate_markov_and_dictionary_candidates(&found, "example.com", &known);
+        assert!(
+            !candidates.iter().any(|c| c.contains("notexample")),
+            "label-boundary leak: got {candidates:?}"
+        );
+    }
+
+    /// Adversarial: a domain with hundreds of hyphenated single-character
+    /// labels must not produce more than `MAX_TOKENS` tokens.
+    #[test]
+    fn tokenize_limits_tokens_on_pathological_input() {
+        let domain = (0..500)
+            .map(|i| if i % 2 == 0 { "a" } else { "1" })
+            .collect::<Vec<_>>()
+            .join("-");
+        let tks = tokenize(&format!("{}.{}", domain, "example.com"), "example.com");
+        assert!(
+            tks.len() <= MAX_TOKENS,
+            "tokenize must cap tokens, got {}",
+            tks.len()
+        );
+    }
+
+    /// Adversarial: a domain with hundreds of hyphenated labels must not
+    /// generate an unbounded number of candidates.
+    #[test]
+    fn candidate_generation_is_bounded() {
+        let domain = (0..500)
+            .map(|i| if i % 2 == 0 { "a" } else { "1" })
+            .collect::<Vec<_>>()
+            .join("-");
+        let found = vec![domain_target(&format!("{}.{}", domain, "example.com"))];
+        let known = HashSet::new();
+        let candidates = generate_markov_and_dictionary_candidates(&found, "example.com", &known);
+        assert!(
+            candidates.len() <= MAX_CANDIDATES,
+            "candidates must be bounded, got {}",
+            candidates.len()
+        );
+    }
+
+    proptest! {
+        /// Property: `tokenize` never panics for arbitrary input.
+        #[test]
+        fn tokenize_never_panics(domain in ".*", root in ".*") {
+            let _ = tokenize(&domain, &root);
+        }
+
+        /// Property: `tokenize` returns at most `MAX_TOKENS` tokens.
+        #[test]
+        fn tokenize_is_bounded(domain in ".{0,1024}", root in ".{0,256}") {
+            let tks = tokenize(&domain, &root);
+            prop_assert!(tks.len() <= MAX_TOKENS);
+        }
+
+        /// Property: `generate_markov_and_dictionary_candidates` never panics.
+        #[test]
+        fn candidates_never_panics(
+            domains in prop::collection::vec(".{0,256}", 0..10),
+            root in ".{0,128}",
+        ) {
+            let found: Vec<Target> = domains
+                .into_iter()
+                .map(|d| domain_target(&d))
+                .collect();
+            let known = HashSet::new();
+            let _ = generate_markov_and_dictionary_candidates(&found, &root, &known);
+        }
+
+        /// Property: `generate_markov_and_dictionary_candidates` is bounded.
+        #[test]
+        fn candidates_are_bounded(
+            domains in prop::collection::vec(".{0,256}", 0..10),
+            root in ".{0,128}",
+        ) {
+            let found: Vec<Target> = domains
+                .into_iter()
+                .map(|d| domain_target(&d))
+                .collect();
+            let known = HashSet::new();
+            let c = generate_markov_and_dictionary_candidates(&found, &root, &known);
+            prop_assert!(c.len() <= MAX_CANDIDATES);
+        }
+
+        /// Property: every candidate ends with the root domain (when root is non-empty).
+        #[test]
+        fn candidates_end_with_root(
+            domains in prop::collection::vec(r"[a-z0-9]{1,20}(\.[a-z0-9]{1,20}){0,3}", 0..5),
+            root in r"[a-z0-9]{1,20}(\.[a-z0-9]{1,20}){1,3}",
+        ) {
+            let found: Vec<Target> = domains
+                .into_iter()
+                .map(|d| domain_target(&d))
+                .collect();
+            let known = HashSet::new();
+            let c = generate_markov_and_dictionary_candidates(&found, &root, &known);
+            for cand in &c {
+                prop_assert!(
+                    cand.ends_with(&format!(".{}", root)) || cand.as_str() == root.as_str(),
+                    "candidate {} does not end with root {}", cand, root
+                );
+            }
+        }
     }
 }

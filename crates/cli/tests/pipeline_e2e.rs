@@ -1,6 +1,6 @@
 //! Pipeline orchestration smoke test.
 //!
-//! Per GOSSAN_LEGENDARY A2: a single subcommand round-trip through
+//! Per GOSSAN_DEPTH_CONTRACT A2: a single subcommand round-trip through
 //! the real binary, asserting (a) it exits cleanly and (b) it emits
 //! parseable output in the requested format.
 //!
@@ -8,7 +8,7 @@
 //! external services). The test invokes `gossan tech` against
 //! `127.0.0.1` (no network egress) with a short timeout and asserts
 //! the binary exits cleanly. The full `tests/e2e_full_scan.rs` with
-//! docker-compose lives in section H of GOSSAN_LEGENDARY.
+//! docker-compose lives in section H of GOSSAN_DEPTH_CONTRACT.
 
 use std::process::Command;
 

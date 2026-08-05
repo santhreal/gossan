@@ -16,7 +16,7 @@
     clippy::missing_errors_doc
 )]
 
-//! Subdomain discovery — 80+ concurrent sources + DNS bruteforce + permutation engine.
+//! Subdomain discovery: 80+ concurrent sources + DNS bruteforce + permutation engine.
 //!
 //! Sources (no API key): crt.sh, CertSpotter, Wayback Machine, HackerTarget,
 //!                        RapidDNS, AlienVault OTX, Urlscan.io, CommonCrawl, DNSdumpster,
@@ -36,19 +36,28 @@ pub mod wildcard;
 pub mod bruteforce;
 mod permutations;
 
+#[cfg(test)]
+mod hermetic_dns;
+#[cfg(test)]
+mod hermetic_tests;
+
 use std::collections::HashSet;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use gossan_core::{Config, ScanInput, Scanner, Target};
 use secfinding::{Evidence, Finding, Severity};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Semaphore};
 
 use crate::dedup::normalize_domain;
 use crate::sources::{all_sources, SubdomainSource};
 use crate::wildcard::detect_wildcards;
 
-/// Downstream emitter wrapper — cloneable so it can be moved into spawned tasks.
+/// Maximum number of passive sources that may query concurrently per domain.
+/// This cap prevents thundering-herd DNS bursts and respects per-source rate limits.
+const MAX_CONCURRENT_SOURCES: usize = 16;
+
+/// Downstream emitter wrapper (cloneable so it can be moved into spawned tasks).
 #[derive(Clone)]
 struct Emitter {
     live_tx: tokio::sync::mpsc::Sender<Finding>,
@@ -56,14 +65,14 @@ struct Emitter {
 }
 
 impl Emitter {
-    fn emit_target(&self, t: Target) {
-        if let Err(e) = self.target_tx.try_send(t) {
-            tracing::warn!(err = %e, "failed to emit target");
+    async fn emit_target(&self, t: Target) {
+        if let Err(e) = self.target_tx.send(t).await {
+            tracing::error!(err = %e, "failed to emit target (channel closed)");
         }
     }
-    fn emit_finding(&self, f: Finding) {
-        if let Err(e) = self.live_tx.try_send(f) {
-            tracing::warn!(err = %e, "failed to emit finding");
+    async fn emit_finding(&self, f: Finding) {
+        if let Err(e) = self.live_tx.send(f).await {
+            tracing::error!(err = %e, "failed to emit finding (channel closed)");
         }
     }
 }
@@ -93,21 +102,37 @@ impl Scanner for SubdomainScanner {
     }
 
     async fn run(&self, input: ScanInput, config: &Config) -> anyhow::Result<()> {
+        self.run_with_sources(input, config, all_sources()).await
+    }
+}
+
+impl SubdomainScanner {
+    /// Run the scanner with an explicit list of sources (useful for tests).
+    pub async fn run_with_sources(
+        &self,
+        input: ScanInput,
+        config: &Config,
+        sources: Vec<Box<dyn SubdomainSource>>,
+    ) -> anyhow::Result<()> {
         let client = gossan_core::ScanClient::from_config(config, Arc::clone(&input.resolver))?;
-        let sources = Arc::new(all_sources());
+        let sources = Arc::new(sources);
         let emitter = Emitter::from(&input);
 
         // Drain all targets from the channel
         let mut all_targets = Vec::new();
         {
             let mut rx = input.target_rx.lock().await;
-            while let Ok(t) = rx.try_recv() {
+            // recv() until the pipeline closes the inbox — try_recv races the
+            // sender and drops asynchronously delivered targets.
+            while let Some(t) = rx.recv().await {
                 all_targets.push(t);
             }
         }
 
+        
         for target in &all_targets {
             let Target::Domain(d) = target else { continue };
+            
             tracing::info!(domain = %d.domain, sources = sources.len(), "subdomain scan");
 
             let wildcard_ips = detect_wildcards(&d.domain, input.resolver.as_ref(), 5).await;
@@ -116,6 +141,7 @@ impl Scanner for SubdomainScanner {
             }
 
             let seen = Arc::new(Mutex::new(HashSet::<String>::new()));
+            let sem = Arc::new(Semaphore::new(MAX_CONCURRENT_SOURCES));
             let mut tasks = Vec::new();
 
             // Spawn all passive sources
@@ -126,11 +152,17 @@ impl Scanner for SubdomainScanner {
                 let config = config.clone();
                 let emitter = emitter.clone();
                 let seen = Arc::clone(&seen);
+                let sem = Arc::clone(&sem);
+                let resolver = Arc::clone(&input.resolver);
+                let wildcard_ips_passive = wildcard_ips.clone();
                 let limiter = sources[i].rate_limit().build_limiter();
                 let source_name = sources[i].name();
                 let discovery = sources[i].discovery_source();
 
                 tasks.push(tokio::spawn(async move {
+                    let Ok(_permit) = sem.acquire().await else {
+                        return;
+                    };
                     match sources[i].query(&domain, &config, &client, &limiter).await {
                         Ok(targets) => {
                             for mut t in targets {
@@ -139,9 +171,17 @@ impl Scanner for SubdomainScanner {
                                     dt.source = discovery.clone();
                                 }
                                 if let Some(dom) = t.domain() {
+                                    // Drop passive hits that resolve only to zone-wildcard IPs.
+                                    if !wildcard_ips_passive.is_empty() {
+                                        if let Ok(lookup) = resolver.lookup_ip(dom).await {
+                                            if lookup.iter().any(|ip| wildcard_ips_passive.contains(&ip)) {
+                                                continue;
+                                            }
+                                        }
+                                    }
                                     if let Some(norm) = normalize_domain(dom) {
                                         if seen.lock().await.insert(norm) {
-                                            emitter.emit_target(t);
+                                            emitter.emit_target(t).await;
                                         }
                                     }
                                 }
@@ -149,11 +189,7 @@ impl Scanner for SubdomainScanner {
                         }
                         Err(err) => {
                             tracing::warn!(source = source_name, domain, err = %err, "subdomain source error");
-                            let severity = if config.api_keys.contains_key(source_name) {
-                                Severity::High
-                            } else {
-                                Severity::Medium
-                            };
+                            let severity = Severity::Info;
                             if let Some(finding) = Finding::builder("subdomain", &domain, severity)
                                 .title(format!("Subdomain source failed: {source_name}"))
                                 .detail(format!(
@@ -166,7 +202,7 @@ impl Scanner for SubdomainScanner {
                                 .evidence(Evidence::raw(err.to_string()))
                                 .build_or_log()
                             {
-                                emitter.emit_finding(finding);
+                                emitter.emit_finding(finding).await;
                             }
                         }
                     }
@@ -198,7 +234,7 @@ impl Scanner for SubdomainScanner {
                             if let Some(dom) = t.domain() {
                                 if let Some(norm) = normalize_domain(dom) {
                                     if seen_bf.lock().await.insert(norm) {
-                                        emitter_bf.emit_target(t);
+                                        emitter_bf.emit_target(t).await;
                                     }
                                 }
                             }
@@ -247,7 +283,7 @@ impl Scanner for SubdomainScanner {
                         if let Some(dom) = t.domain() {
                             if let Some(norm) = normalize_domain(dom) {
                                 if seen.lock().await.insert(norm) {
-                                    emitter.emit_target(t);
+                                    emitter.emit_target(t).await;
                                 }
                             }
                         }
@@ -268,13 +304,16 @@ pub(crate) fn is_subdomain_of(candidate: &str, domain: &str) -> bool {
     let domain = domain.trim_end_matches('.');
     candidate
         .strip_suffix(domain)
-        .is_some_and(|prefix| prefix.ends_with('.'))
+        .is_some_and(|prefix| {
+            prefix.ends_with('.') && !prefix.contains("..") && prefix != "."
+        })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use gossan_core::{DiscoverySource, DomainTarget};
+    use proptest::prelude::*;
 
     fn domain_target(domain: &str) -> Target {
         Target::Domain(DomainTarget {
@@ -298,5 +337,66 @@ mod tests {
         assert!(is_subdomain_of("api.example.com", "example.com"));
         assert!(!is_subdomain_of("badexample.com", "example.com"));
         assert!(!is_subdomain_of("example.com", "example.com"));
+    }
+
+    #[test]
+    fn is_subdomain_of_empty_strings() {
+        assert!(!is_subdomain_of("", ""));
+    }
+
+    #[test]
+    fn is_subdomain_of_trailing_dot() {
+        assert!(is_subdomain_of("api.example.com.", "example.com"));
+        assert!(is_subdomain_of("api.example.com", "example.com."));
+    }
+
+    #[test]
+    fn is_subdomain_of_double_dot() {
+        assert!(!is_subdomain_of("a..example.com", "example.com"));
+    }
+
+    #[test]
+    fn is_subdomain_of_partial_match() {
+        assert!(!is_subdomain_of("notexample.com", "example.com"));
+    }
+
+    /// Adversarial: very long strings with many dots must not panic.
+    #[test]
+    fn is_subdomain_of_handles_long_strings() {
+        let candidate = "a.".repeat(1000) + "example.com";
+        let domain = "example.com";
+        // Must not panic on pathologically long input.
+        let _ = is_subdomain_of(&candidate, domain);
+    }
+
+    proptest! {
+        /// Property: `is_subdomain_of` never panics.
+        #[test]
+        fn is_subdomain_of_never_panics(candidate in ".*", domain in ".*") {
+            let _ = is_subdomain_of(&candidate, &domain);
+        }
+
+        /// Property: a string is never a subdomain of itself (unless empty).
+        #[test]
+        fn is_subdomain_of_reflexive_false(s in ".{1,256}") {
+            prop_assert!(!is_subdomain_of(&s, &s));
+        }
+
+        /// Property: empty candidate is never a subdomain.
+        #[test]
+        fn empty_candidate_is_never_subdomain(domain in ".*") {
+            prop_assert!(!is_subdomain_of("", &domain));
+        }
+
+        /// Property: `is_subdomain_of` is consistent with manual suffix check
+        /// for simple dot-separated ASCII strings.
+        #[test]
+        fn is_subdomain_of_matches_suffix(
+            prefix in "[a-z0-9]{1,20}",
+            domain in "[a-z0-9]{1,20}[.][a-z]{2,6}",
+        ) {
+            let candidate = format!("{}.{}", prefix, domain);
+            prop_assert!(is_subdomain_of(&candidate, &domain));
+        }
     }
 }

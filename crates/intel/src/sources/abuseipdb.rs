@@ -1,4 +1,4 @@
-//! AbuseIPDB source — IP reputation and abuse reports.
+//! AbuseIPDB source: IP reputation and abuse reports.
 
 use async_trait::async_trait;
 use serde::Deserialize;

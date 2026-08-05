@@ -26,7 +26,10 @@ pub enum EngineKind {
 /// `Some(warn)` must be surfaced (`tracing::warn!`) by the caller so a
 /// slow connect scan is never mistaken for the fast path having run.
 #[must_use]
-pub fn choose_engine(want_stateless: bool, raw_available: bool) -> (EngineKind, Option<&'static str>) {
+pub fn choose_engine(
+    want_stateless: bool,
+    raw_available: bool,
+) -> (EngineKind, Option<&'static str>) {
     match (want_stateless, raw_available) {
         (true, true) => (EngineKind::Stateless, None),
         (true, false) => (
@@ -203,7 +206,8 @@ mod tests {
         let (kind, warn) = choose_engine(true, false);
         assert_eq!(kind, EngineKind::Connect);
         assert!(
-            warn.expect("must warn on forced downgrade").contains("CAP_NET_RAW"),
+            warn.expect("must warn on forced downgrade")
+                .contains("CAP_NET_RAW"),
             "the downgrade reason must name the missing capability"
         );
     }

@@ -1,5 +1,6 @@
 //! GraphML backend for interoperability with network-analysis tools.
 
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -9,37 +10,12 @@ use crate::{schema::EdgeType, Edge, Node};
 /// GraphML file backend.
 pub struct GraphMlBackend {
     path: PathBuf,
-    nodes: Vec<Node>,
-    edges: Vec<Edge>,
+    nodes: HashMap<String, Node>,
+    edges: HashMap<EdgeKey, Edge>,
+    dirty: bool,
 }
 
-impl GraphMlBackend {
-    /// Open or create a GraphML file.
-    pub fn open<P: AsRef<Path>>(path: P) -> Self {
-        Self {
-            path: path.as_ref().to_path_buf(),
-            nodes: Vec::new(),
-            edges: Vec::new(),
-        }
-    }
-
-    fn flush(&self) -> Result<(), GraphMlError> {
-        let mut f = std::fs::File::create(&self.path)?;
-        write_graphml(&mut f, &self.nodes, &self.edges)?;
-        Ok(())
-    }
-
-    fn load(&mut self) -> Result<(), GraphMlError> {
-        if !self.path.exists() {
-            return Ok(());
-        }
-        let content = std::fs::read_to_string(&self.path)?;
-        let (nodes, edges) = parse_graphml(&content)?;
-        self.nodes = nodes;
-        self.edges = edges;
-        Ok(())
-    }
-}
+type EdgeKey = (String, String, EdgeType);
 
 /// Error type for GraphML operations.
 #[derive(Debug, thiserror::Error)]
@@ -52,52 +28,133 @@ pub enum GraphMlError {
     MissingAttr(String),
 }
 
-fn write_graphml(w: &mut impl Write, nodes: &[Node], edges: &[Edge]) -> Result<(), std::io::Error> {
-    writeln!(w, r#"<?xml version="1.0" encoding="UTF-8"?>"#)?;
+impl GraphMlBackend {
+    /// Open or create a GraphML file.
+    pub fn open<P: AsRef<Path>>(path: P) -> Self {
+        Self {
+            path: path.as_ref().to_path_buf(),
+            nodes: HashMap::new(),
+            edges: HashMap::new(),
+            dirty: false,
+        }
+    }
+
+    fn flush(&mut self) -> Result<(), GraphMlError> {
+        let mut f = std::fs::File::create(&self.path)?;
+        write_graphml(&mut f, self.nodes.values(), self.edges.values())?;
+        self.dirty = false;
+        Ok(())
+    }
+
+    /// Persist any buffered writes. Safe to call repeatedly.
+    pub fn commit(&mut self) -> Result<(), GraphMlError> {
+        if self.dirty {
+            self.flush()?;
+        }
+        Ok(())
+    }
+
+    fn load(&mut self) -> Result<(), GraphMlError> {
+        if !self.path.exists() {
+            return Ok(());
+        }
+        let content = std::fs::read_to_string(&self.path)?;
+        let (nodes, edges) = parse_graphml(&content)?;
+        for n in nodes {
+            Self::merge_node(&mut self.nodes, n);
+        }
+        for e in edges {
+            Self::merge_edge(&mut self.edges, e);
+        }
+        Ok(())
+    }
+
+    fn merge_node(map: &mut HashMap<String, Node>, node: Node) {
+        if let Some(existing) = map.get_mut(&node.id) {
+            existing.kind = node.kind;
+            existing.label = node.label.clone();
+            existing.payload = node.payload.clone();
+            existing.last_seen_ms = node.last_seen_ms;
+        } else {
+            map.insert(node.id.clone(), node);
+        }
+    }
+
+    fn merge_edge(map: &mut HashMap<EdgeKey, Edge>, edge: Edge) {
+        let key = (edge.source_id.clone(), edge.target_id.clone(), edge.kind);
+        if let Some(existing) = map.get_mut(&key) {
+            existing.payload = edge.payload.clone();
+            existing.last_seen_ms = edge.last_seen_ms;
+        } else {
+            map.insert(key, edge);
+        }
+    }
+}
+
+impl Drop for GraphMlBackend {
+    fn drop(&mut self) {
+        if self.dirty {
+            if let Err(e) = self.flush() {
+                tracing::error!(error = %e, path = %self.path.display(), "graphml deferred flush on drop failed");
+            }
+        }
+    }
+}
+
+fn write_graphml<'a>(
+    w: &mut impl Write,
+    nodes: impl Iterator<Item = &'a Node>,
+    edges: impl Iterator<Item = &'a Edge>,
+) -> Result<(), std::io::Error> {
+    writeln!(w, r#"<?xml version="1.0" encoding="UTF-8"?"#)?;
     writeln!(
         w,
-        r#"<graphml xmlns="http://graphml.graphdrawing.org/xmlns">"#
+        r#"<graphml xmlns="http://graphml.graphdrawing.org/xmlns">"#,
     )?;
 
     // Keys for node data
     writeln!(
         w,
-        r#"<key id="kind" for="node" attr.name="kind" attr.type="string"/>"#
+        r#"<key id="kind" for="node" attr.name="kind" attr.type="string"/>"#,
     )?;
     writeln!(
         w,
-        r#"<key id="label" for="node" attr.name="label" attr.type="string"/>"#
+        r#"<key id="label" for="node" attr.name="label" attr.type="string"/>"#,
     )?;
     writeln!(
         w,
-        r#"<key id="payload" for="node" attr.name="payload" attr.type="string"/>"#
+        r#"<key id="payload" for="node" attr.name="payload" attr.type="string"/>"#,
     )?;
 
     // Keys for edge data
     writeln!(
         w,
-        r#"<key id="etype" for="edge" attr.name="type" attr.type="string"/>"#
+        r#"<key id="etype" for="edge" attr.name="type" attr.type="string"/>"#,
     )?;
     writeln!(
         w,
-        r#"<key id="epayload" for="edge" attr.name="payload" attr.type="string"/>"#
+        r#"<key id="epayload" for="edge" attr.name="payload" attr.type="string"/>"#,
     )?;
 
     writeln!(w, r#"<graph id="G" edgedefault="directed">"#)?;
 
     for n in nodes {
-        write!(w, r#"<node id="{}" >"#, xml_escape(&n.id))?;
+        write!(w, r#"<node id="{}">"#, gossan_core::xml_escape(&n.id))?;
         writeln!(
             w,
             r#"<data key="kind">{}</data>"#,
-            xml_escape(&n.kind.to_string())
+            gossan_core::xml_escape(&n.kind.to_string())
         )?;
-        writeln!(w, r#"<data key="label">{}</data>"#, xml_escape(&n.label))?;
+        writeln!(
+            w,
+            r#"<data key="label">{}</data>"#,
+            gossan_core::xml_escape(&n.label)
+        )?;
         if let Some(ref p) = n.payload {
             writeln!(
                 w,
                 r#"<data key="payload">{}</data>"#,
-                xml_escape(&p.to_string())
+                gossan_core::xml_escape(&p.to_string())
             )?;
         }
         writeln!(w, "</node>")?;
@@ -107,75 +164,103 @@ fn write_graphml(w: &mut impl Write, nodes: &[Node], edges: &[Edge]) -> Result<(
         write!(
             w,
             r#"<edge source="{}" target="{}">"#,
-            xml_escape(&e.source_id),
-            xml_escape(&e.target_id)
+            gossan_core::xml_escape(&e.source_id),
+            gossan_core::xml_escape(&e.target_id)
         )?;
         writeln!(
             w,
             r#"<data key="etype">{}</data>"#,
-            xml_escape(&e.kind.to_string())
+            gossan_core::xml_escape(&e.kind.to_string())
         )?;
         if let Some(ref p) = e.payload {
             writeln!(
                 w,
                 r#"<data key="epayload">{}</data>"#,
-                xml_escape(&p.to_string())
+                gossan_core::xml_escape(&p.to_string())
             )?;
         }
         writeln!(w, "</edge>")?;
     }
 
-    writeln!(w, "</graph>")?;
-    writeln!(w, "</graphml>")?;
+    writeln!(w, "</graph>\n</graphml>")?;
     Ok(())
 }
 
-fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
-}
+/// Static compiled regexes for parsing GraphML, built once via `LazyLock`,
+/// reused on every load.  Each `LazyLock` holds a `Result` so that a
+/// malformed pattern is surfaced as a `GraphMlError::Xml` at parse time
+/// rather than a panic (satisfying `deny(clippy::expect_used, panic)`).
+static NODE_RE: std::sync::LazyLock<Result<regex::Regex, regex::Error>> =
+    std::sync::LazyLock::new(|| {
+        regex::Regex::new(r#"(?s)<node\s+id="([^"]+)"[^\u003e]*>(.*?)</node>"#)
+    });
+
+static EDGE_RE: std::sync::LazyLock<Result<regex::Regex, regex::Error>> =
+    std::sync::LazyLock::new(|| {
+        regex::Regex::new(
+            r#"(?s)<edge\s+source="([^"]+)"\s+target="([^"]+)"[^\u003e]*>(.*?)</edge>"#,
+        )
+    });
+
+static DATA_RE: std::sync::LazyLock<Result<regex::Regex, regex::Error>> =
+    std::sync::LazyLock::new(|| {
+        regex::Regex::new(r#"(?s)<data\s+key="([^"]+)">(.*?)</data>"#)
+    });
 
 fn parse_graphml(content: &str) -> Result<(Vec<Node>, Vec<Edge>), GraphMlError> {
     let mut nodes = Vec::new();
     let mut edges = Vec::new();
 
-    // Very lightweight parser — we look for <node id="..."> ... </node>
+    // Very lightweight parser, we look for <node id="..."> ... </node>
     // and <edge source="..." target="..."> ... </edge> blocks.
     // This avoids pulling in an XML crate.
     // The `(?s)` flag makes `.` match newlines so the lazy `(.*?)`
     // inside <node> / <edge> / <data> blocks can span the multi-line
     // pretty-printed output written by `write_graphml`. Without it
     // every roundtrip silently dropped its payload.
-    let node_re = regex::Regex::new(r#"(?s)<node\s+id="([^"]+)"[^>]*>(.*?)</node>"#)
+    // Regexes are compiled once via LazyLock; no allocation per parse call.
+    let node_re = NODE_RE
+        .as_ref()
         .map_err(|e| GraphMlError::Xml(e.to_string()))?;
-
-    let edge_re =
-        regex::Regex::new(r#"(?s)<edge\s+source="([^"]+)"\s+target="([^"]+)"[^>]*>(.*?)</edge>"#)
-            .map_err(|e| GraphMlError::Xml(e.to_string()))?;
-
-    let data_re = regex::Regex::new(r#"(?s)<data\s+key="([^"]+)">(.*?)</data>"#)
+    let edge_re = EDGE_RE
+        .as_ref()
+        .map_err(|e| GraphMlError::Xml(e.to_string()))?;
+    let data_re = DATA_RE
+        .as_ref()
         .map_err(|e| GraphMlError::Xml(e.to_string()))?;
 
     for cap in node_re.captures_iter(content) {
-        let id = cap[1].to_string();
+        let id = gossan_core::xml_unescape(&cap[1]);
         let inner = &cap[2];
         let mut kind = None;
         let mut label = None;
         let mut payload = None;
         for dcap in data_re.captures_iter(inner) {
             let key = &dcap[1];
-            let value = xml_unescape(&dcap[2]);
+            let value = gossan_core::xml_unescape(&dcap[2]);
             match key {
                 "kind" => kind = parse_node_type(&value),
                 "label" => label = Some(value),
-                "payload" => payload = serde_json::from_str(&value).ok(),
+                "payload" => {
+                    match serde_json::from_str(&value) {
+                        Ok(v) => payload = Some(v),
+                        Err(e) => tracing::warn!(
+                            node_id = %id,
+                            error = %e,
+                            "skipping corrupt GraphML node payload JSON"
+                        ),
+                    }
+                },
                 _ => {}
             }
         }
-        let kind = kind.unwrap_or(crate::schema::NodeType::Finding);
+        let Some(kind) = kind else {
+            tracing::warn!(
+                id = %id,
+                "skipping GraphML node with unknown/missing kind tag"
+            );
+            continue;
+        };
         let label = label.unwrap_or_else(|| id.clone());
         nodes.push(Node {
             id,
@@ -188,21 +273,38 @@ fn parse_graphml(content: &str) -> Result<(Vec<Node>, Vec<Edge>), GraphMlError> 
     }
 
     for cap in edge_re.captures_iter(content) {
-        let source_id = cap[1].to_string();
-        let target_id = cap[2].to_string();
+        let source_id = gossan_core::xml_unescape(&cap[1]);
+        let target_id = gossan_core::xml_unescape(&cap[2]);
         let inner = &cap[3];
         let mut kind = None;
         let mut payload = None;
         for dcap in data_re.captures_iter(inner) {
             let key = &dcap[1];
-            let value = xml_unescape(&dcap[2]);
+            let value = gossan_core::xml_unescape(&dcap[2]);
             match key {
                 "etype" => kind = parse_edge_type(&value),
-                "epayload" => payload = serde_json::from_str(&value).ok(),
+                "epayload" => {
+                    match serde_json::from_str(&value) {
+                        Ok(v) => payload = Some(v),
+                        Err(e) => tracing::warn!(
+                            source_id = %source_id,
+                            target_id = %target_id,
+                            error = %e,
+                            "skipping corrupt GraphML edge payload JSON"
+                        ),
+                    }
+                },
                 _ => {}
             }
         }
-        let kind = kind.unwrap_or(EdgeType::HasFinding);
+        let Some(kind) = kind else {
+            tracing::warn!(
+                source_id = %source_id,
+                target_id = %target_id,
+                "skipping GraphML edge with unknown/missing etype tag"
+            );
+            continue;
+        };
         edges.push(Edge {
             source_id,
             target_id,
@@ -216,43 +318,14 @@ fn parse_graphml(content: &str) -> Result<(Vec<Node>, Vec<Edge>), GraphMlError> 
     Ok((nodes, edges))
 }
 
-fn xml_unescape(s: &str) -> String {
-    s.replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
-        .replace("&amp;", "&")
-}
-
+// parse_node_type / parse_edge_type are canonical in super (store/mod.rs).
+// Thin wrappers below delegate to super:: so the call sites above stay concise.
 fn parse_node_type(s: &str) -> Option<crate::schema::NodeType> {
-    use crate::schema::NodeType;
-    match s {
-        "domain" => Some(NodeType::Domain),
-        "subdomain" => Some(NodeType::Subdomain),
-        "ip" => Some(NodeType::Ip),
-        "port" => Some(NodeType::Port),
-        "service" => Some(NodeType::Service),
-        "tech" => Some(NodeType::Tech),
-        "endpoint" => Some(NodeType::Endpoint),
-        "secret" => Some(NodeType::Secret),
-        "cloud" => Some(NodeType::Cloud),
-        "finding" => Some(NodeType::Finding),
-        _ => None,
-    }
+    super::parse_node_type(s)
 }
 
 fn parse_edge_type(s: &str) -> Option<EdgeType> {
-    match s {
-        "RESOLVES_TO" => Some(EdgeType::ResolvesTo),
-        "HOSTS" => Some(EdgeType::Hosts),
-        "RUNS" => Some(EdgeType::Runs),
-        "EXPOSES" => Some(EdgeType::Exposes),
-        "LEAKS" => Some(EdgeType::Leaks),
-        "MISCONFIGURED" => Some(EdgeType::Misconfigured),
-        "HAS_FINDING" => Some(EdgeType::HasFinding),
-        "HAS_SERVICE" => Some(EdgeType::HasService),
-        _ => None,
-    }
+    super::parse_edge_type(s)
 }
 
 impl GraphBackend for GraphMlBackend {
@@ -264,29 +337,33 @@ impl GraphBackend for GraphMlBackend {
     }
 
     fn write_nodes(&mut self, nodes: &[Node]) -> Result<(), Self::Error> {
-        self.nodes.extend(nodes.iter().cloned());
-        self.flush()?;
+        for n in nodes {
+            GraphMlBackend::merge_node(&mut self.nodes, n.clone());
+        }
+        self.dirty = true;
         Ok(())
     }
 
     fn write_edges(&mut self, edges: &[Edge]) -> Result<(), Self::Error> {
-        self.edges.extend(edges.iter().cloned());
-        self.flush()?;
+        for e in edges {
+            GraphMlBackend::merge_edge(&mut self.edges, e.clone());
+        }
+        self.dirty = true;
         Ok(())
     }
 
     fn read_nodes(&self) -> Result<Vec<Node>, Self::Error> {
-        Ok(self.nodes.clone())
+        Ok(self.nodes.values().cloned().collect())
     }
 
     fn read_edges(&self) -> Result<Vec<Edge>, Self::Error> {
-        Ok(self.edges.clone())
+        Ok(self.edges.values().cloned().collect())
     }
 
     fn find_nodes_by_type(&self, kind: crate::schema::NodeType) -> Result<Vec<Node>, Self::Error> {
         Ok(self
             .nodes
-            .iter()
+            .values()
             .filter(|n| n.kind == kind)
             .cloned()
             .collect())
@@ -299,7 +376,7 @@ impl GraphBackend for GraphMlBackend {
     ) -> Result<Vec<Edge>, Self::Error> {
         Ok(self
             .edges
-            .iter()
+            .values()
             .filter(|e| {
                 e.source_id == node_id && edge_type.as_ref().map_or(true, |et| e.kind == *et)
             })
@@ -310,6 +387,7 @@ impl GraphBackend for GraphMlBackend {
     fn clear(&mut self) -> Result<(), Self::Error> {
         self.nodes.clear();
         self.edges.clear();
+        self.dirty = false;
         let _ = std::fs::remove_file(&self.path);
         Ok(())
     }
@@ -332,6 +410,7 @@ mod tests {
 
         let edge = Edge::new("n1", "n2", EdgeType::ResolvesTo);
         backend.write_edges(&[edge.clone()]).unwrap();
+        backend.commit().unwrap();
 
         let mut backend2 = GraphMlBackend::open(file.path());
         backend2.init().unwrap();
@@ -348,10 +427,44 @@ mod tests {
     }
 
     #[test]
+    fn graphml_rewrite_dedups_nodes() {
+        let file = NamedTempFile::new().unwrap();
+        let mut backend = GraphMlBackend::open(file.path());
+        let mut first = Node::new("n1", NodeType::Domain, "first");
+        first.label = "first-label".to_string();
+        backend.write_nodes(&[first]).unwrap();
+
+        let mut second = Node::new("n1", NodeType::Ip, "second");
+        second.label = "second-label".to_string();
+        backend.write_nodes(&[second]).unwrap();
+        backend.commit().unwrap();
+
+        let mut backend2 = GraphMlBackend::open(file.path());
+        backend2.init().unwrap();
+        let nodes = backend2.read_nodes().unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].kind, NodeType::Ip);
+        assert_eq!(nodes[0].label, "second-label");
+    }
+
+    #[test]
+    fn graphml_rewrite_dedups_edges() {
+        let file = NamedTempFile::new().unwrap();
+        let mut backend = GraphMlBackend::open(file.path());
+        backend.write_edges(&[Edge::new("a", "b", EdgeType::ResolvesTo)]).unwrap();
+        backend.write_edges(&[Edge::new("a", "b", EdgeType::ResolvesTo)]).unwrap();
+        backend.commit().unwrap();
+
+        let mut backend2 = GraphMlBackend::open(file.path());
+        backend2.init().unwrap();
+        assert_eq!(backend2.read_edges().unwrap().len(), 1);
+    }
+
+    #[test]
     fn xml_escape_unescape_roundtrip() {
         let original = r#"<script>alert("xss")</script>"#;
-        let escaped = xml_escape(original);
-        let unescaped = xml_unescape(&escaped);
+        let escaped = gossan_core::xml_escape(original);
+        let unescaped = gossan_core::xml_unescape(&escaped);
         assert_eq!(original, unescaped);
     }
 }

@@ -5,8 +5,8 @@ edition.workspace = true
 authors = ["Santh Project <security@santh.dev>"]
 license.workspace = true
 homepage = "https://santh.dev"
-repository = "https://github.com/santhsecurity/gossan"
-description = "Tech stack fingerprinting scanner for panoram — powered by truestack — part of the security research ecosystem"
+repository = "https://github.com/santhreal/gossan"
+description = "Tech stack fingerprinting scanner for gossan, powered by truestack, part of the security research ecosystem"
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
@@ -33,6 +33,7 @@ secfinding  = { workspace = true }
 wiremock = { workspace = true }
 tempfile = { workspace = true }
 url = { workspace = true }
+proptest = { workspace = true }
 
 [lints]
 workspace = true

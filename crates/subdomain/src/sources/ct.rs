@@ -22,18 +22,21 @@ impl SubdomainSource for Ct {
         limiter: &DefaultDirectRateLimiter,
     ) -> anyhow::Result<Vec<Target>> {
         
-        let url = format!("https://crt.sh/?q=%.{}&output=json", domain);
+        let url = ctlog::crtsh_query_url(domain);
         limiter.until_ready().await;
-        let resp = client.get(&url).send().await?;
+        let resp = client.get(&url).send().await?.error_for_status()?;
         let max_size = config.max_response_size;
         let bytes = gossan_core::read_response_limited(resp, max_size).await?;
         let mut seen = std::collections::HashSet::new();
         let domain_lower = domain.to_lowercase();
         
-        let arr: Vec<String> = serde_json::from_slice(&bytes).unwrap_or_default();
-        for item in arr {
-            let candidate = item.trim().trim_start_matches("*.").to_lowercase();
-            if !candidate.contains('*') && crate::is_subdomain_of(&candidate, &domain_lower) {
+        // Normalize via the canonical crt.sh parser (newline split, `*.`
+        // strip, lowercase, wildcard/empty drop, dedup) then keep only
+        // strict subdomains of the queried domain. Malformed bodies fail
+        // the source (orchestrator emits source-error) instead of silent empty.
+        let text = String::from_utf8_lossy(&bytes);
+        for candidate in ctlog::parse_crtsh_hostnames(&text)? {
+            if crate::is_subdomain_of(&candidate, &domain_lower) {
                 seen.insert(candidate);
             }
         }

@@ -22,19 +22,24 @@ impl SubdomainSource for Greynoise {
         limiter: &DefaultDirectRateLimiter,
     ) -> anyhow::Result<Vec<Target>> {
         
-        let Some(_key) = crate::sources::get_api_key(config, "greynoise", "GREYNOISE_API_KEY") else {
+        let Some(key) = crate::sources::get_api_key(config, "greynoise", "GREYNOISE_API_KEY") else {
             return Ok(vec![]);
         };
 
         let url = format!("https://api.greynoise.io/v3/community/{}", domain);
         limiter.until_ready().await;
-        let resp = client.get(&url).send().await?;
+        let resp = client
+            .get(&url)
+            .header("key", key)
+            .send()
+            .await?
+            .error_for_status()?;
         let max_size = config.max_response_size;
         let bytes = gossan_core::read_response_limited(resp, max_size).await?;
         let mut seen = std::collections::HashSet::new();
         let domain_lower = domain.to_lowercase();
         
-        let arr: Vec<String> = serde_json::from_slice(&bytes).unwrap_or_default();
+        let arr: Vec<String> = serde_json::from_slice(&bytes)?;
         for item in arr {
             let candidate = item.trim().trim_start_matches("*.").to_lowercase();
             if !candidate.contains('*') && crate::is_subdomain_of(&candidate, &domain_lower) {

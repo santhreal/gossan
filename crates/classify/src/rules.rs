@@ -60,10 +60,13 @@ pub fn load_from_toml<P: AsRef<Path>>(path: P) -> Result<Vec<ServiceRule>, anyho
 /// Load custom rules + the built-in set, in that order. Custom
 /// rules take precedence (appear first) so a higher-priority custom
 /// rule can override a built-in.
-pub fn builtin_plus<P: AsRef<Path>>(custom_path: P) -> Vec<ServiceRule> {
-    let mut out = load_from_toml(custom_path).unwrap_or_default();
+///
+/// Errors are propagated rather than silently ignored, so callers can
+/// decide whether to abort or fall back to the built-in set.
+pub fn builtin_plus<P: AsRef<Path>>(custom_path: P) -> Result<Vec<ServiceRule>, anyhow::Error> {
+    let mut out = load_from_toml(custom_path)?;
     out.extend(builtin_rules());
-    out
+    Ok(out)
 }
 
 /// Result of classifying a banner.
@@ -81,6 +84,8 @@ pub struct ServiceMatch {
     pub signals: Vec<String>,
     /// Additional metadata extracted.
     pub metadata: HashMap<String, String>,
+    /// Rule priority (higher = preferred when multiple rules match).
+    pub priority: u8,
 }
 
 /// Built-in rule definitions.
@@ -170,8 +175,8 @@ pub fn builtin_rules() -> Vec<ServiceRule> {
             common_ports: vec![3306],
             patterns: vec![
                 "mysql_native_password".into(),
+                "caching_sha2_password".into(),
                 "MariaDB".into(),
-                "\x00\x00\x00\x0a".into(), // MySQL greeting
             ],
             version_pattern: Some(r"(\d+\.\d+\.\d+)".into()),
             security_signals: vec!["database-exposed".into(), "version-disclosure".into()],
@@ -195,7 +200,7 @@ pub fn builtin_rules() -> Vec<ServiceRule> {
             patterns: vec![
                 "-ERR".into(),
                 "+PONG".into(),
-                "$".into(),
+                "-NOAUTH".into(),
                 "redis_version:".into(),
             ],
             version_pattern: Some(r"redis_version:(\d+\.\d+\.\d+)".into()),
@@ -237,6 +242,7 @@ pub fn builtin_rules() -> Vec<ServiceRule> {
             patterns: vec![
                 "\"cluster_name\"".into(),
                 "\"tagline\" : \"You Know, for Search\"".into(),
+                "\"tagline\":\"You Know, for Search\"".into(),
             ],
             version_pattern: Some(r#""number"\s*:\s*"(\d+\.\d+\.\d+)""#.into()),
             security_signals: vec![
@@ -1074,7 +1080,7 @@ fn extended_rules() -> Vec<ServiceRule> {
             "tcp",
             vec![80, 443, 5900],
             vec!["iDRAC", "Dell Inc."],
-            Some(r"iDRAC[/\s](\d+)"),
+            Some(r"iDRAC[/\s](\d+(?:\.\d+)*)"),
             vec!["remote-mgmt-exposed"],
             10,
         ),
@@ -1122,16 +1128,6 @@ fn extended_rules() -> Vec<ServiceRule> {
             None,
             vec!["cleartext-protocol", "telnet-exposed"],
             10,
-        ),
-        r(
-            "snmp",
-            "SNMP",
-            "udp",
-            vec![161, 162],
-            vec!["public", "private"],
-            None,
-            vec!["snmp-exposed"],
-            9,
         ),
         r(
             "rpcbind",
@@ -1315,7 +1311,7 @@ fn extended_rules() -> Vec<ServiceRule> {
         // ── Industrial / IoT (banner-detectable) ─────────────────────
         // Modbus MBAP header is 7 bytes; the ProtocolID at offset 2 is
         // always 0x0000 0x0000 plus a 2-byte length and unit ID. A naked
-        // run of zero bytes is too generic — gate on the typical "len=6,
+        // run of zero bytes is too generic, gate on the typical "len=6,
         // unit=1" prefix which catches most server responses without
         // matching arbitrary zero-padded buffers.
         r(
@@ -1431,6 +1427,16 @@ fn extended_rules() -> Vec<ServiceRule> {
             vec!["rsync-exposed"],
             8,
         ),
+        r(
+            "snmp",
+            "SNMP",
+            "udp",
+            vec![161, 162],
+            vec!["1.3.6.1", "snmp"],
+            None,
+            vec!["snmp-exposed"],
+            9,
+        ),
     ]
 }
 
@@ -1462,5 +1468,15 @@ mod tests {
                 rule.id
             );
         }
+    }
+
+    #[test]
+    fn builtin_plus_propagates_missing_file_error() {
+        let result = builtin_plus("/nonexistent/path/that/does/not/exist.toml");
+        assert!(
+            result.is_err(),
+            "expected error when custom rules file is missing, got {:?}",
+            result
+        );
     }
 }

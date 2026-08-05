@@ -22,19 +22,29 @@ impl SubdomainSource for Passivetotal {
         limiter: &DefaultDirectRateLimiter,
     ) -> anyhow::Result<Vec<Target>> {
         
-        let Some(_key) = crate::sources::get_api_key(config, "passivetotal", "PASSIVETOTAL_API_KEY") else {
+        let Some(api_key) = crate::sources::get_api_key(config, "passivetotal", "PASSIVETOTAL_API_KEY") else {
             return Ok(vec![]);
+        };
+        let Some(email) = config.api_keys.get("passivetotal_email").cloned()
+            .or_else(|| std::env::var("PASSIVETOTAL_EMAIL").ok())
+        else {
+            return Err(anyhow::anyhow!("PassiveTotal requires PASSIVETOTAL_EMAIL"));
         };
 
         let url = format!("https://api.passivetotal.org/v2/enrichment/subdomains?query={}", domain);
         limiter.until_ready().await;
-        let resp = client.get(&url).send().await?;
+        let resp = client
+            .get(&url)
+            .basic_auth(email, Some(api_key))
+            .send()
+            .await?
+            .error_for_status()?;
         let max_size = config.max_response_size;
         let bytes = gossan_core::read_response_limited(resp, max_size).await?;
         let mut seen = std::collections::HashSet::new();
         let domain_lower = domain.to_lowercase();
         
-        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
+        let json: serde_json::Value = serde_json::from_slice(&bytes)?;
         if let Some(arr) = json.get("subdomains").and_then(|v| v.as_array()) {
             for item in arr {
                 if let Some(v) = item.as_str() {
@@ -50,5 +60,23 @@ impl SubdomainSource for Passivetotal {
             domain: d,
             source: DiscoverySource::PassiveDns,
         })).collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn request_has_basic_auth() {
+        let client = reqwest::Client::new();
+        let url = format!("https://api.passivetotal.org/v2/enrichment/subdomains?query={}", "example.com");
+        let req = client
+            .get(&url)
+            .basic_auth("user@example.com", Some("secret"))
+            .build()
+            .unwrap();
+        let auth = req.headers().get("Authorization").unwrap().to_str().unwrap();
+        assert!(auth.starts_with("Basic "));
     }
 }

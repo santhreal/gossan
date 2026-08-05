@@ -29,7 +29,7 @@ async fn catch_all_html_is_not_a_heap_dump() {
 
     let client = gossan_core::ScanClient::default_client();
     let target = web_target(&server.uri());
-    let findings = debug_endpoints::probe(&client, &target).await.unwrap();
+    let findings = debug_endpoints::probe(&client, &target, None).await.unwrap();
 
     assert!(
         !findings.iter().any(|f| f.title().contains("Heap Dump")),
@@ -56,7 +56,7 @@ async fn real_octet_stream_heap_dump_still_detected() {
 
     let client = gossan_core::ScanClient::default_client();
     let target = web_target(&server.uri());
-    let findings = debug_endpoints::probe(&client, &target).await.unwrap();
+    let findings = debug_endpoints::probe(&client, &target, None).await.unwrap();
 
     assert!(
         findings.iter().any(|f| f.title().contains("Heap Dump")),

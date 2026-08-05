@@ -1,4 +1,4 @@
-//! GitHub API integration — organization enumeration and repo discovery.
+//! GitHub API integration (organization enumeration and repo discovery).
 
 use gossan_core::target::{RepositoryTarget, ScmService};
 use gossan_core::{Config, DiscoverySource, ScanInput, Target};
@@ -21,7 +21,11 @@ pub async fn discover_org_assets(
         return Ok(());
     };
 
-    let octo = Octocrab::builder().personal_token(token).build()?;
+    let mut builder = Octocrab::builder().personal_token(token);
+    if let Some(url) = config.api_keys.get("github_url") {
+        builder = builder.base_uri(url).map_err(|e| anyhow::anyhow!("invalid github_url: {e}"))?;
+    }
+    let octo = builder.build()?;
 
     // 1. Search for organizations matching the domain (e.g. email domain or name)
     // Heuristic: take the root domain name
@@ -59,13 +63,23 @@ pub async fn discover_org_assets(
                         continue;
                     }
 
-                    if let Ok(url) = Url::parse(&repo_url_str) {
-                        input.emit_target(Target::Repository(RepositoryTarget {
-                            url,
-                            service: ScmService::GitHub,
-                            source: DiscoverySource::ScmMapping,
-                            branch: None,
-                        }));
+                    match Url::parse(&repo_url_str) {
+                        Ok(url) => {
+                            input.emit_target(Target::Repository(RepositoryTarget {
+                                url,
+                                service: ScmService::GitHub,
+                                source: DiscoverySource::ScmMapping,
+                                branch: None,
+                            })).await;
+                        }
+                        Err(e) => {
+                            warn!(
+                                org_name,
+                                url = %repo_url_str,
+                                error = %e,
+                                "GitHub repo URL parse failed; skipping repository"
+                            );
+                        }
                     }
                 }
 

@@ -5,19 +5,16 @@ use gossan_core::target::{ScmService, Target};
 use gossan_core::{Config, ScanInput};
 use gossan_scm::gitlab_api;
 use hickory_resolver::config::{ResolverConfig, ResolverOpts};
-use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::TokioResolver;
 use mockito::Server;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
-fn fresh_input() -> (ScanInput, mpsc::UnboundedReceiver<Target>) {
-    let (tx, rx) = mpsc::unbounded_channel();
-    let (live_tx, _live_rx) = mpsc::unbounded_channel();
-    let (_t_in, t_in_rx) = mpsc::unbounded_channel();
-    let resolver = Arc::new(TokioAsyncResolver::tokio(
-        ResolverConfig::default(),
-        ResolverOpts::default(),
-    ));
+fn fresh_input() -> (ScanInput, mpsc::Receiver<Target>) {
+    let (tx, rx) = mpsc::channel(1024);
+    let (live_tx, _live_rx) = mpsc::channel(1024);
+    let (_t_in, t_in_rx) = mpsc::channel(1024);
+    let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build());
     let input = ScanInput {
         seed: "acme.test".into(),
         target_rx: tokio::sync::Mutex::new(t_in_rx),

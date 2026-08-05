@@ -259,30 +259,28 @@ fn community_tier_b_cve_replay_and_twin() {
         builtin_only.len()
     );
 
-    // The moat must add *detection power*, not just row count:
-    // regreSSHion is community-only, so builtin `correlate` MUST be
-    // blind to it while the community path MUST catch it.
+    // regreSSHion range now lives in builtin.toml (product+min/fixed).
+    // Builtin correlate MUST catch in-range OpenSSH_8.5 and miss 9.8.
     let builtin_view = correlate("SSH-2.0-OpenSSH_8.5", &svc(22));
-    assert_eq!(
-        cve_hits(&builtin_view, "CVE-2024-6387"),
-        0,
-        "builtin-only must NOT know community CVE-2024-6387 (titles: {:?})",
+    assert!(
+        cve_hits(&builtin_view, "CVE-2024-6387") >= 1,
+        "builtin CVE-2024-6387 must hit OpenSSH_8.5 (titles: {:?})",
         builtin_view.iter().map(|x| x.title()).collect::<Vec<_>>()
     );
-
-    // regreSSHion (community): OpenSSH 8.5 vulnerable; 9.8 is the fix.
-    let pos = correlate_with_rules("SSH-2.0-OpenSSH_8.5", &svc(22), &rules);
-    assert!(
-        cve_hits(&pos, "CVE-2024-6387") >= 1,
-        "community CVE-2024-6387 must replay on OpenSSH_8.5 (titles: {:?})",
-        pos.iter().map(|x| x.title()).collect::<Vec<_>>()
-    );
-    let twin = correlate_with_rules("SSH-2.0-OpenSSH_9.8", &svc(22), &rules);
+    let twin = correlate("SSH-2.0-OpenSSH_9.8", &svc(22));
     assert_eq!(
         cve_hits(&twin, "CVE-2024-6387"),
         0,
         "patched OpenSSH_9.8 must NOT report regreSSHion (titles: {:?})",
         twin.iter().map(|x| x.title()).collect::<Vec<_>>()
+    );
+
+    // Community path still sees the same range hit (merged rules).
+    let pos = correlate_with_rules("SSH-2.0-OpenSSH_8.5", &svc(22), &rules);
+    assert!(
+        cve_hits(&pos, "CVE-2024-6387") >= 1,
+        "merged rules must still replay CVE-2024-6387 on OpenSSH_8.5 (titles: {:?})",
+        pos.iter().map(|x| x.title()).collect::<Vec<_>>()
     );
 
     // Log4Shell is in the community set (asserted by the in-src parse

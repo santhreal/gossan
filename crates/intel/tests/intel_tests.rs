@@ -14,13 +14,13 @@ fn get_test_config() -> Config {
     Config::default()
 }
 
-fn make_input(targets: Vec<Target>) -> (ScanInput, mpsc::UnboundedReceiver<secfinding::Finding>) {
-    let (live_tx, live_rx) = mpsc::unbounded_channel();
-    let (target_tx, target_rx) = mpsc::unbounded_channel();
+fn make_input(targets: Vec<Target>) -> (ScanInput, mpsc::Receiver<secfinding::Finding>) {
+    let (live_tx, live_rx) = tokio::sync::mpsc::channel(1024);
+    let (target_tx, target_rx) = tokio::sync::mpsc::channel::<Target>(1024);
 
     // Send targets to the channel before creating the input
     for t in targets {
-        let _ = target_tx.send(t);
+        let _ = target_tx.try_send(t);
     }
     // Drop the sender so the receiver will eventually return None
     drop(target_tx);
@@ -29,7 +29,7 @@ fn make_input(targets: Vec<Target>) -> (ScanInput, mpsc::UnboundedReceiver<secfi
         seed: "test".to_string(),
         target_rx: tokio::sync::Mutex::new(target_rx),
         live_tx,
-        target_tx: mpsc::unbounded_channel().0, // New sender for downstream targets
+        target_tx: tokio::sync::mpsc::channel(1024).0, // New sender for downstream targets
         resolver: Arc::new(gossan_core::net::build_resolver(&get_test_config()).unwrap()),
     };
     (input, live_rx)
@@ -205,7 +205,7 @@ async fn test_port_validation_rejects_negative() {
     let db = IntelDb::open(&db_path).unwrap();
     // Insert an invalid port directly via SQL to simulate corruption
     {
-        // Reach into the connection via the documented test helper —
+        // Reach into the connection via the documented test helper 
         // the field itself is private. See `IntelDb::_test_conn`.
         let conn = db._test_conn().lock().unwrap();
         conn.execute(

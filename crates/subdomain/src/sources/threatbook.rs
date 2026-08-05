@@ -22,19 +22,19 @@ impl SubdomainSource for Threatbook {
         limiter: &DefaultDirectRateLimiter,
     ) -> anyhow::Result<Vec<Target>> {
         
-        let Some(_key) = crate::sources::get_api_key(config, "threatbook", "THREATBOOK_API_KEY") else {
+        let Some(key) = crate::sources::get_api_key(config, "threatbook", "THREATBOOK_API_KEY") else {
             return Ok(vec![]);
         };
 
-        let url = format!("https://api.threatbook.cn/v3/domain/sub_domains?resource={domain}&apikey={key}", key = _key, domain = domain);
+        let url = format!("https://api.threatbook.cn/v3/domain/sub_domains?resource={domain}&apikey={key}");
         limiter.until_ready().await;
-        let resp = client.get(&url).send().await?;
+        let resp = client.get(&url).send().await?.error_for_status()?;
         let max_size = config.max_response_size;
         let bytes = gossan_core::read_response_limited(resp, max_size).await?;
         let mut seen = std::collections::HashSet::new();
         let domain_lower = domain.to_lowercase();
         
-        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
+        let json: serde_json::Value = serde_json::from_slice(&bytes)?;
         if let Some(arr) = json.get("data").and_then(|v| v.get("sub_domains")).and_then(|v| v.as_array()) {
             for item in arr {
                 if let Some(v) = item.as_str() {

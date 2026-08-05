@@ -1,4 +1,4 @@
-//! Competitor benchmark — gossan-hidden vs nuclei on a controlled
+//! Competitor benchmark, gossan-hidden vs nuclei on a controlled
 //! HTTP fixture corpus.
 //!
 //! Without nuclei installed this test skips with an install hint.

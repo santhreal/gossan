@@ -1,4 +1,4 @@
-//! Competitor benchmark — gossan-portscan vs nmap on a controlled
+//! Competitor benchmark, gossan-portscan vs nmap on a controlled
 //! localhost fixture.
 //!
 //! We bind 10 ephemeral TCP listeners on 127.0.0.1, each spawning a
@@ -7,7 +7,7 @@
 //! range, then nmap, and compare findings + wall time.
 //!
 //! gossan emits open ports through `target_tx` as `Target::Service`,
-//! not through the `live_tx` Finding channel — counting from the wrong
+//! not through the `live_tx` Finding channel, counting from the wrong
 //! channel will silently report 0 findings even when every port is
 //! detected. This bench counts `Target::Service` events directly.
 
@@ -17,7 +17,7 @@ use gossan_core::{
 };
 use gossan_portscan::PortScanner;
 use hickory_resolver::config::{ResolverConfig, ResolverOpts};
-use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::TokioResolver;
 use std::net::{IpAddr, Ipv4Addr, TcpListener};
 use std::process::Command;
 use std::sync::Arc;
@@ -85,15 +85,14 @@ fn run_nmap(ports: &[u16]) -> (usize, u128) {
 }
 
 async fn run_gossan_portscan(ports: Vec<u16>) -> (usize, u128) {
-    let (live_tx, _live_rx) = mpsc::unbounded_channel();
-    let (target_tx, mut target_rx) = mpsc::unbounded_channel();
-    let (in_tx, in_rx) = mpsc::unbounded_channel();
-    let resolver = Arc::new(TokioAsyncResolver::tokio(
-        ResolverConfig::default(),
-        ResolverOpts::default(),
-    ));
+    let (live_tx, _live_rx) = mpsc::channel(1024);
+    let (target_tx, mut target_rx) = mpsc::channel(1024);
+    let (in_tx, in_rx) = mpsc::channel(1024);
+    let resolver = Arc::new(
+        gossan_core::net::build_resolver(&Config::default()).expect("test resolver"),
+    );
     in_tx
-        .send(Target::Host(HostTarget {
+        .try_send(Target::Host(HostTarget {
             ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
             domain: None,
         }))
@@ -147,7 +146,7 @@ async fn portscan_versus_nmap() {
     let (peer_n, peer_us) = run_nmap(&ports);
     stop.store(true, std::sync::atomic::Ordering::Relaxed);
     println!(
-        "vs nmap -sT — ours: services={ours_n} time={}ms | nmap: open_ports={peer_n} time={}ms",
+        "vs nmap -sT, ours: services={ours_n} time={}ms | nmap: open_ports={peer_n} time={}ms",
         ours_us / 1000,
         peer_us / 1000
     );

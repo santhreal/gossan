@@ -7,15 +7,9 @@
 use std::collections::HashSet;
 use std::net::IpAddr;
 
-use crate::util::{bounded_json, is_routable_ip};
+use crate::util::{bounded_text, is_routable_ip};
 use crate::OriginCandidate;
-
-/// JSON shape returned by crt.sh API.
-#[derive(serde::Deserialize)]
-struct CrtShEntry {
-    /// Common name or SAN value.
-    name_value: String,
-}
+use futures::future::join_all;
 
 /// Maximum number of unique hostnames to resolve from CT logs.
 const MAX_HOSTNAMES: usize = 500;
@@ -36,10 +30,7 @@ pub async fn scan(
 ) -> anyhow::Result<Vec<OriginCandidate>> {
     let mut candidates = Vec::new();
 
-    let url = format!(
-        "https://crt.sh/?q=%.{}&output=json",
-        urlencoding::encode(&domain)
-    );
+    let url = ctlog::crtsh_query_url(&domain);
 
     let response = match client.get(&url).await {
         Ok(r) => r,
@@ -58,30 +49,24 @@ pub async fn scan(
         return Ok(candidates);
     }
 
-    let entries: Vec<CrtShEntry> = match bounded_json(response, 10 * 1024 * 1024).await {
-        Ok(e) => e,
+    let body = match bounded_text(response, crate::MAX_ORIGIN_JSON_BYTES).await {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(scanner = "ssl_cert", error = %e, "failed to read crt.sh response");
+            return Ok(candidates);
+        }
+    };
+
+    // Extract unique hostnames (CN + SANs, apex included) via the canonical
+    // crt.sh parser, which applies the shared normalization: newline split,
+    // `*.` wildcard strip, lowercase, empty/wildcard drop, and dedup.
+    let hostnames: HashSet<String> = match ctlog::parse_crtsh_hostnames(&body) {
+        Ok(names) => names.into_iter().collect(),
         Err(e) => {
             tracing::warn!(scanner = "ssl_cert", error = %e, "failed to parse crt.sh response");
             return Ok(candidates);
         }
     };
-
-    // Extract unique hostnames from certificate CN/SAN fields.
-    let mut hostnames = HashSet::new();
-    for entry in &entries {
-        // name_value can contain newline-separated SANs.
-        for name in entry.name_value.split('\n') {
-            let clean = name.trim().to_lowercase();
-            // Skip wildcard-only entries — they don't resolve.
-            if let Some(base) = clean.strip_prefix("*.") {
-                if !base.is_empty() {
-                    hostnames.insert(base.to_string());
-                }
-            } else if !clean.is_empty() {
-                hostnames.insert(clean);
-            }
-        }
-    }
 
     if hostnames.len() > MAX_HOSTNAMES {
         tracing::warn!(
@@ -98,7 +83,7 @@ pub async fn scan(
         "extracted hostnames from CT logs"
     );
 
-    // Resolve each hostname to find non-CDN IPs.
+    // Resolve each hostname concurrently to find non-CDN IPs.
     let resolver = hickory_resolver::TokioResolver::builder_with_config(
         hickory_resolver::config::ResolverConfig::default(),
         hickory_resolver::name_server::TokioConnectionProvider::default(),
@@ -108,17 +93,36 @@ pub async fn scan(
 
     let mut seen_ips = HashSet::new();
 
-    for hostname in hostnames.iter().take(MAX_HOSTNAMES) {
-        if let Ok(lookup) = resolver.ipv4_lookup(hostname.as_str()).await {
-            for ip in lookup {
-                let addr = IpAddr::V4(ip.0);
-                if is_routable_ip(addr) && seen_ips.insert(addr) {
-                    candidates.push(OriginCandidate::new(
-                        addr,
-                        format!("ssl_cert_ct_log ({hostname})"),
-                        70,
-                    ));
+    let hostnames: Vec<&String> = hostnames.iter().take(MAX_HOSTNAMES).collect();
+    let lookups: Vec<_> = hostnames
+        .iter()
+        .map(|hostname| async {
+            let result = resolver.ipv4_lookup(hostname.as_str()).await;
+            (*hostname, result)
+        })
+        .collect();
+
+    for (hostname, lookup) in join_all(lookups).await {
+        match lookup {
+            Ok(lookup) => {
+                for ip in lookup {
+                    let addr = IpAddr::V4(ip.0);
+                    if is_routable_ip(addr) && seen_ips.insert(addr) {
+                        candidates.push(OriginCandidate::new(
+                            addr,
+                            format!("ssl_cert_ct_log ({hostname})"),
+                            70,
+                        ));
+                    }
                 }
+            }
+            Err(e) if e.is_nx_domain() || e.is_no_records_found() => {}
+            Err(e) => {
+                tracing::warn!(
+                    %hostname,
+                    error = %e,
+                    "ssl_cert CT hostname A lookup failed; skipping host"
+                );
             }
         }
     }
