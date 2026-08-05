@@ -240,7 +240,7 @@ simdsieve      = "0.1"
 keyhog-core    = "0.5"
 keyhog-scanner = { version = "0.2", default-features = false }
 keyhog-verifier = "0.5"
-truestack      = "0.2"
+truestack      = "0.2.1"
 wafrift-detect = "0.2"
 hashkit        = "0.1"
 netforge       = "0.1"
@@ -265,10 +265,4 @@ octocrab = "0.38"
 
 gitlab = "0.1703"
 gix = "0.67"
-
-[patch.crates-io]
-# crates.io truestack 0.2.0 pins clap =4.6.0 while runtime-headless → secmatch
-# pins clap =4.6.1. Git main uses caret 4.6.0 so the graph can unify on 4.6.1
-# and a clean GitHub clone / release build does not need the Santh monorepo.
-truestack = { git = "https://github.com/santhreal/truestack" }
 

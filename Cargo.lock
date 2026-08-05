@@ -8127,8 +8127,9 @@ dependencies = [
 
 [[package]]
 name = "truestack"
-version = "0.2.0"
-source = "git+https://github.com/santhreal/truestack#543c93a838fb3c9b2d597a49b97cf76bcf8892e3"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b9a0d7a3bb2f1dae548da66cb162d0fe6c17769b03c52cd99fd8d91c2e71c950"
 dependencies = [
  "aho-corasick",
  "anyhow",
