@@ -76,6 +76,7 @@ and checkpoint work that accumulated on the main branch since 0.3.2.
   that download, checksum-verify, copy into a durable PATH location,
   and print shell PATH copy-paste when needed.
 - README install section with per-OS copy-paste download + PATH setup.
+- Depend on `truestack 0.2.1` (caret deps) so crates.io publishes no longer conflict with exact pins from `truestack 0.2.0`.
 - Tag-triggered crates.io publish for **all** workspace crates via `scripts/publish.sh` (release workflow `publish-crates` job; requires `CARGO_REGISTRY_TOKEN`).
 
 ## [0.3.0] - 2026-05-14
