@@ -1,4 +1,4 @@
-//! Conservative campaign mapper — candidate generator for downstream consumers.
+//! Conservative campaign mapper (candidate generator for downstream consumers).
 //!
 //! Collects infrastructure signals from seed and candidate targets, then emits
 //! structured findings with evidence for each correlated candidate. This module
@@ -33,21 +33,19 @@ use tokio_rustls::TlsConnector;
 use x509_cert::der::Decode;
 use x509_cert::Certificate;
 
+use crate::private_ip::is_private_or_restricted;
+
 // ---------------------------------------------------------------------------
 // Signal types
 // ---------------------------------------------------------------------------
 
 /// A single infrastructure signal observed on a target.
 #[derive(Debug, Clone)]
-struct Signal {
-    /// Human-readable name shown in findings.
-    name: &'static str,
-    /// Weight contribution toward the emission threshold.
-    weight: u32,
-    /// Detailed evidence string for the finding detail.
-    detail: String,
-    /// The matched value (for `matched_values` on the `Finding`).
-    matched_value: String,
+pub struct Signal {
+    pub name: &'static str,
+    pub weight: u32,
+    pub detail: String,
+    pub matched_value: String,
 }
 
 /// Minimum cumulative weight to emit a candidate.
@@ -56,10 +54,10 @@ struct Signal {
 /// requiring at least one corroborating signal. Two medium signals (e.g.,
 /// favicon + tracking ID = 15 + 30 = 45) still fall short, preventing
 /// statistical-only matches from reaching downstream consumers.
-const EMISSION_THRESHOLD: u32 = 50;
+pub const EMISSION_THRESHOLD: u32 = 50;
 
 // ---------------------------------------------------------------------------
-// Ambient blocklists — values known to match across unrelated infrastructure
+// Ambient blocklists, values known to match across unrelated infrastructure
 // ---------------------------------------------------------------------------
 
 /// JARM fingerprints shared by major CDNs. Matching on these alone proves
@@ -95,53 +93,15 @@ const AMBIENT_INTERNAL_IPS: &[&str] = &[
 // Signal collectors
 // ---------------------------------------------------------------------------
 
-fn murmurhash3_x86_32(key: &[u8], seed: u32) -> i32 {
-    let mut h1 = seed;
-    let c1 = 0xcc9e2d51u32;
-    let c2 = 0x1b873593u32;
-
-    let mut chunks = key.chunks_exact(4);
-    for chunk in &mut chunks {
-        let mut k1 = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-        k1 = k1.wrapping_mul(c1);
-        k1 = k1.rotate_left(15);
-        k1 = k1.wrapping_mul(c2);
-
-        h1 ^= k1;
-        h1 = h1.rotate_left(13);
-        h1 = h1.wrapping_mul(5).wrapping_add(0xe6546b64);
-    }
-
-    let remainder = chunks.remainder();
-    if !remainder.is_empty() {
-        let mut k1 = 0u32;
-        if remainder.len() >= 3 {
-            k1 ^= (remainder[2] as u32) << 16;
-        }
-        if remainder.len() >= 2 {
-            k1 ^= (remainder[1] as u32) << 8;
-        }
-        if !remainder.is_empty() {
-            k1 ^= remainder[0] as u32;
-        }
-        k1 = k1.wrapping_mul(c1);
-        k1 = k1.rotate_left(15);
-        k1 = k1.wrapping_mul(c2);
-        h1 ^= k1;
-    }
-
-    h1 ^= key.len() as u32;
-    h1 ^= h1 >> 16;
-    h1 = h1.wrapping_mul(0x85ebca6b);
-    h1 ^= h1 >> 13;
-    h1 = h1.wrapping_mul(0xc2b2ae35);
-    h1 ^= h1 >> 16;
-
-    i32::try_from(h1).unwrap_or(0)
+pub fn murmurhash3_x86_32(key: &[u8], seed: u32) -> i32 {
+    // Delegates to the canonical implementation in gossan-core so there
+    // is one audited copy of the algorithm. The `as i32` cast gives the
+    // signed-wrap behaviour the Shodan-style favicon hash expects.
+    gossan_core::mmh3_x86_32(key, seed) as i32
 }
 
 /// Extract analytics/tracking property IDs from page body.
-fn extract_tracking_ids(body: &str) -> HashSet<String> {
+pub fn extract_tracking_ids(body: &str) -> HashSet<String> {
     use std::sync::OnceLock;
     static RE: OnceLock<regex::Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
@@ -163,7 +123,7 @@ fn extract_tracking_ids(body: &str) -> HashSet<String> {
 }
 
 /// Extract leaked internal (RFC 1918) IPs from response headers.
-fn extract_internal_ips(headers: &[(String, String)]) -> HashSet<String> {
+pub fn extract_internal_ips(headers: &[(String, String)]) -> HashSet<String> {
     use std::sync::OnceLock;
     static RE: OnceLock<regex::Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
@@ -195,25 +155,34 @@ fn extract_internal_ips(headers: &[(String, String)]) -> HashSet<String> {
 }
 
 /// Extract CSP report-uri or report-to endpoints.
-fn extract_csp_report_uri(headers: &[(String, String)]) -> Option<String> {
+pub fn extract_csp_report_uri(headers: &[(String, String)]) -> Option<String> {
+    static REPORT_URI_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)\breport-uri\s+([^\s;]+)")
+            .expect("compile-time CSP report-uri regex literal must compile")
+    });
+    static REPORT_TO_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)\breport-to\s+([^\s;]+)")
+            .expect("compile-time CSP report-to regex literal must compile")
+    });
+
     for (name, value) in headers {
         if name.eq_ignore_ascii_case("content-security-policy")
             || name.eq_ignore_ascii_case("content-security-policy-report-only")
         {
-            // report-uri directive
-            if let Some(pos) = value.find("report-uri ") {
-                let rest = &value[pos + 11..];
-                let uri = rest.split([';', ' ']).next().unwrap_or("").trim();
-                if !uri.is_empty() {
-                    return Some(uri.to_string());
+            if let Some(cap) = REPORT_URI_RE.captures(value) {
+                if let Some(m) = cap.get(1) {
+                    let uri = m.as_str().trim();
+                    if !uri.is_empty() {
+                        return Some(uri.to_string());
+                    }
                 }
             }
-            // report-to directive (the endpoint name, not the URL itself)
-            if let Some(pos) = value.find("report-to ") {
-                let rest = &value[pos + 10..];
-                let group = rest.split([';', ' ']).next().unwrap_or("").trim();
-                if !group.is_empty() {
-                    return Some(group.to_string());
+            if let Some(cap) = REPORT_TO_RE.captures(value) {
+                if let Some(m) = cap.get(1) {
+                    let group = m.as_str().trim();
+                    if !group.is_empty() {
+                        return Some(group.to_string());
+                    }
                 }
             }
         }
@@ -222,7 +191,7 @@ fn extract_csp_report_uri(headers: &[(String, String)]) -> Option<String> {
 }
 
 /// Extract non-public CORS allowed origins.
-fn extract_cors_origins(headers: &[(String, String)]) -> HashSet<String> {
+pub fn extract_cors_origins(headers: &[(String, String)]) -> HashSet<String> {
     let mut origins = HashSet::new();
     let public_patterns = ["*", "null", "https://fonts.googleapis.com"];
     for (name, value) in headers {
@@ -236,15 +205,27 @@ fn extract_cors_origins(headers: &[(String, String)]) -> HashSet<String> {
     origins
 }
 
-async fn get_dns_ips(
-    resolver: &hickory_resolver::TokioAsyncResolver,
+pub async fn get_dns_ips(
+    resolver: &hickory_resolver::TokioResolver,
     host: &str,
 ) -> anyhow::Result<HashSet<IpAddr>> {
-    let mut ips = HashSet::new();
-    if let Ok(lookup) = resolver.lookup_ip(host).await {
-        for ip in lookup.iter() {
-            ips.insert(ip);
+    let lookup = match resolver.lookup_ip(host).await {
+        Ok(lookup) => lookup,
+        Err(e) if e.is_nx_domain() || e.is_no_records_found() => {
+            anyhow::bail!("no dns records found for {}", host);
         }
+        Err(e) => {
+            tracing::warn!(
+                host = %host,
+                error = %e,
+                "DNS lookup failed while collecting host IPs"
+            );
+            return Err(anyhow::anyhow!("DNS lookup failed for {}: {}", host, e));
+        }
+    };
+    let mut ips = HashSet::new();
+    for ip in lookup.iter() {
+        ips.insert(ip);
     }
     if ips.is_empty() {
         anyhow::bail!("no dns records found for {}", host);
@@ -252,7 +233,55 @@ async fn get_dns_ips(
     Ok(ips)
 }
 
-async fn get_jarm_fingerprint(host: &str) -> anyhow::Result<String> {
+/// Returns `true` when all resolved IPs for `host` are routable (non-bogon).
+///
+/// This guard prevents DNS-rebinding / SSRF: an attacker controlling a DNS
+/// zone served by a CT-log-visible domain could answer with a private or
+/// loopback IP (e.g. `169.254.169.254`) and cause gossan to probe cloud
+/// metadata endpoints or internal services. We resolve the host first and
+/// reject any candidate whose IP set contains a private/restricted address.
+///
+/// If DNS resolution fails, the host is treated as safe so that network
+/// errors don't silently suppress legitimate candidates, the subsequent
+/// connection attempt will fail with a normal error anyway.
+/// Resolve `host` once to a single routable IP address suitable for a
+/// direct TCP/HTTP connection. Returns `None` when the host is a bogon
+/// IP literal, unresolvable, or all DNS answers are bogon/private. This
+/// prevents DNS-rebinding TOCTOU: the caller uses the returned IP for the
+/// socket and the original hostname for SNI / Host headers.
+async fn resolve_once_for_probe(
+    resolver: &hickory_resolver::TokioResolver,
+    host: &str,
+) -> Option<IpAddr> {
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return if is_private_or_restricted(&ip) { None } else { Some(ip) };
+    }
+    match resolver.lookup_ip(host).await {
+        Ok(lookup) => lookup.iter().find(|ip| !is_private_or_restricted(ip)),
+        Err(e) => {
+            // NXDOMAIN / NODATA are expected absence; anything else is a transient failure.
+            let absence = e.is_nx_domain() || e.is_no_records_found();
+            if !absence {
+                tracing::warn!("DNS lookup failed while resolving probe host: host={} error={}", host, e);
+            }
+            None
+        }
+    }
+}
+
+/// Returns `true` when `host` resolves to at least one routable (non-bogon) IP.
+///
+/// This is the public guard used by tests and downstream callers; the probe
+/// code uses [`resolve_once_for_probe`] directly so the same IP can be reused
+/// for the actual connection.
+pub async fn is_routable_host(
+    resolver: &hickory_resolver::TokioResolver,
+    host: &str,
+) -> bool {
+    resolve_once_for_probe(resolver, host).await.is_some()
+}
+
+pub async fn get_jarm_fingerprint(host: &str) -> anyhow::Result<String> {
     let fp = gossan_portscan::jarm::fingerprint(host, 443, std::time::Duration::from_secs(5), None)
         .await;
     match fp {
@@ -261,13 +290,22 @@ async fn get_jarm_fingerprint(host: &str) -> anyhow::Result<String> {
     }
 }
 
-async fn get_content_hash(
+pub async fn get_content_hash(
     client: &gossan_core::reqwest::Client,
     host: &str,
+    connect_ip: Option<IpAddr>,
     max_size: usize,
 ) -> anyhow::Result<String> {
-    let url = format!("http://{}/", host);
-    let resp = client.get(&url).send().await?;
+    let url = if let Some(ip) = connect_ip {
+        format!("http://{}/", ip)
+    } else {
+        format!("http://{}/", host)
+    };
+    let mut req = client.get(&url);
+    if connect_ip.is_some() {
+        req = req.header("Host", host);
+    }
+    let resp = req.send().await?;
     let b = gossan_core::ratelimit::read_response_limited(resp, max_size).await?;
 
     use sha2::{Digest, Sha256};
@@ -276,14 +314,23 @@ async fn get_content_hash(
     Ok(hex::encode(hasher.finalize()))
 }
 
-async fn get_favicon_hash(
+pub async fn get_favicon_hash(
     client: &gossan_core::reqwest::Client,
     host: &str,
+    connect_ip: Option<IpAddr>,
     max_size: usize,
 ) -> anyhow::Result<i32> {
     use base64::{engine::general_purpose::STANDARD, Engine as _};
-    let url = format!("http://{}/favicon.ico", host);
-    let resp = client.get(&url).send().await?;
+    let url = if let Some(ip) = connect_ip {
+        format!("http://{}/favicon.ico", ip)
+    } else {
+        format!("http://{}/favicon.ico", host)
+    };
+    let mut req = client.get(&url);
+    if connect_ip.is_some() {
+        req = req.header("Host", host);
+    }
+    let resp = req.send().await?;
     let b = gossan_core::ratelimit::read_response_limited(resp, max_size).await?;
     let b64 = STANDARD.encode(&b);
     let mut formatted_b64 = String::with_capacity(b64.len() + b64.len() / 76);
@@ -301,8 +348,12 @@ async fn get_favicon_hash(
     Ok(murmurhash3_x86_32(formatted_b64.as_bytes(), 0))
 }
 
-async fn get_ssh_host_key(host: &str) -> anyhow::Result<String> {
-    let addr = format!("{}:22", host);
+pub async fn get_ssh_host_key(host: &str, connect_ip: Option<IpAddr>) -> anyhow::Result<String> {
+    let addr = if let Some(ip) = connect_ip {
+        format!("{}:22", ip)
+    } else {
+        format!("{}:22", host)
+    };
     let mut stream = TcpStream::connect(addr).await?;
 
     let mut banner = vec![0; 256];
@@ -327,8 +378,20 @@ async fn get_ssh_host_key(host: &str) -> anyhow::Result<String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-async fn get_cert_serial(host: &str) -> anyhow::Result<Vec<u8>> {
-    let addr = format!("{}:443", host);
+fn server_name_for_host(host: &str) -> anyhow::Result<ServerName<'static>> {
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        Ok(ServerName::IpAddress(ip.into()).to_owned())
+    } else {
+        Ok(ServerName::try_from(host.to_string())?.to_owned())
+    }
+}
+
+pub async fn get_cert_serial(host: &str, connect_ip: Option<IpAddr>) -> anyhow::Result<Vec<u8>> {
+    let addr = if let Some(ip) = connect_ip {
+        format!("{}:443", ip)
+    } else {
+        format!("{}:443", host)
+    };
     let stream = TcpStream::connect(addr).await?;
 
     let config = ClientConfig::builder()
@@ -337,7 +400,7 @@ async fn get_cert_serial(host: &str) -> anyhow::Result<Vec<u8>> {
         .with_no_client_auth();
 
     let connector = TlsConnector::from(Arc::new(config));
-    let server_name = ServerName::try_from(host.to_string())?.to_owned();
+    let server_name = server_name_for_host(host)?;
 
     let stream = connector.connect(server_name, stream).await?;
     let certs = stream
@@ -355,13 +418,22 @@ async fn get_cert_serial(host: &str) -> anyhow::Result<Vec<u8>> {
 }
 
 /// Fetch HTTP response and return status, headers, body text.
-async fn fetch_http(
+pub async fn fetch_http(
     client: &gossan_core::reqwest::Client,
     host: &str,
+    connect_ip: Option<IpAddr>,
     max_size: usize,
 ) -> anyhow::Result<(u16, Vec<(String, String)>, String)> {
-    let url = format!("http://{}/", host);
-    let resp = client.get(&url).send().await?;
+    let url = if let Some(ip) = connect_ip {
+        format!("http://{}/", ip)
+    } else {
+        format!("http://{}/", host)
+    };
+    let mut req = client.get(&url);
+    if connect_ip.is_some() {
+        req = req.header("Host", host);
+    }
+    let resp = req.send().await?;
     let status = resp.status().as_u16();
     let headers: Vec<(String, String)> = resp
         .headers()
@@ -374,55 +446,60 @@ async fn fetch_http(
 }
 
 // ---------------------------------------------------------------------------
-// Seed fingerprint — all signals collected from the seed target
+// Seed fingerprint, all signals collected from the seed target
 // ---------------------------------------------------------------------------
 
 /// All infrastructure signals collected from the seed target.
-struct SeedFingerprint {
-    cert_serial: Option<Vec<u8>>,
-    ssh_key: Option<String>,
-    tracking_ids: HashSet<String>,
-    internal_ips: HashSet<String>,
-    csp_report_uri: Option<String>,
-    cors_origins: HashSet<String>,
-    favicon_hash: Option<i32>,
-    content_hash: Option<String>,
-    jarm: Option<String>,
-    dns_ips: Option<HashSet<IpAddr>>,
+pub struct SeedFingerprint {
+    pub cert_serial: Option<Vec<u8>>,
+    pub ssh_key: Option<String>,
+    pub tracking_ids: HashSet<String>,
+    pub internal_ips: HashSet<String>,
+    pub csp_report_uri: Option<String>,
+    pub cors_origins: HashSet<String>,
+    pub favicon_hash: Option<i32>,
+    pub content_hash: Option<String>,
+    pub jarm: Option<String>,
+    pub dns_ips: Option<HashSet<IpAddr>>,
 }
 
 impl SeedFingerprint {
-    async fn collect(
+    pub async fn collect(
         client: &gossan_core::reqwest::Client,
-        resolver: &hickory_resolver::TokioAsyncResolver,
+        resolver: &hickory_resolver::TokioResolver,
         seed: &str,
         max_size: usize,
     ) -> Self {
         let (mut tracking_ids, mut internal_ips, mut csp_report_uri, mut cors_origins) =
             (HashSet::new(), HashSet::new(), None, HashSet::new());
 
-        if let Ok((_status, headers, body)) = fetch_http(client, seed, max_size).await {
-            tracking_ids = extract_tracking_ids(&body);
-            internal_ips = extract_internal_ips(&headers);
-            csp_report_uri = extract_csp_report_uri(&headers);
-            cors_origins = extract_cors_origins(&headers);
+        match fetch_http(client, seed, None, max_size).await {
+            Ok((_status, headers, body)) => {
+                tracking_ids = extract_tracking_ids(&body);
+                internal_ips = extract_internal_ips(&headers);
+                csp_report_uri = extract_csp_report_uri(&headers);
+                cors_origins = extract_cors_origins(&headers);
+            }
+            Err(e) => {
+                tracing::warn!(host = seed, err = %e, "fingerprint seed HTTP fetch failed");
+            }
         }
 
         let mut failures = Vec::new();
 
-        let cert_serial = get_cert_serial(seed)
+        let cert_serial = get_cert_serial(seed, None)
             .await
             .map_err(|e| { failures.push(("cert_serial", e)); })
             .ok();
-        let ssh_key = get_ssh_host_key(seed)
+        let ssh_key = get_ssh_host_key(seed, None)
             .await
             .map_err(|e| { failures.push(("ssh_host_key", e)); })
             .ok();
-        let favicon_hash = get_favicon_hash(client, seed, max_size)
+        let favicon_hash = get_favicon_hash(client, seed, None, max_size)
             .await
             .map_err(|e| { failures.push(("favicon_hash", e)); })
             .ok();
-        let content_hash = get_content_hash(client, seed, max_size)
+        let content_hash = get_content_hash(client, seed, None, max_size)
             .await
             .map_err(|e| { failures.push(("content_hash", e)); })
             .ok();
@@ -454,21 +531,30 @@ impl SeedFingerprint {
     }
 
     /// Compare this fingerprint against a candidate and return all matching signals.
-    async fn compare(
+    pub async fn compare(
         &self,
         client: &gossan_core::reqwest::Client,
-        resolver: &hickory_resolver::TokioAsyncResolver,
+        resolver: &hickory_resolver::TokioResolver,
         host: &str,
         max_size: usize,
     ) -> Vec<Signal> {
         let mut signals = Vec::new();
+
+        // Bogon guard + single DNS resolution for this candidate. We resolve
+        // once, use the returned IP for the socket, and keep the hostname
+        // for SNI / Host headers. This removes the TOCTOU where the guard
+        // saw a public IP but the subsequent probe resolved to a bogon.
+        let connect_ip = match resolve_once_for_probe(resolver, host).await {
+            Some(ip) => Some(ip),
+            None => return signals,
+        };
 
         // --- Tier 0: strong infrastructure signals ---
 
         // TLS certificate serial
         if let Some(ref seed_cert) = self.cert_serial {
             if !seed_cert.is_empty() {
-                if let Ok(t_cert) = get_cert_serial(host).await {
+                if let Ok(t_cert) = get_cert_serial(host, connect_ip).await {
                     if seed_cert == &t_cert {
                         signals.push(Signal {
                             name: "TLS Certificate Serial",
@@ -484,7 +570,7 @@ impl SeedFingerprint {
         // SSH host key
         if let Some(ref seed_ssh) = self.ssh_key {
             if !seed_ssh.is_empty() {
-                if let Ok(t_ssh) = get_ssh_host_key(host).await {
+                if let Ok(t_ssh) = get_ssh_host_key(host, connect_ip).await {
                     if seed_ssh == &t_ssh {
                         signals.push(Signal {
                             name: "SSH Host Key",
@@ -503,7 +589,7 @@ impl SeedFingerprint {
         let mut t_csp_report_uri = None;
         let mut t_cors_origins = HashSet::new();
 
-        if let Ok((_status, headers, body)) = fetch_http(client, host, max_size).await {
+        if let Ok((_status, headers, body)) = fetch_http(client, host, connect_ip, max_size).await {
             t_tracking_ids = extract_tracking_ids(&body);
             t_internal_ips = extract_internal_ips(&headers);
             t_csp_report_uri = extract_csp_report_uri(&headers);
@@ -586,7 +672,7 @@ impl SeedFingerprint {
         // Favicon hash (with ambient rejection)
         if let Some(seed_fav) = self.favicon_hash {
             if !AMBIENT_FAVICON.contains(&seed_fav) {
-                if let Ok(t_fav) = get_favicon_hash(client, host, max_size).await {
+                if let Ok(t_fav) = get_favicon_hash(client, host, connect_ip, max_size).await {
                     if seed_fav == t_fav && !AMBIENT_FAVICON.contains(&t_fav) {
                         signals.push(Signal {
                             name: "Favicon Hash",
@@ -602,7 +688,7 @@ impl SeedFingerprint {
         // Content hash
         if let Some(ref seed_con) = self.content_hash {
             if !seed_con.is_empty() {
-                if let Ok(t_con) = get_content_hash(client, host, max_size).await {
+                if let Ok(t_con) = get_content_hash(client, host, connect_ip, max_size).await {
                     if seed_con == &t_con {
                         signals.push(Signal {
                             name: "Content Hash",
@@ -634,7 +720,7 @@ impl SeedFingerprint {
             }
         }
 
-        // DNS IP (lowest weight — shared hosting is extremely common)
+        // DNS IP (lowest weight, shared hosting is extremely common)
         if let Some(ref seed_dns) = self.dns_ips {
             if !seed_dns.is_empty() {
                 if let Ok(t_dns) = get_dns_ips(resolver, host).await {
@@ -666,7 +752,7 @@ impl SeedFingerprint {
 }
 
 // ---------------------------------------------------------------------------
-// TLS verifier (accept any cert — we only care about the serial, not validity)
+// TLS verifier (accept any cert, we only care about the serial, not validity)
 // ---------------------------------------------------------------------------
 
 #[derive(Debug)]
@@ -723,7 +809,7 @@ impl rustls::client::danger::ServerCertVerifier for NoAuthVerifier {
 // Scanner implementation
 // ---------------------------------------------------------------------------
 
-/// Conservative campaign mapper — candidate generator for Warpscan and Sear.
+/// Conservative campaign mapper (candidate generator for Warpscan and Sear).
 ///
 /// Compares candidate targets against a seed using tiered infrastructure signals.
 /// Emits structured findings with full evidence for each correlated candidate.
@@ -761,14 +847,16 @@ impl Scanner for ConservativeScanner {
         let fingerprint =
             SeedFingerprint::collect(&client, &resolver, seed, config.max_response_size).await;
 
-        // Drain the inbound target stream. Conservative campaign
+        // Collect the inbound target stream. Conservative campaign
         // matching scores each candidate against the seed fingerprint,
-        // so it needs the full input set — collecting up-front is the
-        // intended semantics.
+        // so it needs the full input set; collecting until the channel
+        // closes is the intended batch semantics. Using `recv().await`
+        // waits for the sender to close rather than exiting early on an
+        // empty buffer like `try_recv`.
         let inbound: Vec<Target> = {
             let mut rx = input.target_rx.lock().await;
             let mut buf = Vec::new();
-            while let Ok(t) = rx.try_recv() {
+            while let Some(t) = rx.recv().await {
                 buf.push(t);
             }
             buf
@@ -777,7 +865,18 @@ impl Scanner for ConservativeScanner {
         for target in &inbound {
             let host_string = match target {
                 Target::Domain(d) => d.domain.clone(),
-                Target::Host(h) => h.ip.to_string(),
+                Target::Host(h) => {
+                    // Eagerly reject private/bogon IPs supplied directly as
+                    // Host targets (no DNS resolution needed).
+                    if is_private_or_restricted(&h.ip) {
+                        tracing::debug!(
+                            ip = %h.ip,
+                            "conservative: skipping private-IP host target"
+                        );
+                        continue;
+                    }
+                    h.ip.to_string()
+                }
                 _ => continue,
             };
             let host = host_string.as_str();
@@ -805,7 +904,7 @@ impl Scanner for ConservativeScanner {
                 // longer Optional in the streaming refactor). The
                 // explicit `if let Some(ref tx)` send below was a
                 // double-emit relic from the earlier API.
-                input.emit_target(target.clone());
+                input.emit_target(target.clone()).await;
 
                 let mut builder =
                     secfinding::Finding::builder("conservative", host, Severity::Info)
@@ -846,7 +945,7 @@ impl Scanner for ConservativeScanner {
                 builder = builder.evidence(Evidence::raw(signal_json.to_string()));
 
                 if let Some(finding) = builder.build_or_log() {
-                    input.emit(finding);
+                    input.emit(finding).await;
                 }
             }
         }

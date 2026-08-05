@@ -1,6 +1,6 @@
 //! TLSWeakness chain coverage.
 //!
-//! Per GOSSAN_LEGENDARY A12: deduplicates 100 identical TLS issues
+//! Per GOSSAN_DEPTH_CONTRACT A12: deduplicates 100 identical TLS issues
 //! into 1 chain; fires on N≥2 distinct TLS issues; doesn't fire on
 //! N=1.
 

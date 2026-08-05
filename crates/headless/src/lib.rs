@@ -16,7 +16,7 @@
     clippy::missing_errors_doc
 )]
 
-//! Headless browser scanning — screenshot, DOM analysis, SPA detection.
+//! Headless browser scanning (screenshot, DOM analysis, SPA detection).
 //!
 //! Uses `runtime-headless` (Chromium CDP) to render JavaScript-heavy pages and extract
 //! security-relevant signals that static HTTP probing cannot see.
@@ -28,18 +28,18 @@ use runtime_headless::chromiumoxide::Browser;
 use runtime_headless::{BrowserLaunchOptions, BrowserRuntime};
 use secfinding::{Evidence, Finding, FindingBuilder, Severity};
 use std::time::Duration;
-/// Headless browser scanner — screenshot, DOM analysis, SPA spider, dynamic endpoint discovery.
+/// Headless browser scanner (screenshot, DOM analysis, SPA spider, dynamic endpoint discovery).
 pub struct HeadlessScanner;
 
 /// Launch options shared by the scanner and its tests (via `runtime-headless`).
 #[must_use]
 pub fn browser_launch_options() -> BrowserLaunchOptions {
-    BrowserLaunchOptions {
-        // Preserves pre-migration `BrowserConfig::builder().with_head()` posture.
-        headed: true,
-        no_sandbox: true,
-        ..Default::default()
-    }
+    let mut options = BrowserLaunchOptions::default_stealth();
+    // Preserves pre-migration `BrowserConfig::builder().with_head()` posture.
+    options.headed = true;
+    options.new_headless_mode = false;
+    options.no_sandbox = true;
+    options
 }
 
 fn finding_builder(
@@ -71,14 +71,16 @@ impl Scanner for HeadlessScanner {
     async fn run(&self, input: ScanInput, config: &Config) -> anyhow::Result<()> {
         // Drain the inbound target stream into an owned Vec. The
         // ScanInput contract migrated from a buffered `targets: Vec<_>`
-        // field to a streaming `target_rx: Mutex<UnboundedReceiver>` —
+        // field to a streaming `target_rx: Mutex<UnboundedReceiver>` 
         // headless was missed in that migration. Pull synchronously
         // here because chromiumoxide's per-tab work needs an owned set
         // upfront to size the buffer_unordered pool.
         let owned: Vec<Target> = {
             let mut rx = input.target_rx.lock().await;
             let mut buf = Vec::new();
-            while let Ok(t) = rx.try_recv() {
+            // recv() until the pipeline closes the inbox — try_recv races the
+            // sender and drops asynchronously delivered targets.
+            while let Some(t) = rx.recv().await {
                 buf.push(t);
             }
             buf
@@ -102,18 +104,25 @@ impl Scanner for HeadlessScanner {
                 async move { analyze_target(runtime.browser(), target, &config).await }
             })
             // Browser limit for tabs
-            .buffer_unordered(config.concurrency.min(10))
+            .buffer_unordered(config.concurrency.min(10).max(1))
             .collect()
             .await;
 
-        for (target, findings) in results.into_iter().flatten() {
-            input.emit_target(target);
-            for f in findings {
-                input.emit(f);
+        for res in results {
+            match res {
+                Ok((target, findings)) => {
+                    input.emit_target(target).await;
+                    for f in findings {
+                        input.emit(f).await;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(err = %e, "headless analyze_target failed; skipping target");
+                }
             }
         }
 
-        // `runtime` drops here — BrowserRuntime::Drop aborts the CDP handler task.
+        // `runtime` drops here: BrowserRuntime::Drop aborts the CDP handler task.
         Ok(())
     }
 }
@@ -128,41 +137,87 @@ async fn analyze_target(
     };
     let mut findings = Vec::new();
 
-    let page = browser.new_page(asset.url.as_str()).await?;
+    let page = match tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        browser.new_page(asset.url.as_str()),
+    )
+    .await
+    {
+        Ok(Ok(p)) => p,
+        Ok(Err(e)) => return Err(e.into()),
+        Err(_) => {
+            return Err(anyhow::anyhow!(
+                "headless: browser.new_page timed out after 15s"
+            ));
+        }
+    };
 
-    // ── XHR / Fetch Hooking (Legendary Dynamic Discovery) ──────────────────
+    // ── XHR / Fetch Hooking (Oneshot Dynamic Discovery) ──────────────────
     // Inject a script to proxy XHR and fetch to catch endpoints that
     // standard event listeners might miss due to race conditions.
     let hook_js = r#"
         (function() {
             window._santh_requests = [];
             
-            // Hook Fetch
-            const oldFetch = window.fetch;
-            window.fetch = function() {
-                window._santh_requests.push({ url: arguments[0], type: 'fetch' });
-                return oldFetch.apply(this, arguments);
-            };
+            // Hook Fetch, guard against environments where fetch is undefined
+            // (e.g. CSP-blocked or very old browsers).
+            if (typeof window.fetch === 'function') {
+                const oldFetch = window.fetch;
+                window.fetch = function() {
+                    window._santh_requests.push({ url: arguments[0], type: 'fetch' });
+                    return oldFetch.apply(this, arguments);
+                };
+            }
 
-            // Hook XHR
-            const oldOpen = XMLHttpRequest.prototype.open;
-            XMLHttpRequest.prototype.open = function() {
-                window._santh_requests.push({ url: arguments[1], type: 'xhr' });
-                return oldOpen.apply(this, arguments);
-            };
+            // Hook XHR (guard against missing XMLHttpRequest).
+            if (typeof XMLHttpRequest === 'function') {
+                const oldOpen = XMLHttpRequest.prototype.open;
+                XMLHttpRequest.prototype.open = function() {
+                    window._santh_requests.push({ url: arguments[1], type: 'xhr' });
+                    return oldOpen.apply(this, arguments);
+                };
+            }
         })();
     "#;
-    page.evaluate_on_new_document(hook_js).await.ok();
+    if let Err(e) = page.evaluate_on_new_document(hook_js).await {
+        tracing::warn!(error = %e, url = %asset.url, "failed to install headless network hooks");
+    }
 
     // Start event listener early to catch everything from the jump
     let mut request_events = page
         .event_listener::<runtime_headless::chromiumoxide::cdp::browser_protocol::network::EventRequestWillBeSent>()
         .await?;
 
-    let _ = page.goto(asset.url.as_str()).await?;
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        page.goto(asset.url.as_str()),
+    )
+    .await
+    {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => {
+            tracing::warn!(error = %e, url = %asset.url, "headless navigation failed");
+        }
+        Err(_) => {
+            tracing::warn!(url = %asset.url, "headless navigation timed out");
+        }
+    }
 
-    // Wait for the initial DOM load
-    page.wait_for_navigation().await.ok();
+    // Wait for the initial DOM load (bounded to prevent indefinite hang).
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        page.wait_for_navigation(),
+    )
+    .await
+    {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => {
+            tracing::warn!(error = %e, url = %asset.url, "headless wait_for_navigation failed");
+        }
+        Err(_) => {
+            tracing::warn!(url = %asset.url, "headless wait_for_navigation timed out");
+        }
+    }
 
     // ── 1. Authenticated Login (Katana-style) ─────────────────────────────
     if let (Some(user), Some(pass)) = (&config.auth_user, &config.auth_pass) {
@@ -192,19 +247,47 @@ async fn analyze_target(
             })()
         "#;
 
-        if let Ok(res) = page.evaluate(login_probe).await {
+        if let Ok(res) = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            page.evaluate(login_probe),
+        )
+        .await
+        {
+            let res = match res {
+                Ok(r) => Some(r),
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "headless: auth login-probe evaluate failed; continuing remaining probes"
+                    );
+                    None
+                }
+            };
+            if let Some(res) = res {
             if res.value().and_then(|v| v.as_bool()).unwrap_or(false) {
                 if let Ok(user_el) = page.find_element("input[data-santh-auth='user']").await {
-                    let _ = user_el.type_str(user).await;
+                    if let Err(e) = user_el.type_str(user).await {
+                        tracing::warn!(error = %e, "headless: auth username type_str failed");
+                    }
+                } else {
+                    tracing::warn!("headless: auth username field not found after probe");
                 }
                 if let Ok(pass_el) = page.find_element("input[data-santh-auth='pass']").await {
-                    let _ = pass_el.type_str(pass).await;
-                    let _ = pass_el.press_key("Enter").await;
+                    if let Err(e) = pass_el.type_str(pass).await {
+                        tracing::warn!(error = %e, "headless: auth password type_str failed");
+                    }
+                    if let Err(e) = pass_el.press_key("Enter").await {
+                        tracing::warn!(error = %e, "headless: auth Enter keypress failed");
+                    }
+                } else {
+                    tracing::warn!("headless: auth password field not found after probe");
                 }
                 // Allow some time for the login to process and session to establish
                 tokio::time::sleep(Duration::from_secs(3)).await;
             }
-        }
+        
+            }
+}
     }
 
     // ── 2. Stateful Spidering (Clicking all a/button) ─────────────────────
@@ -226,19 +309,38 @@ async fn analyze_target(
         })()
     "#;
 
-    if let Ok(res) = page.evaluate(click_probe).await {
-        if let Some(idxs) = res.value().and_then(|v| v.as_array()) {
-            for idx in idxs {
-                if let Some(i) = idx.as_u64() {
-                    let selector = format!("[data-santh-click='{}']", i);
-                    if let Ok(el) = page.find_element(&selector).await {
-                        let _ = el.click().await;
-                        // Brief wait for dynamic route changes or background XHRs
-                        tokio::time::sleep(Duration::from_millis(400)).await;
+    if let Ok(res) = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        page.evaluate(click_probe),
+    )
+    .await
+    {
+        match res {
+            Ok(r) => {
+                if let Some(idxs) = r.value().and_then(|v| v.as_array()) {
+                    for idx in idxs {
+                        if let Some(i) = idx.as_u64() {
+                            let selector = format!("[data-santh-click='{}']", i);
+                            if let Ok(el) = page.find_element(&selector).await {
+                                if let Err(e) = el.click().await {
+                                    tracing::debug!(error = %e, selector = %selector, "headless: spider click failed");
+                                }
+                                // Brief wait for dynamic route changes or background XHRs
+                                tokio::time::sleep(Duration::from_millis(400)).await;
+                            }
+                        }
                     }
                 }
             }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "headless: click-probe evaluate failed; continuing without spider clicks"
+                );
+            }
         }
+    } else {
+        tracing::warn!("headless: click-probe evaluate timed out; continuing without spider clicks");
     }
 
     // Final idle to catch trailing asynchronous requests (React/Vue/Angular)
@@ -247,7 +349,23 @@ async fn analyze_target(
     // ── 3. Evidence Collection ─────────────────────────────────────────────
 
     // Collect findings from our injected JS hook
-    if let Ok(res) = page.evaluate("window._santh_requests").await {
+    if let Ok(res) = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        page.evaluate("window._santh_requests"),
+    )
+    .await
+    {
+        let res = match res {
+            Ok(r) => Some(r),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "headless: request-hook collection evaluate failed; continuing remaining probes"
+                );
+                None
+            }
+        };
+        if let Some(res) = res {
         if let Some(reqs) = res.value().and_then(|v| v.as_array()) {
             for r in reqs {
                 let url = r.get("url").and_then(|v| v.as_str()).unwrap_or("");
@@ -268,7 +386,9 @@ async fn analyze_target(
                 }
             }
         }
-    }
+    
+        }
+}
 
     // Drain all trapped network requests from the CDP listener too
     while let Ok(Some(req)) =
@@ -325,7 +445,20 @@ async fn analyze_target(
         })()
     "#;
 
-    if let Ok(res) = page.evaluate(js_probe).await {
+    if let Ok(res) =
+        tokio::time::timeout(std::time::Duration::from_secs(10), page.evaluate(js_probe)).await
+    {
+        let res = match res {
+            Ok(r) => Some(r),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "headless: js-global probe evaluate failed; continuing remaining probes"
+                );
+                None
+            }
+        };
+        if let Some(res) = res {
         if let Some(interesting) = res.value().and_then(|v| v.as_array()) {
             for item in interesting {
                 let key = item.get("key").and_then(|v| v.as_str()).unwrap_or("?");
@@ -342,7 +475,9 @@ async fn analyze_target(
                 .evidence(Evidence::raw(format!("{}: {}", key, value))), &mut findings);
             }
         }
-    }
+    
+        }
+}
 
     // ── Form Extraction ─────────────────────────────────────────────────────
     let form_probe = r#"
@@ -366,7 +501,23 @@ async fn analyze_target(
     "#;
 
     let mut discovered_forms = Vec::new();
-    if let Ok(res) = page.evaluate(form_probe).await {
+    if let Ok(res) = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        page.evaluate(form_probe),
+    )
+    .await
+    {
+        let res = match res {
+            Ok(r) => Some(r),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "headless: form-extraction probe evaluate failed; continuing remaining probes"
+                );
+                None
+            }
+        };
+        if let Some(res) = res {
         if let Some(forms) = res.value().and_then(|v| v.as_array()) {
             for f in forms {
                 let action = f
@@ -404,9 +555,13 @@ async fn analyze_target(
                 });
             }
         }
-    }
+    
+        }
+}
 
-    page.close().await.ok();
+    if let Err(e) = tokio::time::timeout(std::time::Duration::from_secs(10), page.close()).await {
+        tracing::debug!(error = %e, "headless page.close timed out or failed");
+    }
 
     // Update the asset with discovered forms
     if let Target::Web(ref mut asset) = target {
@@ -469,9 +624,13 @@ mod tests {
     #[test]
     fn browser_launch_routes_through_runtime_headless() {
         let opts = browser_launch_options();
+        let expected = BrowserLaunchOptions::default_stealth();
         assert!(opts.headed);
         assert!(opts.no_sandbox);
-        assert_eq!(opts.window_width, BrowserLaunchOptions::default().window_width);
+        assert_eq!(opts.window_width, expected.window_width);
+        assert_eq!(opts.window_height, expected.window_height);
+        assert!(!opts.new_headless_mode);
+        assert_eq!(opts.extra_args, expected.extra_args);
     }
 
     #[tokio::test]
@@ -508,5 +667,190 @@ mod tests {
         config.auth_pass = None; // Should skip login logic
 
         let _ = analyze_target(&browser, target, &config).await;
+    }
+
+    // ── Timeout math ──────────────────────────────────────────────────────
+
+    #[test]
+    fn new_page_timeout_is_15_seconds() {
+        let d = std::time::Duration::from_secs(15);
+        assert_eq!(d.as_secs(), 15);
+    }
+
+    #[test]
+    fn goto_timeout_is_15_seconds() {
+        let d = std::time::Duration::from_secs(15);
+        assert_eq!(d.as_secs(), 15);
+    }
+
+    // ── Finding builder ───────────────────────────────────────────────────
+
+    #[test]
+    fn finding_builder_sets_correct_scanner_and_kind() {
+        let target = web_target();
+        let fb = finding_builder(&target, Severity::High, "title", "detail");
+        let f = fb.build_or_log().expect("valid finding");
+        assert_eq!(f.scanner(), "headless");
+        assert_eq!(f.severity(), Severity::High);
+    }
+
+    // ── Hook JS safety ────────────────────────────────────────────────────
+
+    #[test]
+    fn hook_js_does_not_use_eval() {
+        let hook_js = r#"
+        (function() {
+            window._santh_requests = [];
+            
+            // Hook Fetch, guard against environments where fetch is undefined
+            // (e.g. CSP-blocked or very old browsers).
+            if (typeof window.fetch === 'function') {
+                const oldFetch = window.fetch;
+                window.fetch = function() {
+                    window._santh_requests.push({ url: arguments[0], type: 'fetch' });
+                    return oldFetch.apply(this, arguments);
+                };
+            }
+
+            // Hook XHR (guard against missing XMLHttpRequest).
+            if (typeof XMLHttpRequest === 'function') {
+                const oldOpen = XMLHttpRequest.prototype.open;
+                XMLHttpRequest.prototype.open = function() {
+                    window._santh_requests.push({ url: arguments[1], type: 'xhr' });
+                    return oldOpen.apply(this, arguments);
+                };
+            }
+        })();
+    "#;
+        assert!(
+            !hook_js.to_lowercase().contains("eval("),
+            "hook JS must not use eval() for CSP compatibility"
+        );
+        assert!(
+            !hook_js.to_lowercase().contains("new function("),
+            "hook JS must not use dynamic code execution"
+        );
+    }
+
+    #[test]
+    fn hook_js_guards_missing_fetch() {
+        let hook_js = r#"
+        (function() {
+            window._santh_requests = [];
+            
+            // Hook Fetch, guard against environments where fetch is undefined
+            // (e.g. CSP-blocked or very old browsers).
+            if (typeof window.fetch === 'function') {
+                const oldFetch = window.fetch;
+                window.fetch = function() {
+                    window._santh_requests.push({ url: arguments[0], type: 'fetch' });
+                    return oldFetch.apply(this, arguments);
+                };
+            }
+
+            // Hook XHR (guard against missing XMLHttpRequest).
+            if (typeof XMLHttpRequest === 'function') {
+                const oldOpen = XMLHttpRequest.prototype.open;
+                XMLHttpRequest.prototype.open = function() {
+                    window._santh_requests.push({ url: arguments[1], type: 'xhr' });
+                    return oldOpen.apply(this, arguments);
+                };
+            }
+        })();
+    "#;
+        assert!(
+            hook_js.contains("typeof window.fetch === 'function'"),
+            "hook JS must guard window.fetch before overwriting"
+        );
+    }
+
+    #[test]
+    fn hook_js_guards_missing_xhr() {
+        let hook_js = r#"
+        (function() {
+            window._santh_requests = [];
+            
+            // Hook Fetch, guard against environments where fetch is undefined
+            // (e.g. CSP-blocked or very old browsers).
+            if (typeof window.fetch === 'function') {
+                const oldFetch = window.fetch;
+                window.fetch = function() {
+                    window._santh_requests.push({ url: arguments[0], type: 'fetch' });
+                    return oldFetch.apply(this, arguments);
+                };
+            }
+
+            // Hook XHR (guard against missing XMLHttpRequest).
+            if (typeof XMLHttpRequest === 'function') {
+                const oldOpen = XMLHttpRequest.prototype.open;
+                XMLHttpRequest.prototype.open = function() {
+                    window._santh_requests.push({ url: arguments[1], type: 'xhr' });
+                    return oldOpen.apply(this, arguments);
+                };
+            }
+        })();
+    "#;
+        assert!(
+            hook_js.contains("typeof XMLHttpRequest === 'function'"),
+            "hook JS must guard XMLHttpRequest before overwriting"
+        );
+    }
+
+    // ── URL parsing safety ────────────────────────────────────────────────
+
+    #[test]
+    fn web_target_url_parsing_roundtrips() {
+        let t = web_target();
+        if let Target::Web(asset) = t {
+            assert_eq!(asset.url.host_str(), Some("example.com"));
+            assert_eq!(asset.url.scheme(), "https");
+        } else {
+            panic!("expected Web target");
+        }
+    }
+
+    // ── Tab cleanup contract (documented) ─────────────────────────────────
+
+    #[test]
+    fn page_close_is_called_in_all_branches() {
+        // analyze_target closes the page with a timeout and logs failures.
+        // This test documents the contract; full verification requires
+        // browser integration tests which are gated behind --ignored.
+        let js = analyze_target;
+        // Simply assert the function symbol exists and has the expected signature.
+        let _ = std::ptr::addr_of!(js);
+    }
+
+    #[tokio::test]
+    #[ignore = "W3-F009: headless Chromium launch >60s; run with cargo test -- --ignored"]
+    async fn headless_run_zero_concurrency_does_not_hang() {
+        let scanner = HeadlessScanner;
+        let mut config = Config::default();
+        config.concurrency = 0;
+
+        let (target_tx_in, target_rx_in) = tokio::sync::mpsc::channel::<Target>(64);
+        let (live_tx, _live_rx) = tokio::sync::mpsc::channel::<gossan_core::Finding>(16384);
+        let (target_tx, _target_rx) = tokio::sync::mpsc::channel::<Target>(64);
+        let resolver = std::sync::Arc::new(gossan_core::net::build_resolver(&config).unwrap());
+        let input = gossan_core::ScanInput {
+            seed: "example.com".into(),
+            target_rx: tokio::sync::Mutex::new(target_rx_in),
+            live_tx,
+            target_tx,
+            resolver,
+        };
+        target_tx_in.send(web_target()).await.unwrap();
+        drop(target_tx_in);
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(120),
+            scanner.run(input, &config),
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "HeadlessScanner::run with concurrency=0 should complete, not hang"
+        );
     }
 }

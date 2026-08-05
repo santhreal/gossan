@@ -36,7 +36,7 @@ fn render_via_cli(format: OutputFormat, findings: &[Finding]) -> String {
         path: Some(path.to_string_lossy().into_owned()),
     };
     // The cli output module is private to the bin, so we exercise
-    // it via the same code path the binary uses at runtime — a
+    // it via the same code path the binary uses at runtime, a
     // direct invocation of the same render functions. Because the
     // cli is a `[[bin]]`-only crate, we go through assert_cmd to
     // launch the real binary in a separate process for the

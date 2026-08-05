@@ -1,6 +1,6 @@
 //! Property tests for the in-memory graph backend.
 //!
-//! Per GOSSAN_LEGENDARY A18: arbitrary `Vec<Node> + Vec<Edge>`
+//! Per GOSSAN_DEPTH_CONTRACT A18: arbitrary `Vec<Node> + Vec<Edge>`
 //! round-trips through the backend without loss.
 
 use gossan_graph::schema::{EdgeType, NodeType};
@@ -66,8 +66,13 @@ proptest! {
         s.init().unwrap();
         s.write_nodes(&nodes).unwrap();
         s.write_edges(&edges).unwrap();
-        prop_assert_eq!(s.read_nodes().unwrap().len(), nodes.len());
-        prop_assert_eq!(s.read_edges().unwrap().len(), edges.len());
+        // Deduplicated by stable id / edge triple.
+        let unique_nodes: std::collections::HashMap<String, &Node> =
+            nodes.iter().map(|n| (n.id.clone(), n)).collect();
+        let unique_edges: std::collections::HashMap<(&String, &String, EdgeType), &Edge> =
+            edges.iter().map(|e| ((&e.source_id, &e.target_id, e.kind), e)).collect();
+        prop_assert_eq!(s.read_nodes().unwrap().len(), unique_nodes.len());
+        prop_assert_eq!(s.read_edges().unwrap().len(), unique_edges.len());
     }
 
     #[test]

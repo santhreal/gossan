@@ -1,6 +1,6 @@
 //! Wordlist Tier B loading test for `gossan-hidden::directory_brute`.
 //!
-//! Per GOSSAN_LEGENDARY A10: load custom wordlist from path; assert
+//! Per GOSSAN_DEPTH_CONTRACT A10: load custom wordlist from path; assert
 //! the loader uses it when set, falls back to default otherwise.
 
 use gossan_hidden::directory_brute::load_wordlist;

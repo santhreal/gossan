@@ -4,11 +4,13 @@
 /// The built-in 52-port high-risk list (gossan default).
 /// Contains all services known to be dangerous when exposed.
 ///
+/// Used as the compile-time fallback in [`crate::rules::default_ports`] when
+/// the embedded TOML fails to parse (e.g., after a build-system corruption).
+///
 /// Includes ports for: FTP, SSH, Telnet, SMTP, DNS, HTTP, POP3, IMAP,
 /// LDAP, HTTPS, SMB, SMTPS, Submission, LDAPS, IMAPS, POP3S, MSSQL,
 /// Oracle, ZooKeeper, Docker, MySQL, RDP, EPMD, PostgreSQL, Kibana,
 /// VNC, CouchDB, Redis, Neo4j, InfluxDB, Ethereum RPC, and more.
-#[allow(dead_code)]
 pub const DEFAULT_PORTS: &[u16] = &[
     21, 22, 23, 25, 53, 80, 110, 143, 389, 443, 445, 465, 587, 636, 993, 995, 1433, 1521, 2181,
     2375, 2376, 3000, 3306, 3389, 4369, 4443, 5432, 5601, 5900, 5984, 6379, 7001, 7474, 8000, 8080,

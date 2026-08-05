@@ -5,8 +5,8 @@ edition.workspace = true
 authors = ["Santh Project <security@santh.dev>"]
 license.workspace = true
 homepage = "https://santh.dev"
-repository = "https://github.com/santhsecurity/gossan"
-description = "Scan checkpoint and resume for gossan — persists stage results to SQLite — part of the security research ecosystem"
+repository = "https://github.com/santhreal/gossan"
+description = "Scan checkpoint and resume for gossan, persists stage results to SQLite, part of the security research ecosystem"
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
@@ -28,6 +28,7 @@ secfinding  = { workspace = true }
 [dev-dependencies]
 proptest = "1.0"
 tempfile = "3"
+url = { workspace = true }
 
 [lints]
 workspace = true

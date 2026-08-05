@@ -16,25 +16,25 @@ use tokio::sync::mpsc;
 /// run explicitly with `cargo test -p gossan-subdomain -- --ignored` to
 /// see the streaming-delay numbers.
 #[tokio::test]
-#[ignore = "live network scan against google.com — run with --ignored"]
+#[ignore = "live network scan against google.com, run with --ignored"]
 async fn test_streaming_performance() -> anyhow::Result<()> {
     let scanner = SubdomainScanner;
     let config = Config::default();
 
-    let (target_tx, mut target_rx) = mpsc::unbounded_channel::<Target>();
-    let (live_tx, _live_rx) = mpsc::unbounded_channel();
-    // Seed via the inbound channel — the pre-streaming `targets:
+    let (target_tx, mut target_rx) = mpsc::channel::<Target>(1024);
+    let (live_tx, _live_rx) = mpsc::channel(1024);
+    // Seed via the inbound channel, the pre-streaming `targets:
     // Vec<_>` field is gone; `target_rx` carries seeds and pivoted
     // targets uniformly now. Push the seed Domain then drop the tx
     // so the rx hits EOF after consumption.
-    let (inbound_tx, inbound_rx) = mpsc::unbounded_channel::<Target>();
+    let (inbound_tx, inbound_rx) = mpsc::channel::<Target>(1024);
     let _ = inbound_tx.send(Target::Domain(DomainTarget {
         domain: "google.com".to_string(),
         source: DiscoverySource::Seed,
     }));
     drop(inbound_tx);
 
-    let resolver = Arc::new(hickory_resolver::TokioAsyncResolver::tokio_from_system_conf()?);
+    let resolver = Arc::new(hickory_resolver::TokioResolver::builder_tokio()?.build());
 
     let input = ScanInput {
         seed: "google.com".to_string(),

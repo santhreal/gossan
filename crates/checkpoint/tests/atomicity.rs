@@ -1,7 +1,7 @@
-//! Per GOSSAN_LEGENDARY A13 + A6 line 569: atomicity contract for
+//! Per GOSSAN_DEPTH_CONTRACT A13 + A6 line 569: atomicity contract for
 //! `CheckpointStore::save_stage`. Drop the connection mid-write,
 //! reopen, assert the DB is either at the OLD state or the NEW state
-//! — never a torn / partial state.
+//! (never a torn / partial state).
 //!
 //! SQLite with WAL + foreign_keys + a single INSERT OR REPLACE
 //! gives us atomicity for free at the row level. This test asserts
@@ -41,7 +41,7 @@ fn save_stage_is_atomic_under_drop_mid_write() {
         )
         .expect("save 1");
 
-    // Drop the store handle (simulates kill -9 between syscalls — the
+    // Drop the store handle (simulates kill -9 between syscalls, the
     // SQLite WAL is durable up to the last completed COMMIT).
     drop(store);
 
@@ -70,7 +70,7 @@ fn second_save_stage_overwrites_first_atomically() {
         .save_stage(id, "portscan", &[], &[f1])
         .expect("save 1");
 
-    // Re-save the same stage with a different finding — must fully
+    // Re-save the same stage with a different finding, must fully
     // replace, not append, per `INSERT OR REPLACE` semantics on the
     // (scan_id, stage) primary key.
     let f2 = fresh_finding("example.com", "second");

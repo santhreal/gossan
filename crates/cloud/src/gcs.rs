@@ -14,7 +14,30 @@ use secfinding::{Evidence, Finding, Severity};
 use crate::common::is_xml_listing;
 use crate::provider::CloudProvider;
 /// Google Cloud Storage bucket discovery.
-pub struct GcsProvider;
+pub struct GcsProvider {
+    /// Optional endpoint override for testing.
+    pub(crate) endpoint_override: Option<String>,
+}
+
+impl GcsProvider {
+    /// Create a new GCS provider with the default Google endpoint.
+    #[must_use]
+    pub fn new() -> Self {
+        Self { endpoint_override: None }
+    }
+
+    /// Create a GCS provider with a custom endpoint (for tests).
+    #[must_use]
+    pub fn with_endpoint(url: impl Into<String>) -> Self {
+        Self { endpoint_override: Some(url.into()) }
+    }
+}
+
+impl Default for GcsProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[async_trait]
 impl CloudProvider for GcsProvider {
@@ -23,6 +46,9 @@ impl CloudProvider for GcsProvider {
     }
 
     fn endpoint(&self, name: &str) -> String {
+        if let Some(ref url) = self.endpoint_override {
+            return url.clone();
+        }
         format!("https://{}.storage.googleapis.com/", name)
     }
 
@@ -45,15 +71,37 @@ impl CloudProvider for GcsProvider {
         for url in &urls {
             let resp = match client.get(url).send().await {
                 Ok(r) => r,
-                Err(_) => continue,
+                Err(e) => {
+                    tracing::warn!(
+                        bucket = %name,
+                        url = %url,
+                        error = %e,
+                        "GCS probe send failed"
+                    );
+                    continue;
+                }
             };
             let status = resp.status().as_u16();
 
             match status {
                 200 => {
-                    let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
-                        .await
-                        .unwrap_or_default();
+                    let body = match gossan_core::net::bounded_text(
+                        resp,
+                        crate::MAX_CLOUD_RESPONSE_BYTES,
+                    )
+                    .await
+                    {
+                        Ok(b) => b,
+                        Err(e) => {
+                            tracing::warn!(
+                                bucket = %name,
+                                url = %url,
+                                error = %e,
+                                "GCS body read failed"
+                            );
+                            continue;
+                        }
+                    };
                     gossan_core::try_push_finding(
                         crate::finding_builder(
                             target,
@@ -69,7 +117,7 @@ impl CloudProvider for GcsProvider {
                             status,
                             headers: vec![("url".into(), url.clone().into())],
                             body_excerpt: if is_xml_listing(&body) {
-                                Some(body.chars().take(300).collect::<String>().into())
+                                Some(body.chars().take(crate::MAX_BODY_EXCERPT_CHARS).collect::<String>().into())
                             } else {
                                 None
                             },
@@ -85,28 +133,9 @@ impl CloudProvider for GcsProvider {
                         &mut findings,
                     );
                     try_write(client, name, url, target, &mut findings).await;
-                    break; // found — no need to try second URL form
+                    break; // found, no need to try second URL form
                 }
                 403 => {
-                    gossan_core::try_push_finding(
-                        crate::finding_builder(
-                            target,
-                            Severity::Low,
-                            format!("GCS bucket exists (access denied): {}", name),
-                            format!(
-                                "gs://{} exists but is not publicly accessible (HTTP 403).",
-                                name
-                            ),
-                        )
-                        .evidence(Evidence::HttpResponse {
-                            status,
-                            headers: vec![("url".into(), url.clone().into())],
-                            body_excerpt: None,
-                        })
-                        .tag("gcs")
-                        .tag("cloud"),
-                        &mut findings,
-                    );
                     try_write(client, name, url, target, &mut findings).await;
                     break;
                 }
@@ -128,7 +157,10 @@ async fn try_write(
 ) {
     const PROBE_KEY: &str = "gossan-write-probe-delete-me.txt";
     // GCS simple upload via XML API
-    let put_url = if base_url.contains("storage.googleapis.com/")
+    let put_url = if !base_url.contains("googleapis.com") {
+        // Custom endpoint (e.g. test mock) (append probe key directly).
+        format!("{}/{}", base_url.trim_end_matches('/'), PROBE_KEY)
+    } else if base_url.contains("storage.googleapis.com/")
         && !base_url.starts_with("https://storage")
     {
         format!("https://{}.storage.googleapis.com/{}", bucket, PROBE_KEY)
@@ -139,7 +171,7 @@ async fn try_write(
     let Ok(resp) = client
         .put(&put_url)
         .header("content-type", "text/plain")
-        .body("gossan-security-probe — safe to delete")
+        .body("gossan-security-probe, safe to delete")
         .send()
         .await
     else {
@@ -158,7 +190,7 @@ async fn try_write(
                 format!("GCS bucket writable without authentication: {}", bucket),
                 format!(
                     "An unauthenticated PUT to gs://{}/{} succeeded (HTTP {}). \
-                     The `allUsers: WRITER` IAM binding is set — any attacker can upload files. \
+                     The `allUsers: WRITER` IAM binding is set, any attacker can upload files. \
                      Probe object deleted immediately after confirmation.",
                     bucket, PROBE_KEY, status
                 ),

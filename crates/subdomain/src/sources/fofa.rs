@@ -22,22 +22,38 @@ impl SubdomainSource for Fofa {
         limiter: &DefaultDirectRateLimiter,
     ) -> anyhow::Result<Vec<Target>> {
         
-        let Some(_key) = crate::sources::get_api_key(config, "fofa", "FOFA_API_KEY") else {
+        let Some(credentials) = crate::sources::get_api_key(config, "fofa", "FOFA_API_KEY") else {
             return Ok(vec![]);
         };
+        let Some((email, key)) = credentials.split_once(':') else {
+            return Err(anyhow::anyhow!("FOFA_API_KEY must be in format email:key"));
+        };
+        if email.is_empty() {
+            return Err(anyhow::anyhow!("FOFA_API_KEY missing email"));
+        }
 
         use base64::Engine as _;
         let b64 = base64::engine::general_purpose::STANDARD
             .encode(format!("domain={domain}"));
-        let url = format!("https://fofa.info/api/v1/search/all?qbase64={b64}&size=10000");
+        let base = "https://fofa.info/api/v1/search/all";
         limiter.until_ready().await;
-        let resp = client.get(&url).send().await?;
+        let resp = client
+            .get(base)
+            .query(&[
+                ("qbase64", b64.as_str()),
+                ("email", email),
+                ("key", key),
+                ("size", "10000"),
+            ])
+            .send()
+            .await?
+            .error_for_status()?;
         let max_size = config.max_response_size;
         let bytes = gossan_core::read_response_limited(resp, max_size).await?;
         let mut seen = std::collections::HashSet::new();
         let domain_lower = domain.to_lowercase();
         
-        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
+        let json: serde_json::Value = serde_json::from_slice(&bytes)?;
         if let Some(arr) = json.get("results").and_then(|v| v.as_array()) {
             for item in arr {
                 if let Some(v) = item.as_str() {
@@ -53,5 +69,37 @@ impl SubdomainSource for Fofa {
             domain: d,
             source: DiscoverySource::Fofa,
         })).collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::Engine as _;
+
+    #[test]
+    fn fofa_url_includes_email_and_key() {
+        let domain = "example.com";
+        let email = "user@example.com";
+        let key = "secret";
+        use base64::Engine as _;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(format!("domain={domain}"));
+        let url = reqwest::Url::parse_with_params(
+            "https://fofa.info/api/v1/search/all",
+            &[("qbase64", b64.as_str()), ("email", email), ("key", key), ("size", "10000")],
+        )
+        .unwrap();
+        assert_eq!(url.host_str().unwrap(), "fofa.info");
+        assert!(url.query().unwrap().contains("email=user%40example.com"));
+        assert!(url.query().unwrap().contains("key=secret"));
+        assert!(url.query().unwrap().contains("qbase64="));
+    }
+
+    #[test]
+    fn fofa_credentials_split_requires_email() {
+        let creds = "user@example.com:secret";
+        let (email, key) = creds.split_once(':').unwrap();
+        assert_eq!(email, "user@example.com");
+        assert_eq!(key, "secret");
     }
 }

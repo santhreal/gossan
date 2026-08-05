@@ -2,7 +2,7 @@
 //!
 //! Intentionally triggers error conditions and inspects the response for:
 //!   1. Stack traces (Python traceback, Java stack, PHP fatal, Ruby backtrace)
-//!   2. Internal filesystem paths (/home/user, /var/www, C:\inetpub, /app)
+//!   2. Internal filesystem paths (/var/www, C:\inetpub, /usr/share)
 //!   3. Framework debug pages (Django debug, Laravel Whoops, Rails error page)
 //!   4. Verbose SQL errors (syntax error near, ORA-, mysql_error)
 //!   5. Server-side template injection echo ({{7*7}} → 49)
@@ -12,11 +12,15 @@ use gossan_core::Target;
 use reqwest::Client;
 use secfinding::{Evidence, Finding, Severity};
 
-// SSTI probe values — use a large unique product that is extremely unlikely
+// SSTI probe values, use a large unique product that is extremely unlikely
 // to appear naturally in any page, eliminating false positives.
 // 473 × 337 = 159401   (Jinja2, Twig, Pebble, etc.)
 // 473 × 337 evaluated by Java EL / Spring SpEL as well.
 const SSTI_PRODUCT: &str = "159401";
+
+/// Maximum characters of a debug-header value to include in the finding detail.
+/// Debug headers can contain stack traces; 80 chars keeps the message actionable.
+const MAX_DEBUG_HEADER_CHARS: usize = 80;
 
 /// Payloads that trigger framework-specific error pages
 const ERROR_TRIGGERS: &[(&str, &str)] = &[
@@ -24,7 +28,7 @@ const ERROR_TRIGGERS: &[(&str, &str)] = &[
     ("/gossan-error-probe-9z3k2p", "random 404"),
     // Malformed query string
     ("/?__gossan__=<script>x</script>", "XSS reflection / error"),
-    // Template injection probe — unique product 473*337=159401
+    // Template injection probe, unique product 473*337=159401
     ("/?q={{473*337}}", "SSTI probe {{473*337}} → 159401"),
     ("/?q=${473*337}", "SSTI probe ${473*337} (Java EL)"),
     ("/?q=<%=473*337%>", "SSTI probe <%=473*337%> (ERB)"),
@@ -37,7 +41,10 @@ const ERROR_TRIGGERS: &[(&str, &str)] = &[
     ("/?page[]=1&page[]=2", "PHP array confusion"),
 ];
 
-/// Patterns in error response bodies that indicate information disclosure
+/// Patterns in error response bodies that indicate information disclosure.
+/// Generic SPA-copy needles (`/app/`, `/home/`, bare `Warning: `, `on line `,
+/// `development mode`) are intentionally omitted — they false-positive on
+/// catch-all front-ends.
 const STACK_TRACE_PATTERNS: &[(&str, &str, Severity)] = &[
     // Python / Django
     (
@@ -76,19 +83,37 @@ const STACK_TRACE_PATTERNS: &[(&str, &str, Severity)] = &[
         "Java exception chain in response",
         Severity::Medium,
     ),
-    // PHP
+    // PHP — specific markers only (no bare "Warning: " / "on line ")
     (
         "Fatal error:",
         "PHP fatal error in response",
         Severity::High,
     ),
-    ("Warning: ", "PHP warning in response", Severity::Medium),
+    (
+        "PHP Warning:",
+        "PHP warning in response",
+        Severity::Medium,
+    ),
+    (
+        "Warning: include(",
+        "PHP include warning in response",
+        Severity::Medium,
+    ),
+    (
+        "Warning: require(",
+        "PHP require warning in response",
+        Severity::Medium,
+    ),
+    (
+        "Warning: fopen(",
+        "PHP fopen warning in response",
+        Severity::Medium,
+    ),
     (
         "Stack trace:",
         "PHP stack trace in response",
         Severity::High,
     ),
-    ("on line ", "PHP error with line number", Severity::Medium),
     // Ruby / Rails
     (
         "app/controllers/",
@@ -126,23 +151,22 @@ const STACK_TRACE_PATTERNS: &[(&str, &str, Severity)] = &[
         "MSSQL error in response",
         Severity::High,
     ),
-    // Internal paths
-    ("/home/", "Internal Unix path in response", Severity::Medium),
+    // Internal paths — avoid bare `/home/` and `/app/` (SPA routes/copy)
     ("/var/www/", "Web root path in response", Severity::Medium),
+    ("/usr/share/", "Unix share path in response", Severity::Medium),
     ("C:\\inetpub", "IIS path in response", Severity::Medium),
     (
         "C:\\Users\\",
         "Windows user path in response",
         Severity::Medium,
     ),
-    ("/app/", "Container app path in response", Severity::Medium),
-    // SSTI confirmation — {{473*337}} evaluates to 159401 (unique, no false positives)
+    // SSTI confirmation: {{473*337}} evaluates to 159401 (unique, no false positives)
     (
         "159401",
-        "SSTI confirmed — arithmetic expression evaluated to 159401",
+        "SSTI confirmed, arithmetic expression evaluated to 159401",
         Severity::Critical,
     ),
-    // Framework debug mode
+    // Framework debug mode — avoid bare "development mode" marketing copy
     (
         "Whoops! There was an error.",
         "Laravel Whoops debug page",
@@ -150,8 +174,8 @@ const STACK_TRACE_PATTERNS: &[(&str, &str, Severity)] = &[
     ),
     ("DEBUG = True", "Django DEBUG mode active", Severity::High),
     (
-        "development mode",
-        "Framework in development mode",
+        "Rails is running in development mode",
+        "Rails development mode banner",
         Severity::High,
     ),
 ];
@@ -190,10 +214,17 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
     let mut findings = Vec::new();
     let mut reported_patterns: std::collections::HashSet<&str> = std::collections::HashSet::new();
 
+    // Soft-404 baseline so SPA catch-alls do not inflate body disclosure findings.
+    let baseline = crate::soft404::establish(client, base).await;
+
     for (suffix, _trigger_desc) in ERROR_TRIGGERS {
         let url = format!("{}{}", base, suffix);
-        let Ok(resp) = client.get(&url).send().await else {
-            continue;
+        let resp = match client.get(&url).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("error_disclosure: probe request failed url={url} error={e}");
+                continue;
+            }
         };
         let status = resp.status().as_u16();
 
@@ -201,10 +232,18 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
         let resp_headers: Vec<(String, String)> = resp
             .headers()
             .iter()
-            .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+            .map(|(k, v)| {
+                (
+                    k.to_string(),
+                    match v.to_str() {
+                        Ok(s) => s.to_string(),
+                        Err(_) => String::new(),
+                    },
+                )
+            })
             .collect();
 
-        // ── Debug header check ─────────────────────────────────────────────
+        // Debug header check (header-based; independent of soft-404 body gate)
         for (header, name, severity) in DEBUG_HEADERS {
             if let Some((_, val)) = resp_headers
                 .iter()
@@ -215,7 +254,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                             format!("{} header present", name),
                             format!("Response to {} contains debug header {}: {}. \
                                      Debug infrastructure is active and leaking implementation details.",
-                                     url, header, val.chars().take(80).collect::<String>()))
+                                     url, header, val.chars().take(MAX_DEBUG_HEADER_CHARS).collect::<String>()))
                         .evidence(Evidence::HttpResponse {
                             status,
                             headers: vec![(header.to_string().into(), val.clone().into())],
@@ -226,14 +265,22 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
             }
         }
 
-        let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
-            .await
-            .unwrap_or_default();
+        let Some(bytes) = crate::soft404::read_limited(resp, crate::MAX_BODY_BYTES).await else {
+            tracing::warn!("error_disclosure: body read failed or oversized; skipping body scan url={url}");
+            continue;
+        };
+
+        // Gate body pattern scan: SPA/catch-all shells matching the baseline are not disclosures.
+        if crate::soft404::is_likely_404(status, &bytes, baseline.as_ref(), false) {
+            continue;
+        }
+
+        let body = String::from_utf8_lossy(&bytes);
 
         // SSTI: only flag 159401 if the trigger was actually a template probe
         let is_ssti_probe = suffix.contains("473*337");
 
-        // ── Body pattern scan ──────────────────────────────────────────────
+        // Body pattern scan
         for (pattern, name, severity) in STACK_TRACE_PATTERNS {
             // SSTI confirmation requires the right trigger
             if *pattern == SSTI_PRODUCT && !is_ssti_probe {
@@ -250,12 +297,12 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
 
                 let is_ssti = *pattern == SSTI_PRODUCT && is_ssti_probe;
                 let detail = if is_ssti {
-                    format!("SSTI confirmed — template expression `{{{{473*337}}}}` evaluated to `159401` in response. \
+                    format!("SSTI confirmed, template expression `{{{{473*337}}}}` evaluated to `159401` in response. \
                              The template engine executes injected expressions server-side. \
                              Escalate to RCE by injecting OS commands via the template syntax. URL: {}", url)
                 } else {
                     format!("{} detected in error response from {}. \
-                             This discloses server internals to unauthenticated attackers — \
+                             This discloses server internals to unauthenticated attackers. \
                              internal paths, framework versions, and class names aid further attacks.", name, url)
                 };
 
@@ -290,7 +337,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
             }
         }
 
-        // Stop after finding critical issues — don't keep probing
+        // Stop after finding critical issues, don't keep probing
         if findings
             .iter()
             .any(|f: &Finding| f.severity() == Severity::Critical)
@@ -301,6 +348,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
 
     Ok(findings)
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -346,5 +394,126 @@ mod tests {
         assert!(DEBUG_HEADERS
             .iter()
             .any(|(header, _, _)| *header == "x-application-context"));
+    }
+
+    #[test]
+    fn error_triggers_contain_sql_injection_probe() {
+        assert!(ERROR_TRIGGERS.iter().any(|(path, _)| path.contains("1'")));
+        assert!(ERROR_TRIGGERS.iter().any(|(path, _)| path.contains("1\"")));
+    }
+
+    #[test]
+    fn error_triggers_contain_array_confusion() {
+        assert!(ERROR_TRIGGERS.iter().any(|(path, _)| path.contains("page[]")));
+    }
+
+    #[test]
+    fn stack_trace_patterns_cover_internal_paths() {
+        assert!(STACK_TRACE_PATTERNS.iter().any(|(p, _, _)| *p == "/var/www/"));
+        assert!(STACK_TRACE_PATTERNS.iter().any(|(p, _, _)| *p == "/usr/share/"));
+        assert!(STACK_TRACE_PATTERNS.iter().any(|(p, _, _)| *p == "C:\\inetpub"));
+        // Generic SPA-copy needles must stay out
+        assert!(!STACK_TRACE_PATTERNS.iter().any(|(p, _, _)| *p == "/home/"));
+        assert!(!STACK_TRACE_PATTERNS.iter().any(|(p, _, _)| *p == "/app/"));
+        assert!(!STACK_TRACE_PATTERNS.iter().any(|(p, _, _)| *p == "Warning: "));
+        assert!(!STACK_TRACE_PATTERNS.iter().any(|(p, _, _)| *p == "on line "));
+        assert!(!STACK_TRACE_PATTERNS.iter().any(|(p, _, _)| *p == "development mode"));
+    }
+
+    #[test]
+    fn debug_headers_cover_x_envoy_timing() {
+        assert!(DEBUG_HEADERS.iter().any(|(h, _, _)| *h == "x-envoy-upstream-service-time"));
+    }
+
+    #[test]
+    fn stack_trace_patterns_cover_oracle_error() {
+        assert!(STACK_TRACE_PATTERNS.iter().any(|(p, _, _)| *p == "ORA-"));
+    }
+
+    #[test]
+    fn error_triggers_contain_xss_probe() {
+        assert!(ERROR_TRIGGERS.iter().any(|(path, _)| path.contains("__gossan__")));
+    }
+
+    #[test]
+    fn stack_trace_patterns_cover_sqlstate() {
+        assert!(STACK_TRACE_PATTERNS.iter().any(|(p, _, _)| *p == "SQLSTATE["));
+    }
+
+    #[test]
+    fn debug_headers_cover_x_debug_token_link() {
+        assert!(DEBUG_HEADERS.iter().any(|(h, _, _)| *h == "x-debug-token-link"));
+    }
+
+    #[test]
+    fn ssti_product_length_is_six() {
+        assert_eq!(SSTI_PRODUCT.len(), 6);
+        assert_eq!(SSTI_PRODUCT, "159401");
+    }
+
+    #[test]
+    fn error_triggers_cover_php_array_confusion() {
+        assert!(ERROR_TRIGGERS.iter().any(|(path, _)| path.contains("page[]")));
+    }
+
+    /// Adversarial: SPA catch-all returns marketing HTML containing former
+    /// generic needles (`/home/`, `/app/`, `Warning:`, `on line`, `development mode`).
+    /// Soft-404 baseline + tightened needles must yield zero body findings.
+    #[tokio::test]
+    async fn spa_catch_all_with_generic_needles_yields_zero_findings() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let shell = concat!(
+            "<html><body>Welcome home! Visit /home/dashboard and /app/settings. ",
+            "Warning: this is a marketing site in development mode on line 42. ",
+            "Enjoy!</body></html>"
+        );
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(shell))
+            .mount(&server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let target = gossan_core::testkit::web_target(&server.uri());
+        let findings = probe(&client, &target).await.unwrap();
+        assert!(
+            findings.is_empty(),
+            "SPA catch-all must not produce error-disclosure findings, got {:?}",
+            findings
+        );
+    }
+
+    /// Positive control: a distinct traceback body (different from SPA shell)
+    /// still produces a finding after soft-404 gating.
+    #[tokio::test]
+    async fn distinct_traceback_body_still_reports() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let shell = "<html><body>SPA shell</body></html>";
+        let traceback = "Traceback (most recent call last):\n  File \"/var/www/app.py\", line 1\n";
+        Mock::given(method("GET"))
+            .and(path("/gossan-error-probe-9z3k2p"))
+            .respond_with(ResponseTemplate::new(500).set_body_string(traceback))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(shell))
+            .mount(&server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let target = gossan_core::testkit::web_target(&server.uri());
+        let findings = probe(&client, &target).await.unwrap();
+        assert!(
+            findings.iter().any(|f| f.title().contains("Python traceback")
+                || f.title().contains("Web root path")
+                || f.title().contains("Python file path")),
+            "expected traceback disclosure finding, got {:?}",
+            findings
+        );
     }
 }

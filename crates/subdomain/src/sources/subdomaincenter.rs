@@ -24,17 +24,23 @@ impl SubdomainSource for Subdomaincenter {
         
         let url = format!("https://api.subdomain.center/?domain={}", domain);
         limiter.until_ready().await;
-        let resp = client.get(&url).send().await?;
+        let resp = client.get(&url).send().await?.error_for_status()?;
         let max_size = config.max_response_size;
         let bytes = gossan_core::read_response_limited(resp, max_size).await?;
         let mut seen = std::collections::HashSet::new();
         let domain_lower = domain.to_lowercase();
         
-        let arr: Vec<String> = serde_json::from_slice(&bytes).unwrap_or_default();
-        for item in arr {
-            let candidate = item.trim().trim_start_matches("*.").to_lowercase();
-            if !candidate.contains('*') && crate::is_subdomain_of(&candidate, &domain_lower) {
-                seen.insert(candidate);
+        let val: serde_json::Value = serde_json::from_slice(&bytes)?;
+        if let Some(arr) = val.as_array() {
+            for item in arr {
+                let name = item.as_str()
+                    .or_else(|| item.get("subdomain").and_then(|v| v.as_str()));
+                if let Some(name) = name {
+                    let candidate = name.trim().trim_start_matches("*.").to_lowercase();
+                    if !candidate.contains('*') && crate::is_subdomain_of(&candidate, &domain_lower) {
+                        seen.insert(candidate);
+                    }
+                }
             }
         }
 

@@ -1,7 +1,7 @@
 //! Banner-grab concurrency perf gate.
 //!
-//! Per GOSSAN_LEGENDARY Section F: ≥ 10k connections/min on loopback.
-//! That's ~167/sec, a very low bar — tokio's TCP path is well over
+//! Per GOSSAN_DEPTH_CONTRACT Section F: ≥ 10k connections/min on loopback.
+//! That's ~167/sec, a very low bar, tokio's TCP path is well over
 //! 1k/sec on any modern machine. We hold it at 1k/sec to make the
 //! gate meaningful (catches a regression where the per-connection
 //! deadline starts compounding linearly).
@@ -16,7 +16,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 
 const CONNECTIONS: usize = 1_000;
-// The GOSSAN_LEGENDARY F-section gate is ≥10k connections/min on
+// The GOSSAN_DEPTH_CONTRACT F-section gate is ≥10k connections/min on
 // loopback ≈ 167 conn/sec. We hold it at 500/sec so regressions
 // stand out without flaking on CI runners that share cores.
 const MIN_RATE: f64 = 500.0;

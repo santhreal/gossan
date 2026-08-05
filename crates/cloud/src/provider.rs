@@ -1,4 +1,4 @@
-//! `CloudProvider` trait — the single extension point for new cloud storage backends.
+//! `CloudProvider` trait (the single extension point for new cloud storage backends).
 //!
 //! To add a new provider:
 //!   1. Create `src/{provider}.rs` and implement `CloudProvider` on a zero-sized struct.
@@ -22,7 +22,7 @@ pub trait CloudProvider: Send + Sync {
 
     /// Probe `name` as a candidate bucket/account name for this provider.
     ///
-    /// `target` is the scan-seed `Target` — used as the finding's target so
+    /// `target` is the scan-seed `Target`: used as the finding's target so
     /// findings roll up to the original domain in reports.
     async fn probe(
         &self,
@@ -41,9 +41,9 @@ mod tests {
 
     #[test]
     fn provider_names_are_stable() {
-        assert_eq!(S3Provider.name(), "s3");
-        assert_eq!(GcsProvider.name(), "gcs");
-        assert_eq!(AzureProvider.name(), "azure");
-        assert_eq!(DoSpacesProvider.name(), "spaces");
+        assert_eq!(S3Provider::default().name(), "s3");
+        assert_eq!(GcsProvider::default().name(), "gcs");
+        assert_eq!(AzureProvider::default().name(), "azure");
+        assert_eq!(DoSpacesProvider::default().name(), "spaces");
     }
 }

@@ -53,21 +53,22 @@ impl super::super::CorrelationRule for SourceCodeSecretsRule {
     }
 
     fn check(&self, findings: &[Finding], _targets: &[Target]) -> Vec<Finding> {
-        let is_source = |f: &&Finding| {
+        let is_source = |f: &Finding| {
             let lower = f.title().to_lowercase();
             SOURCE_SIGNALS.iter().any(|sig| lower.contains(sig))
         };
-        let is_secret = |f: &&Finding| {
+        let is_secret = |f: &Finding| {
             let lower = f.title().to_lowercase();
             SECRET_SIGNALS.iter().any(|sig| lower.contains(sig))
         };
 
-        // Group findings by normalized host. The chain only fires when
-        // BOTH a source exposure and a secret are present on the SAME
-        // host — otherwise an unrelated `.git/config exposed on
-        // example.com` and `AWS key on unrelated-target.com` would
-        // produce a false-positive chain claiming attacker movement
-        // between them.
+        // Cluster by normalized host so the chain only fires when BOTH
+        // a source exposure and a secret are present on the SAME host
+        // (an unrelated `.git` on example.com and an AWS key on
+        // unrelated.com must not chain), and require *two distinct*
+        // findings, a single title that contains both vocabularies
+        // ("Source map exposes API key") is one finding, not a
+        // correlation. The distinct-pair check uses pointer identity.
         let mut by_host: std::collections::HashMap<String, Vec<&Finding>> =
             std::collections::HashMap::new();
         for f in findings {
@@ -79,12 +80,29 @@ impl super::super::CorrelationRule for SourceCodeSecretsRule {
 
         let mut chains = Vec::new();
         for (_host, group) in by_host {
-            let source_exposures: Vec<&Finding> = group.iter().copied().filter(is_source).collect();
-            let secret_findings: Vec<&Finding> = group.iter().copied().filter(is_secret).collect();
-
-            if source_exposures.is_empty() || secret_findings.is_empty() {
+            // Self-chain guard: require two *distinct* findings, one
+            // satisfying is_source and one satisfying is_secret.
+            let has_distinct_pair = {
+                let a = group.iter().copied().find(|f| is_source(f));
+                let b = group.iter().copied().find(|f| is_secret(f));
+                match (a, b) {
+                    (Some(fa), Some(fb)) if !std::ptr::eq(fa, fb) => true,
+                    (Some(fa), Some(fb)) => {
+                        // fa == fb (same object satisfies both). Look for
+                        // a distinct partner in either direction.
+                        let a2 = group.iter().copied().find(|f| !std::ptr::eq(*f, fb) && is_source(f));
+                        let b2 = group.iter().copied().find(|f| !std::ptr::eq(*f, fa) && is_secret(f));
+                        a2.is_some() || b2.is_some()
+                    }
+                    _ => false,
+                }
+            };
+            if !has_distinct_pair {
                 continue;
             }
+
+            let source_exposures: Vec<&Finding> = group.iter().copied().filter(|&f| is_source(f)).collect();
+            let secret_findings: Vec<&Finding> = group.iter().copied().filter(|&f| is_secret(f)).collect();
 
             let source_types: Vec<String> = source_exposures
                 .iter()
@@ -191,6 +209,49 @@ mod tests {
         ];
         let chains = rule.check(&findings, &[]);
         assert_eq!(chains.len(), 1);
+        assert_eq!(chains[0].target(), "example.com");
+    }
+
+    /// ADVERSARIAL: a *single* finding whose title contains both a
+    /// source-exposure word and a secret word must NOT self-chain.
+    /// These are realistic combined scanner titles already reported by
+    /// their own scanner, re-emitting them as a Critical correlation
+    /// duplicates a known finding.
+    #[test]
+    fn single_finding_matching_both_vocabularies_does_not_self_chain() {
+        let rule = SourceCodeSecretsRule;
+        for title in [
+            "Spring Boot Actuator /actuator/env exposes credentials",
+            "Source map exposes API key",
+            "Debug endpoint leaks JWT token",
+            "phpinfo() page reveals database password",
+        ] {
+            let findings = vec![finding("hidden", "example.com", title)];
+            let chains = rule.check(&findings, &[]);
+            assert!(
+                chains.is_empty(),
+                "single finding {title:?} self-chained into {:?}",
+                chains.iter().map(Finding::title).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// PROVING (regression twin): the same dual-vocabulary finding,
+    /// when accompanied by a genuinely *distinct* second finding of the
+    /// complementary type on the same host, MUST still chain.
+    #[test]
+    fn dual_vocab_finding_plus_distinct_partner_still_chains() {
+        let rule = SourceCodeSecretsRule;
+        let findings = vec![
+            finding("hidden", "example.com", "Debug endpoint leaks JWT token"),
+            finding("hidden", "example.com", ".git/config exposed"),
+        ];
+        let chains = rule.check(&findings, &[]);
+        assert_eq!(
+            chains.len(),
+            1,
+            "two distinct findings (one dual-vocab) must still chain"
+        );
         assert_eq!(chains[0].target(), "example.com");
     }
 }

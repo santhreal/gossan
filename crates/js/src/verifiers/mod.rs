@@ -9,7 +9,7 @@ use gossan_keyhog_lite::{
     dedup_matches, DedupScope, MatchLocation, RawMatch, Severity as KhSeverity, VerificationEngine,
     VerificationResult, VerifyConfig,
 };
-use secfinding::{Finding, Severity};
+use secfinding::{Evidence, Finding, Severity};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -26,7 +26,7 @@ impl Default for VerifierEngine {
 
 impl VerifierEngine {
     /// Build the verifier. Detectors come from
-    /// [`gossan_keyhog_lite::embedded_detectors`] — the corpus baked
+    /// [`gossan_keyhog_lite::embedded_detectors`], the corpus baked
     /// into the published `gossan-keyhog-lite` crate, so this works
     /// identically under `cargo install` and under monorepo dev.
     #[must_use]
@@ -45,16 +45,18 @@ impl VerifierEngine {
     }
 
     /// Walk `findings`, collect every entry tagged `secret`, recover
-    /// the raw credential via [`crate::secrets::take_raw_secret`], run
+    /// the raw credential via [`crate::secrets::get_raw_secret`], run
     /// dedup, send the batch through the engine, and stamp each
-    /// finding with the verification result.
+    /// finding with the verification result. Secrets are cleared from
+    /// the in-memory store after the batch completes.
     pub async fn verify_all(&self, findings: &mut [Finding]) {
         if findings.is_empty() {
             return;
         }
 
-        // 1. Collect raw matches.
+        // 1. Collect raw matches (peek — duplicates may share one hash).
         let mut raw_matches: Vec<RawMatch> = Vec::new();
+        let mut hashes_to_clear: Vec<String> = Vec::new();
         for f in findings.iter() {
             if !f.tags().iter().any(|t| t.as_ref() == "secret") {
                 continue;
@@ -72,9 +74,12 @@ impl VerifierEngine {
             let (Some(detector_id), Some(hash)) = (detector_id, hash) else {
                 continue;
             };
-            let Some(secret) = crate::secrets::take_raw_secret(&hash) else {
+            let Some(secret) = crate::secrets::get_raw_secret(&hash) else {
                 continue;
             };
+            if !hashes_to_clear.iter().any(|h| h == &hash) {
+                hashes_to_clear.push(hash.clone());
+            }
             if raw_matches
                 .iter()
                 .any(|m| m.detector_id == detector_id && m.credential == secret)
@@ -92,7 +97,10 @@ impl VerifierEngine {
                 location: MatchLocation {
                     source: "js".into(),
                     file_path: Some(f.target().to_string()),
-                    line: Some(0),
+                    line: f.evidence().iter().find_map(|ev| match ev {
+                        Evidence::JsSnippet { line, .. } if *line > 0 => Some(*line),
+                        _ => None,
+                    }),
                     offset: 0,
                     commit: None,
                     author: None,
@@ -104,6 +112,9 @@ impl VerifierEngine {
         }
 
         if raw_matches.is_empty() {
+            for h in &hashes_to_clear {
+                crate::secrets::clear_raw_secret(h);
+            }
             return;
         }
 
@@ -113,11 +124,16 @@ impl VerifierEngine {
         // 3. Verify.
         let verified = self.engine.verify_all(deduped).await;
 
+        // Drop peeked secrets after the batch so they don't linger in memory.
+        for h in &hashes_to_clear {
+            crate::secrets::clear_raw_secret(h);
+        }
+
         // 4. Re-stamp matching findings via the rebuild-from-builder
         // path. `Finding` fields are not directly mutable through the
         // public API, so we drop and rebuild the affected entries.
         // This intentionally tolerates the stub `Unknown` case by
-        // leaving the original finding untouched — the slice never
+        // leaving the original finding untouched, the slice never
         // elevates severity on "we don't know".
         for vf in verified {
             let hash_tag = format!("hash:{}", vf.credential_hash);
@@ -200,7 +216,13 @@ where
     if let Some(hint) = orig.exploit_hint() {
         b = b.exploit_hint(hint.to_string());
     }
-    decorate(b).build().ok()
+    match decorate(b).build() {
+        Ok(finding) => Some(finding),
+        Err(e) => {
+            tracing::warn!(error = %e, "js verifier verified finding rebuild failed");
+            None
+        }
+    }
 }
 
 fn map_severity(s: Severity) -> KhSeverity {

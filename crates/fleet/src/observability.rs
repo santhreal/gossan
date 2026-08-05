@@ -3,11 +3,11 @@
 //! Two endpoints, both served on a separate HTTP listener so they
 //! don't collide with the gRPC FleetControlServer on the main port:
 //!
-//! * `GET /healthz` — liveness probe. 200 OK with body `ok` while
+//! * `GET /healthz`: liveness probe. 200 OK with body `ok` while
 //!   the master is running. Designed for k8s readiness/liveness
 //!   probes and load-balancer health checks.
 //!
-//! * `GET /metrics` — Prometheus text-format metrics. Counts of
+//! * `GET /metrics`: Prometheus text-format metrics. Counts of
 //!   active workers, in-flight tasks, findings produced. Sized for
 //!   a single scrape per Prometheus interval (15s default).
 //!
@@ -80,7 +80,7 @@ pub fn render_prometheus(snap: MetricsSnapshot) -> String {
 
 /// Serve `/healthz` + `/metrics` on `addr` until the future is
 /// dropped. Uses a single hand-rolled HTTP/1.1 loop on tokio
-/// primitives — no extra heavy hyper dependency.
+/// primitives (no extra heavy hyper dependency).
 ///
 /// # Errors
 ///
@@ -132,8 +132,12 @@ pub async fn serve(addr: &str, source: Arc<dyn MetricsSource>) -> std::io::Resul
                  \r\n{body}",
                 body.len()
             );
-            let _ = sock.write_all(resp.as_bytes()).await;
-            let _ = sock.shutdown().await;
+            if let Err(e) = sock.write_all(resp.as_bytes()).await {
+                tracing::warn!(error = %e, "metrics response write failed");
+            }
+            if let Err(e) = sock.shutdown().await {
+                tracing::debug!(error = %e, "metrics socket shutdown failed");
+            }
         });
     }
 }

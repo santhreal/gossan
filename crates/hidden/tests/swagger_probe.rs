@@ -1,6 +1,6 @@
 //! Swagger / OpenAPI spec exposure tests.
 //!
-//! Per GOSSAN_LEGENDARY A10: when an OpenAPI / Swagger spec is
+//! Per GOSSAN_DEPTH_CONTRACT A10: when an OpenAPI / Swagger spec is
 //! exposed without auth, the probe must fire a finding. When the
 //! spec is gated behind 401/403, no finding fires.
 

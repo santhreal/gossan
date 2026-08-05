@@ -7,7 +7,7 @@
 //! queries (`get_task_status`, `get_task_findings`), sharded
 //! dispatch (`dispatch_task(module, targets, config, shard_id)`),
 //! and a `shard_id` field on both `Finding` and `TaskCompletion`.
-//! None of that exists in the current crate — `Master` exposes
+//! None of that exists in the current crate. `Master` exposes
 //! only `new()` + a three-arg `dispatch_task(module, targets,
 //! config)` that returns the assigned task id, and `Worker`
 //! exposes `new(master_url)` + `run(scanner_factory)`. The
@@ -135,26 +135,24 @@ async fn master_dispatch_repeated_calls_all_error_with_no_workers() {
     }
 }
 
-#[allow(dead_code)] // referenced from doc-comment above
-const MASTER_API_GAP_NOTES: &str = r"
-Removed test scenarios + the production gap each one needs filled
-before it can be re-added. Each maps to roughly 1 method that the
-old test required but Master does not yet expose.
-
-  test_01_empty_fleet                 master.get_task_status(&id)
-  test_02_empty_targets               master.get_task_status(&id)
-  test_03_one_worker_one_task         master.get_task_status + master.get_task_findings
-  test_04_findings_aggregation        master.get_task_findings
-  test_05_worker_disconnect_midflight per-shard tracking + worker heartbeat protocol
-  test_06_dispatch_with_shard_id      4-arg dispatch_task with shard id
-  test_07_findings_with_shard_id      Finding gains a shard_id field
-  test_08-30 ...                      same patterns combined
-
-To restore: add the missing methods to `gossan_fleet::master::Master`,
-then `git show <parent-of-this-commit>:crates/fleet/tests/break_it.rs`
-will give you the original aspirational test verbatim — the shapes
-the new methods must satisfy.
-";
+// MASTER API GAP NOTES
+// Removed test scenarios + the production gap each one needs filled
+// before it can be re-added. Each maps to roughly 1 method that the
+// old test required but Master does not yet expose.
+//
+//   test_01_empty_fleet                 master.get_task_status(&id)
+//   test_02_empty_targets               master.get_task_status(&id)
+//   test_03_one_worker_one_task         master.get_task_status + master.get_task_findings
+//   test_04_findings_aggregation        master.get_task_findings
+//   test_05_worker_disconnect_midflight per-shard tracking + worker heartbeat protocol
+//   test_06_dispatch_with_shard_id      4-arg dispatch_task with shard id
+//   test_07_findings_with_shard_id      Finding gains a shard_id field
+//   test_08-30 ...                      same patterns combined
+//
+// To restore: add the missing methods to `gossan_fleet::master::Master`,
+// then `git show <parent-of-this-commit>:crates/fleet/tests/break_it.rs`
+// will give you the original aspirational test verbatim, the shapes
+// the new methods must satisfy.
 
 #[cfg(test)]
 mod _config_helper_silencer {

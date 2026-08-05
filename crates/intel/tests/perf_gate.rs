@@ -1,6 +1,6 @@
 //! Intel-db query perf gate.
 //!
-//! Per GOSSAN_LEGENDARY Section F: query-by-ip against a 1M-record
+//! Per GOSSAN_DEPTH_CONTRACT Section F: query-by-ip against a 1M-record
 //! database must return in < 10ms. Catches regressions in the
 //! SQLite index path on `intel.ip`.
 

@@ -23,13 +23,15 @@ impl CorrelationRule for ShadowInfrastructureRule {
 
         // 2. Look for TLS findings on IP targets
         for f in findings {
-            // We only care about findings on IP-like targets (Host)
-            if !f
-                .target()
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_ascii_digit())
-            {
+            // We only care about findings whose target is a literal IP
+            // address (the rule's premise: an IP hosting certs for
+            // domains that were never mapped via DNS). The old
+            // "starts with an ASCII digit" proxy both *misfired* on
+            // digit-leading hostnames (1password.com, 23andme.com,
+            // 7-eleven.com → a bogus "IP address 1password.com hosts
+            // TLS certs" finding) and *missed* every IPv6 host (fe80::,
+            // ::1 don't start with a digit). Parse it as an actual IP.
+            if !target_is_ip(f.target()) {
                 continue;
             }
 
@@ -80,6 +82,42 @@ impl CorrelationRule for ShadowInfrastructureRule {
     }
 }
 
+/// True iff `target` is a literal IPv4/IPv6 address, tolerating an
+/// optional scheme, `:port`, and bracketed-IPv6 (`[::1]:443`) form.
+/// A digit-leading *hostname* (e.g. `1password.com`) is NOT an IP and
+/// must return false.
+fn target_is_ip(target: &str) -> bool {
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+    let host = target.trim();
+    let host = host
+        .strip_prefix("https://")
+        .or_else(|| host.strip_prefix("http://"))
+        .unwrap_or(host);
+    let host = host.split('/').next().unwrap_or(host);
+
+    // Bracketed IPv6, with or without a port: [::1] / [::1]:443
+    if let Some(rest) = host.strip_prefix('[') {
+        if let Some(end) = rest.find(']') {
+            return rest[..end].parse::<Ipv6Addr>().is_ok();
+        }
+        return false;
+    }
+
+    // Bare address (covers IPv4 and unbracketed IPv6 with no port).
+    if host.parse::<IpAddr>().is_ok() {
+        return true;
+    }
+
+    // IPv4 with a port: exactly one colon, left side is an IPv4.
+    if let Some((h, _port)) = host.rsplit_once(':') {
+        if !h.contains(':') {
+            return h.parse::<Ipv4Addr>().is_ok();
+        }
+    }
+    false
+}
+
 fn is_interesting_domain(domain: &str) -> bool {
     let lower = domain.to_lowercase();
     !(lower.ends_with(".cloudfront.net")
@@ -103,6 +141,7 @@ fn normalize_domain(d: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use secfinding::{Evidence, Severity};
 
     #[test]
     fn test_normalize_domain() {
@@ -119,5 +158,65 @@ mod tests {
         assert!(!is_interesting_domain("my.azureedge.net"));
         assert!(!is_interesting_domain("google.com"));
         assert!(!is_interesting_domain("mail.google.com"));
+    }
+
+    #[test]
+    fn target_is_ip_accepts_real_ips_rejects_digit_leading_hosts() {
+        assert!(target_is_ip("203.0.113.10"));
+        assert!(target_is_ip("203.0.113.10:443"));
+        assert!(target_is_ip("[2001:db8::1]:443"));
+        assert!(!target_is_ip("1password.com"));
+        assert!(!target_is_ip("23andme.com"));
+        assert!(!target_is_ip("7-eleven.com"));
+        assert!(!target_is_ip("99designs.com:443"));
+        assert!(!target_is_ip("3.example.com"));
+    }
+
+    fn cert_finding(target: &str, subject: &str, san: &[&str]) -> secfinding::Finding {
+        secfinding::Finding::builder("portscan", target, Severity::High)
+            .title("TLS Certificate")
+            .evidence(Evidence::Certificate {
+                subject: subject.into(),
+                issuer: "Let's Encrypt".into(),
+                san: san.iter().map(|s| (*s).into()).collect(),
+                expires: "2030".into(),
+            })
+            .build()
+            .expect("test finding")
+    }
+
+    /// ADVERSARIAL: a digit-leading *hostname* is not an IP. Pre-fix
+    /// this emitted a factually wrong "IP address 1password.com was
+    /// found to host TLS certificates" finding.
+    #[test]
+    fn shadow_infra_does_not_fire_on_digit_leading_hostname() {
+        let rule = ShadowInfrastructureRule;
+        for host in ["1password.com", "23andme.com", "7-eleven.com", "99designs.com"] {
+            let f = cert_finding(host, "shadowcorp-internal.example", &[]);
+            let chains = rule.check(&[f], &[]);
+            assert!(
+                chains.is_empty(),
+                "digit-leading hostname {host:?} misclassified as IP, emitted: {:?}",
+                chains
+                    .iter()
+                    .map(|c| c.title().to_string())
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// PROVING: a TLS cert on a real IPv4 that reveals an unmapped
+    /// domain still produces the shadow-infra finding.
+    #[test]
+    fn shadow_infra_fires_on_real_ipv4_target() {
+        let rule = ShadowInfrastructureRule;
+        let f = cert_finding(
+            "203.0.113.10",
+            "shadowcorp-internal.example",
+            &["vpn.shadowcorp-internal.example"],
+        );
+        let chains = rule.check(&[f], &[]);
+        assert_eq!(chains.len(), 1, "expected shadow-infra finding for IPv4");
+        assert!(chains[0].title().contains("Shadow Infrastructure"));
     }
 }

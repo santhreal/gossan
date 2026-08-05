@@ -1,8 +1,9 @@
 //! Per-host rate limiter with automatic 429 / backoff handling.
 //!
-//! The global `governor` rate limiter in `Config` caps total RPS across all hosts.
-//! This module adds a second layer: independent per-hostname buckets so that a burst
-//! against one host doesn't consume the global budget and block scanning of others.
+//! `Config::rate_limit` caps total RPS across all hosts. This module adds a
+//! second layer: independent per-hostname token-bucket governors so that a
+//! burst against one host doesn't consume the global budget and block scanning
+//! of others.
 //!
 //! # Usage
 //! ```ignore
@@ -14,14 +15,16 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::num::NonZeroU32;
+use std::time::Instant;
 use std::sync::Arc;
-use std::time::Duration;
 
 use governor::{DefaultDirectRateLimiter, Quota, RateLimiter};
-use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::TokioResolver;
 use scanclient::reqwest;
+pub use guise_pacing::{BackoffKind, BackoffPolicy};
 use tokio::sync::RwLock;
 
+use crate::config::MAX_HTTP_REDIRECTS;
 use crate::scanclient_bridge;
 use crate::Config;
 
@@ -34,42 +37,76 @@ fn is_timeout_error(error: &anyhow::Error) -> bool {
 /// Per-hostname rate limiter.  Creates an independent token-bucket governor for
 /// each unique hostname the first time it is seen; subsequent calls reuse it.
 pub struct HostRateLimiter {
-    limiters: RwLock<HashMap<String, Arc<DefaultDirectRateLimiter>>>,
-    rps: NonZeroU32,
+    limiters: RwLock<HashMap<String, (Arc<DefaultDirectRateLimiter>, Instant)>>,
+    /// `None` means per-host limiting is disabled (unthrottled).
+    rps: Option<NonZeroU32>,
 }
+
+/// Cap on retained per-host governors. Beyond this, idle entries are pruned.
+const HOST_LIMITER_CAP: usize = 10_000;
 
 impl HostRateLimiter {
     /// `rps_per_host`: max requests per second per unique hostname.
+    ///
+    /// Pass `0` to disable per-host limiting entirely (unthrottled). A zero
+    /// value must NOT collapse to 1 RPS.
     #[must_use]
     pub fn new(rps_per_host: u32) -> Self {
         Self {
             limiters: RwLock::new(HashMap::new()),
-            rps: NonZeroU32::new(rps_per_host).unwrap_or(NonZeroU32::MIN),
+            rps: NonZeroU32::new(rps_per_host),
         }
+    }
+
+    /// Derive a per-host RPS from `Config::host_delay_ms`, capped by the
+    /// global `rate_limit`. `host_delay_ms == 0` disables per-host limiting.
+    #[must_use]
+    pub fn from_config(config: &Config) -> Self {
+        if config.host_delay_ms == 0 {
+            return Self::new(0);
+        }
+        let from_delay = (1000 / config.host_delay_ms.max(1)).max(1) as u32;
+        let capped = from_delay.min(config.rate_limit.max(1));
+        Self::new(capped)
     }
 
     /// Async-wait until a request to `host` is within the rate budget.
     pub async fn until_ready(&self, host: &str) {
+        let Some(_) = self.rps else {
+            return;
+        };
         let limiter = self.get_or_create(host).await;
         limiter.until_ready().await;
     }
 
     async fn get_or_create(&self, host: &str) -> Arc<DefaultDirectRateLimiter> {
+        let rps = self.rps.expect("get_or_create only called when rps is Some");
         {
             let read = self.limiters.read().await;
-            if let Some(l) = read.get(host) {
+            if let Some((l, _)) = read.get(host) {
                 return Arc::clone(l);
             }
         }
-        // Not yet seen — insert under write lock
         let mut write = self.limiters.write().await;
-        // Double-check after acquiring write lock
-        if let Some(l) = write.get(host) {
+        if let Some((l, last)) = write.get_mut(host) {
+            *last = Instant::now();
             return Arc::clone(l);
         }
-        let quota = Quota::per_second(self.rps);
+        if write.len() >= HOST_LIMITER_CAP {
+            // Drop the oldest half to bound memory on million-host scans.
+            let mut entries: Vec<(String, Instant)> = write
+                .iter()
+                .map(|(k, (_, t))| (k.clone(), *t))
+                .collect();
+            entries.sort_by_key(|(_, t)| *t);
+            let drop_n = entries.len() / 2;
+            for (k, _) in entries.into_iter().take(drop_n) {
+                write.remove(&k);
+            }
+        }
+        let quota = Quota::per_second(rps);
         let limiter = Arc::new(RateLimiter::direct(quota));
-        write.insert(host.to_string(), Arc::clone(&limiter));
+        write.insert(host.to_string(), (Arc::clone(&limiter), Instant::now()));
         limiter
     }
 }
@@ -78,11 +115,11 @@ impl HostRateLimiter {
 pub fn build_client(
     config: &Config,
     follow_redirects: bool,
-    resolver: Arc<TokioAsyncResolver>,
+    resolver: Arc<TokioResolver>,
 ) -> anyhow::Result<reqwest::Client> {
     crate::transport::warn_insecure_tls_once(config.insecure_tls);
     let redirect_policy = if follow_redirects {
-        reqwest::redirect::Policy::limited(10)
+        reqwest::redirect::Policy::limited(MAX_HTTP_REDIRECTS)
     } else {
         reqwest::redirect::Policy::none()
     };
@@ -90,9 +127,12 @@ pub fn build_client(
         .map_err(|e| anyhow::anyhow!("scanclient pool: {e}"))
 }
 
+pub use guise_pacing::{BACKOFF_429_BASE_MS, BACKOFF_MAX_RETRIES, BACKOFF_TIMEOUT_BASE_MS};
+
 /// Retry an HTTP GET request, backing off exponentially on 429 responses.
 ///
-/// Backoff schedule: 500 ms → 1 s → 2 s → 4 s → give up.
+/// Backoff schedule: `BACKOFF_429_BASE_MS` × 2^attempt until
+/// `BACKOFF_MAX_RETRIES` are exhausted.
 ///
 /// # Errors
 /// Returns an error if all retries are exhausted or a non-retryable error occurs.
@@ -117,11 +157,11 @@ pub async fn read_response_limited(
     resp: reqwest::Response,
     max_size: usize,
 ) -> anyhow::Result<Vec<u8>> {
-    let mut body = Vec::new();
-    let mut total_read = 0;
-
-    // Check Content-Length header first if available
-    if let Some(cl) = resp.content_length() {
+    // Check Content-Length header first, bail early when the server
+    // declares the body is over limit, and capture the length for
+    // pre-allocation below.
+    let content_length = resp.content_length();
+    if let Some(cl) = content_length {
         if cl > max_size as u64 {
             anyhow::bail!(
                 "Response body exceeds max size (header check): {} > {}",
@@ -130,6 +170,15 @@ pub async fn read_response_limited(
             );
         }
     }
+
+    // Pre-allocate with the declared size (capped at max_size) so the
+    // common case, small responses with a Content-Length header, pays
+    // one allocation instead of O(log n) doubling reallocations while streaming.
+    let initial_capacity = content_length
+        .map(|cl| (cl as usize).min(max_size))
+        .unwrap_or(0);
+    let mut body = Vec::with_capacity(initial_capacity);
+    let mut total_read = 0;
 
     let mut stream = resp.bytes_stream();
     while let Some(chunk_res) = stream.next().await {
@@ -161,36 +210,69 @@ where
     F: FnMut() -> Fut,
     Fut: Future<Output = anyhow::Result<reqwest::Response>>,
 {
-    const MAX_RETRIES: u32 = 4;
-
     let host = {
         let parsed = url::Url::parse(url)?;
         parsed.host_str().unwrap_or(url).to_string()
     };
 
-    for attempt in 0..MAX_RETRIES {
+    let backoff = BackoffPolicy::gossan_compatible();
+
+    for attempt in 0..backoff.max_retries() {
         if let Some(rl) = rate_limiter {
             rl.until_ready(&host).await;
         }
 
         match send_request().await {
             Ok(resp) if resp.status().as_u16() == 429 => {
-                let delay = Duration::from_millis(500 * 2u64.pow(attempt));
+                let delay = backoff.delay(BackoffKind::RateLimited, attempt);
                 tracing::debug!(
                     url,
                     attempt,
                     delay_ms = delay.as_millis(),
-                    "429 — backing off"
+                    "429, backing off"
                 );
                 tokio::time::sleep(delay).await;
             }
             Ok(resp) => return Ok(resp),
-            Err(e) if attempt + 1 < MAX_RETRIES && is_timeout_error(&e) => {
-                let delay = Duration::from_millis(200 * 2u64.pow(attempt));
+            Err(e) if backoff.should_retry_after(attempt) && is_timeout_error(&e) => {
+                let delay = backoff.delay(BackoffKind::Timeout, attempt);
                 tokio::time::sleep(delay).await;
             }
             Err(e) => return Err(e),
         }
     }
     anyhow::bail!("max retries exceeded for {url}")
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn zero_rps_is_unthrottled_not_one() {
+        let rl = HostRateLimiter::new(0);
+        // Must return immediately without creating governors.
+        rl.until_ready("example.com").await;
+        assert!(rl.rps.is_none());
+        let guard = rl.limiters.read().await;
+        assert!(guard.is_empty(), "unthrottled limiter must not allocate per-host governors");
+    }
+
+    #[test]
+    fn from_config_maps_host_delay_to_rps() {
+        let mut cfg = Config::default();
+        cfg.host_delay_ms = 100; // 10 rps
+        cfg.rate_limit = 300;
+        let rl = HostRateLimiter::from_config(&cfg);
+        assert_eq!(rl.rps.map(|n| n.get()), Some(10));
+    }
+
+    #[test]
+    fn from_config_zero_delay_disables() {
+        let mut cfg = Config::default();
+        cfg.host_delay_ms = 0;
+        let rl = HostRateLimiter::from_config(&cfg);
+        assert!(rl.rps.is_none());
+    }
 }

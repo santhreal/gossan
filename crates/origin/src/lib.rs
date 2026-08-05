@@ -34,13 +34,30 @@
 //! | HTTP header leaks | `http_header` | No | 50-90 |
 //! | Favicon hash (Shodan + Censys) | `favicon` | Optional | 80 |
 //! | DNS history (SecurityTrails/ViewDNS) | `dns_history` | Optional | 85-90 |
-//! | Historical DNS (Censys, DNSDB, CIRCL, PassiveTotal) | — | Optional | 70-85 |
+//! | Historical DNS (Censys, DNSDB, CIRCL, PassiveTotal) | | Optional | 70-85 |
 
 pub mod scanners;
 pub mod sources;
 pub mod types;
 pub mod util;
 pub mod validator;
+
+pub mod scanner;
+pub use scanner::OriginScanner;
+
+/// Hard cap on response body bytes for passive-DNS and passive-total API
+/// responses in the origin crate. This is an upper bound applied on top of
+/// `Config::max_response_size`; neither value alone is trusted.
+pub(crate) const MAX_ORIGIN_JSON_BYTES: usize = 10 * 1024 * 1024;
+
+/// Hard cap for response bodies that only need to carry HTTP headers + small
+/// body (HTTP header leak scanners, validator probe responses). 2 MiB keeps
+/// the working set small for these high-frequency probes.
+pub(crate) const MAX_ORIGIN_HEADER_BYTES: usize = 2 * 1024 * 1024;
+
+/// Hard cap for favicon image fetches. Favicons are typically <100 KB; 5 MiB
+/// gives headroom for unusually large custom icons while bounding memory.
+pub(crate) const MAX_ORIGIN_FAVICON_BYTES: usize = 5 * 1024 * 1024;
 
 use gossan_core::{Config, ScanClient};
 pub use types::{OriginCandidate, ValidationState};
@@ -56,7 +73,11 @@ pub async fn discover_origin(
 ) -> anyhow::Result<Vec<OriginCandidate>> {
     // ── Single shared transport ──────────────────────────────────────
     let resolver = std::sync::Arc::new(gossan_core::net::build_resolver(config)?);
-    let client = std::sync::Arc::new(ScanClient::from_config(config, resolver)?);
+    // Scanners use the standard client; the validator must not follow
+    // redirects, otherwise direct-IP probes can redirect back to the CDN.
+    let client = std::sync::Arc::new(ScanClient::from_config(config, std::sync::Arc::clone(&resolver))?);
+    let validator_client =
+        std::sync::Arc::new(ScanClient::from_config_no_redirect(config, resolver)?);
 
     let mut tasks: Vec<tokio::task::JoinHandle<anyhow::Result<Vec<OriginCandidate>>>> = Vec::new();
 
@@ -159,7 +180,7 @@ pub async fn discover_origin(
     }
 
     // Active validation
-    candidates = validator::validate(candidates, domain, config, &client).await;
+    candidates = validator::validate(candidates, domain, config, &validator_client).await;
 
     Ok(candidates)
 }

@@ -24,9 +24,9 @@
 //! # Configuration
 //!
 //! Port lists, service probes, and risky service definitions are loaded from TOML:
-//! - `rules/top_ports.toml` — port list definitions
-//! - `rules/risky_services.toml` — high-risk service definitions
-//! - `rules/service_probes.toml` — active service probe payloads (~200+)
+//! - `rules/top_ports.toml`: port list definitions
+//! - `rules/risky_services.toml`: high-risk service definitions
+//! - `rules/service_probes.toml`: active service probe payloads (~200+)
 
 pub mod cdn;
 pub mod cve;
@@ -41,19 +41,35 @@ pub mod top_ports;
 mod integration_tests;
 
 use std::fmt;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::StreamExt;
+use gossan_core::ratelimit::{BackoffKind, BackoffPolicy, BACKOFF_TIMEOUT_BASE_MS};
 use gossan_core::{
     Config, DiscoverySource, DomainTarget, HostTarget, PortMode, Protocol, ScanInput, Scanner,
     ServiceTarget, Target,
 };
 use secfinding::{Evidence, Finding, FindingBuilder, Severity};
 use tokio::io::AsyncReadExt;
+
+/// Maximum number of hosts enumerated per CIDR range before the scan is
+/// truncated and an informational finding is emitted. A /24 exactly fits;
+/// anything larger is split by the caller.
+const MAX_HOSTS_PER_CIDR: usize = 256;
+
+use gossan_core::{EPHEMERAL_PORT_COUNT, EPHEMERAL_PORT_START};
+
+/// Maximum retries for a TCP connect probe before giving up.
+const PROBE_MAX_RETRIES: u32 = 3;
+
+/// Well-known TLS ports (connections on these ports get cert inspection).
+/// Inline test `tls_ports_well_known` pins this list against the match arm
+/// in `probe_port` so the two cannot drift independently.
+const TLS_PORTS: &[u16] = &[443, 8443, 465, 993, 636, 995, 587];
 
 /// A unique key identifying a scanned target (IP address or domain) and port.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -123,7 +139,9 @@ impl Scanner for PortScanner {
         let mut all_input_targets = Vec::new();
         {
             let mut rx = input.target_rx.lock().await;
-            while let Ok(t) = rx.try_recv() {
+            // recv() until the pipeline closes the inbox — try_recv races the
+            // sender and drops asynchronously delivered targets.
+            while let Some(t) = rx.recv().await {
                 all_input_targets.push(t);
             }
         }
@@ -131,20 +149,23 @@ impl Scanner for PortScanner {
         for t in &all_input_targets {
             if let Target::Network(net) = t {
                 if let Ok(prefix) = net.cidr.parse::<ipnet::IpNet>() {
-                    let max_hosts: usize = 256;
-                    let total_hosts = prefix.hosts().count();
-                    if total_hosts > max_hosts {
+                    // Cap enumeration so IPv6 /0 (2^128 hosts) does not
+                    // overflow usize during count(), ipnet emulates std
+                    // overflow behavior which panics in debug builds.
+                    let total_hosts = prefix.hosts().take(MAX_HOSTS_PER_CIDR + 1).count();
+                    if total_hosts > MAX_HOSTS_PER_CIDR {
                         if let Some(f) = finding_builder(
                             &Target::Network(net.clone()),
                             Severity::Info,
                             format!(
                                 "CIDR range {} truncated: scanning {}/{} hosts",
-                                net.cidr, max_hosts, total_hosts
+                                net.cidr, MAX_HOSTS_PER_CIDR, total_hosts
                             ),
                             format!(
                                 "Network {} contains {} hosts but scanning is limited to {} per range. \
                                  {} hosts will NOT be scanned. Split into /24 subnets for full coverage.",
-                                net.cidr, total_hosts, max_hosts, total_hosts - max_hosts
+                                net.cidr, total_hosts, MAX_HOSTS_PER_CIDR,
+                                total_hosts.saturating_sub(MAX_HOSTS_PER_CIDR)
                             ),
                         )
                         .tag("cidr")
@@ -152,10 +173,10 @@ impl Scanner for PortScanner {
                         .kind(secfinding::FindingKind::InfoDisclosure)
                         .build_or_log()
                         {
-                            input.emit(f);
+                            input.emit(f).await;
                         }
                     }
-                    for addr in prefix.hosts().take(max_hosts) {
+                    for addr in prefix.hosts().take(MAX_HOSTS_PER_CIDR) {
                         expanded_targets.push(Target::Host(HostTarget {
                             ip: addr,
                             domain: None,
@@ -168,11 +189,7 @@ impl Scanner for PortScanner {
         }
 
         let active_ports: Vec<u16> = match &config.port_mode {
-            PortMode::Default => rules::default_ports().to_vec(),
-            PortMode::Top100 => rules::top_100().to_vec(),
-            PortMode::Top1000 => rules::top_1000().to_vec(),
-            PortMode::Full => (1u16..=65535).collect(),
-            PortMode::Custom(ports) => ports.clone(),
+            mode => gossan_core::resolve_ports(mode),
         };
 
         // ── Resume support: load checkpoint if available ─────────────────────
@@ -208,7 +225,9 @@ impl Scanner for PortScanner {
                                     .len(),
                                 "resuming portscan from checkpoint"
                             );
-                        } else if let Ok(old_ports) = serde_json::from_str::<Vec<(IpAddr, u16)>>(&content) {
+                        } else if let Ok(old_ports) =
+                            serde_json::from_str::<Vec<(IpAddr, u16)>>(&content)
+                        {
                             let keys: Vec<ScanTargetKey> = old_ports
                                 .into_iter()
                                 .map(|(ip, port)| ScanTargetKey {
@@ -233,12 +252,152 @@ impl Scanner for PortScanner {
             }
         }
 
-        let pairs: Vec<(String, Option<String>, u16, IpAddr)> = expanded_targets
+        // ── Stateless SYN pre-filter (Linux + CAP_NET_RAW) ───────────────────
+        let want_stateless: bool = {
+            #[cfg(target_os = "linux")]
+            {
+                stateless::transport::linux::raw_available() && config.proxy.is_none()
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                false
+            }
+        };
+
+        let domain_ips: std::collections::HashMap<String, IpAddr> = if want_stateless {
+            let mut m = std::collections::HashMap::new();
+            for t in &expanded_targets {
+                if let Target::Domain(d) = t {
+                    if m.contains_key(&d.domain) {
+                        continue;
+                    }
+                    if let Ok(addrs) = input.resolver.lookup_ip(format!("{}.", d.domain)).await {
+                        for addr in addrs {
+                            m.insert(d.domain.clone(), addr);
+                            break;
+                        }
+                    }
+                }
+            }
+            m
+        } else {
+            std::collections::HashMap::new()
+        };
+
+        #[cfg(target_os = "linux")]
+        let syn_open: Option<std::collections::HashSet<(Ipv4Addr, u16)>> = if want_stateless {
+            let mut resolved = Vec::new();
+            for t in &expanded_targets {
+                match t {
+                    Target::Host(h) => {
+                        if let IpAddr::V4(v4) = h.ip {
+                            resolved.push((h.ip.to_string(), h.domain.clone(), v4));
+                        }
+                    }
+                    Target::Domain(d) => {
+                        if let Some(&IpAddr::V4(v4)) = domain_ips.get(&d.domain) {
+                            resolved.push((d.domain.clone(), Some(d.domain.clone()), v4));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if resolved.is_empty() {
+                None
+            } else {
+                let unique_ips: Vec<Ipv4Addr> = {
+                    let set: std::collections::HashSet<_> =
+                        resolved.iter().map(|(_, _, ip)| *ip).collect();
+                    set.into_iter().collect()
+                };
+                let src_port =
+                    EPHEMERAL_PORT_START + (std::process::id() as u16 % EPHEMERAL_PORT_COUNT);
+                let src_ip = stateless::transport::local_source_ipv4(Ipv4Addr::new(8, 8, 8, 8))
+                    .unwrap_or(Ipv4Addr::UNSPECIFIED);
+                if src_ip.is_unspecified() {
+                    tracing::warn!("could not determine local source IPv4 for stateless SYN scan");
+                    None
+                } else {
+                    let src = SocketAddrV4::new(src_ip, src_port);
+                    let cookie = stateless::cookie::SynCookie::random();
+                    let seed: u64 = rand::random();
+                    let unique_ips_len = unique_ips.len();
+                    let mut scanner = stateless::StatelessScanner::new(
+                        src,
+                        unique_ips,
+                        active_ports.clone(),
+                        cookie,
+                        seed,
+                    );
+                    let total = scanner.total();
+                    tracing::info!(
+                        targets = resolved.len(),
+                        unique_ips = unique_ips_len,
+                        ports = active_ports.len(),
+                        total_probes = total,
+                        "starting stateless SYN pre-filter"
+                    );
+                    let rate_limit = config.rate_limit as u64;
+                    let outcomes = match tokio::task::spawn_blocking(move || {
+                        let mut transport = stateless::transport::linux::RawSynTransport::new()?;
+                        stateless::transport::run_blocking(
+                            &mut scanner,
+                            &mut transport,
+                            rate_limit,
+                            std::time::Duration::from_secs(2),
+                        )
+                    })
+                    .await
+                    {
+                        Ok(Ok(outcomes)) => Some(outcomes),
+                        Ok(Err(e)) => {
+                            tracing::warn!(
+                                error = %e,
+                                "stateless SYN pre-filter failed; falling back to connect scan"
+                            );
+                            None
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                "stateless SYN pre-filter join failed; falling back to connect scan"
+                            );
+                            None
+                        }
+                    };
+                    if let Some(outcomes) = outcomes {
+                        let mut open_set = std::collections::HashSet::new();
+                        for o in &outcomes {
+                            if let stateless::Outcome::Open(sa) = o {
+                                open_set.insert((*sa.ip(), sa.port()));
+                            }
+                        }
+                        tracing::info!(
+                            open = open_set.len(),
+                            total_probes = total,
+                            "stateless SYN pre-filter complete"
+                        );
+                        Some(open_set)
+                    } else {
+                        None
+                    }
+                }
+            }
+        } else {
+            None
+        };
+        #[cfg(not(target_os = "linux"))]
+        let syn_open: Option<std::collections::HashSet<(Ipv4Addr, u16)>> = None;
+
+        let mut pairs: Vec<(String, Option<String>, u16, IpAddr)> = expanded_targets
             .iter()
             .filter(|t| self.accepts(t))
             .flat_map(|t| {
                 let (addr, domain, ip) = match t {
-                    Target::Domain(d) => (d.domain.clone(), Some(d.domain.clone()), None),
+                    Target::Domain(d) => {
+                        let ip = domain_ips.get(&d.domain).copied();
+                        (d.domain.clone(), Some(d.domain.clone()), ip)
+                    }
                     Target::Host(h) => (h.ip.to_string(), h.domain.clone(), Some(h.ip)),
                     _ => return Vec::new(),
                 };
@@ -269,6 +428,17 @@ impl Scanner for PortScanner {
             })
             .collect();
 
+        if let Some(ref open_set) = syn_open {
+            pairs.retain(|(_, _, port, ip)| {
+                if let IpAddr::V4(v4) = ip {
+                    if !v4.is_unspecified() {
+                        return open_set.contains(&(*v4, *port));
+                    }
+                }
+                true
+            });
+        }
+
         let open_count = Arc::new(AtomicUsize::new(0));
         let probe_engine = Arc::new(probes::ProbeEngine::new(timeout));
 
@@ -281,9 +451,7 @@ impl Scanner for PortScanner {
                     tokio::time::sleep(Duration::from_secs(5)).await;
                     let resume_file = path.with_extension("portscan-resume.json");
                     let data = {
-                        let locked = completed_ports
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner());
+                        let locked = completed_ports.lock().unwrap_or_else(|e| e.into_inner());
                         let keys: Vec<&ScanTargetKey> = locked.iter().collect();
                         serde_json::to_string(&keys)
                     };
@@ -323,12 +491,12 @@ impl Scanner for PortScanner {
 
                         // Mark this (ip, port) pair complete REGARDLESS
                         // of result. Resume semantics are "we already
-                        // probed this once" — the result (open / closed
+                        // probed this once", the result (open / closed
                         // / filtered) doesn't change whether we should
                         // re-probe on resume. Without this, the loaded
                         // completed_ports set was treated read-only and
                         // every resumed run re-scanned every port from
-                        // scratch — exactly the bug the warning on the
+                        // scratch, exactly the bug the warning on the
                         // unused `ip` variable was concealing.
                         completed_ports
                             .lock()
@@ -355,9 +523,9 @@ impl Scanner for PortScanner {
         for item in results.into_iter().flatten() {
             let (svc, findings, extra_targets) = item;
             for f in findings {
-                input.emit(f);
+                input.emit(f).await;
             }
-            input.emit_target(Target::Service(svc));
+            input.emit_target(Target::Service(svc)).await;
 
             for t in extra_targets {
                 if let Target::Domain(ref d) = t {
@@ -366,7 +534,7 @@ impl Scanner for PortScanner {
                         || d.domain.ends_with(&format!(".{}", input.seed))
                         || input.seed.ends_with(&format!(".{}", d.domain))
                     {
-                        input.emit_target(t);
+                        input.emit_target(t).await;
                     } else {
                         tracing::debug!(
                             san = %d.domain,
@@ -375,7 +543,7 @@ impl Scanner for PortScanner {
                         );
                     }
                 } else {
-                    input.emit_target(t);
+                    input.emit_target(t).await;
                 }
             }
         }
@@ -394,7 +562,13 @@ impl Scanner for PortScanner {
                 let keys: Vec<&ScanTargetKey> = guard.iter().collect();
                 serde_json::to_string(&keys)?
             };
-            let _ = tokio::fs::write(&resume_file, data).await;
+            if let Err(e) = tokio::fs::write(&resume_file, data).await {
+                tracing::warn!(
+                    path = %resume_file.display(),
+                    error = %e,
+                    "portscan resume checkpoint write failed"
+                );
+            }
         }
 
         tracing::info!(
@@ -413,18 +587,25 @@ async fn retry_probe(
     proxy: Option<&str>,
     engine: &probes::ProbeEngine,
 ) -> Option<(ServiceTarget, Vec<Finding>, Vec<Target>)> {
-    const MAX_RETRIES: u32 = 3;
-    for attempt in 0..MAX_RETRIES {
+    let backoff = probe_retry_backoff();
+    for attempt in 0..PROBE_MAX_RETRIES {
         match probe_port(addr, domain.clone(), port, timeout, proxy, engine).await {
             Some(result) => return Some(result),
-            None if attempt + 1 < MAX_RETRIES => {
-                let delay = Duration::from_millis(200 * 2u64.pow(attempt));
-                tokio::time::sleep(delay).await;
+            None if backoff.should_retry_after(attempt) => {
+                tokio::time::sleep(backoff.delay(BackoffKind::Timeout, attempt)).await;
             }
             None => return None,
         }
     }
     None
+}
+
+fn probe_retry_backoff() -> BackoffPolicy {
+    BackoffPolicy::new(
+        PROBE_MAX_RETRIES,
+        BACKOFF_TIMEOUT_BASE_MS,
+        BACKOFF_TIMEOUT_BASE_MS,
+    )
 }
 
 async fn probe_port(
@@ -447,16 +628,17 @@ async fn probe_port(
     let probe_future = engine.probe(stream, addr, port, proxy);
     let (banner, probe_matches) = match tokio::time::timeout(deadline, probe_future).await {
         Ok((b, m)) => (b, m),
-        Err(_) => (None, Vec::new()),
+        Err(_) => {
+            tracing::warn!(
+                addr = %addr,
+                port,
+                "portscan probe timed out; continuing with empty banner/matches"
+            );
+            (None, Vec::new())
+        }
     };
 
-    let tls = port == 443
-        || port == 8443
-        || port == 465
-        || port == 993
-        || port == 636
-        || port == 995
-        || port == 587;
+    let tls = TLS_PORTS.contains(&port);
 
     let svc = ServiceTarget {
         host: HostTarget { ip, domain },
@@ -470,7 +652,7 @@ async fn probe_port(
     let mut extra_targets: Vec<Target> = Vec::new();
 
     // Emit finding for high-risk port exposure (require banner confirmation)
-    if let Some(r) = rules::risky_services().iter().find(|r| r.port == port) {
+    if let Some(r) = rules::risky_service_by_port(port) {
         let target = Target::Service(svc.clone());
         let severity = if banner.is_none() {
             Severity::Low // downgrade if we can't confirm the service
@@ -561,7 +743,7 @@ async fn probe_port(
                     gossan_core::try_push_finding(
                         finding_builder(
                             &target,
-                            Severity::High,
+                            Severity::Medium,
                             format!("TLS certificate expires in {} days", days),
                             format!(
                                 "Certificate for port {} expires very soon. Immediate renewal required.",
@@ -596,7 +778,7 @@ async fn probe_port(
                             Severity::Medium,
                             "Self-signed TLS certificate",
                             format!(
-                                "Port {} uses a self-signed certificate — clients cannot verify authenticity.",
+                                "Port {} uses a self-signed certificate, clients cannot verify authenticity.",
                                 port
                             ),
                         )
@@ -636,9 +818,9 @@ async fn probe_port(
                 gossan_core::try_push_finding(
                     finding_builder(
                         &target,
-                        Severity::High,
+                        Severity::Low,
                         format!(
-                            "TLS 1.0 supported on port {} — BEAST/POODLE vulnerable",
+                            "TLS 1.0 supported on port {}: BEAST/POODLE vulnerable",
                             port
                         ),
                         format!(
@@ -658,8 +840,8 @@ async fn probe_port(
                 gossan_core::try_push_finding(
                     finding_builder(
                         &target,
-                        Severity::Medium,
-                        format!("TLS 1.1 supported on port {} — deprecated (RFC 8996)", port),
+                        Severity::Low,
+                        format!("TLS 1.1 supported on port {}, deprecated (RFC 8996)", port),
                         format!(
                             "Port {} accepts TLS 1.1 connections. TLS 1.1 was deprecated alongside \
                              TLS 1.0 in RFC 8996 (March 2021). Configure the server to require \
@@ -678,9 +860,13 @@ async fn probe_port(
             all_findings
         };
 
-        let tls_results = tokio::time::timeout(tls_deadline, tls_future)
-            .await
-            .unwrap_or_default();
+        let tls_results = match tokio::time::timeout(tls_deadline, tls_future).await {
+            Ok(v) => v,
+            Err(_) => {
+                tracing::warn!("TLS probe future timed out; skipping TLS findings for this service: addr={} port={}", addr, port);
+                Vec::new()
+            }
+        };
         findings.extend(tls_results);
 
         // JARM (optional, default off)
@@ -744,6 +930,16 @@ async fn probe_port(
     Some((svc, findings, extra_targets))
 }
 
+fn build_banner_finding(builder: secfinding::FindingBuilder) -> Option<Finding> {
+    match builder.build() {
+        Ok(f) => Some(f),
+        Err(e) => {
+            tracing::warn!(error = %e, "portscan banner finding build failed");
+            None
+        }
+    }
+}
+
 fn identify_banner_or_probe(
     banner: &str,
     probe_matches: &[String],
@@ -764,7 +960,7 @@ fn identify_banner_or_probe(
         } else {
             Severity::Info
         };
-        return Some(
+        return build_banner_finding(
             finding_builder(
                 &Target::Service(svc.clone()),
                 severity,
@@ -778,15 +974,13 @@ fn identify_banner_or_probe(
             .tag("ssh")
             .tag("version-disclosure")
             .kind(secfinding::FindingKind::InfoDisclosure)
-            .build()
-            .ok()?,
         );
     }
 
     // FTP banner
     if (port == 21 || b.contains("ftp")) && (b.starts_with("220") || b.starts_with("230")) {
         let version = banner.lines().next().unwrap_or(banner).trim();
-        return Some(
+        return build_banner_finding(
             finding_builder(
                 &Target::Service(svc.clone()),
                 Severity::Info,
@@ -800,15 +994,13 @@ fn identify_banner_or_probe(
             .tag("ftp")
             .tag("version-disclosure")
             .kind(secfinding::FindingKind::InfoDisclosure)
-            .build()
-            .ok()?,
         );
     }
 
     // SMTP banner
     if (port == 25 || port == 465 || port == 587) && b.starts_with("220") {
         let version = banner.lines().next().unwrap_or(banner).trim();
-        return Some(
+        return build_banner_finding(
             finding_builder(
                 &Target::Service(svc.clone()),
                 Severity::Info,
@@ -822,8 +1014,6 @@ fn identify_banner_or_probe(
             .tag("smtp")
             .tag("version-disclosure")
             .kind(secfinding::FindingKind::InfoDisclosure)
-            .build()
-            .ok()?,
         );
     }
 
@@ -834,8 +1024,8 @@ fn identify_banner_or_probe(
             .find(|l| l.to_lowercase().starts_with("server:"))
             .unwrap_or("");
         if !server_line.is_empty() {
-            return Some(
-                finding_builder(
+            return build_banner_finding(
+            finding_builder(
                     &Target::Service(svc.clone()),
                     Severity::Info,
                     format!("HTTP server header: {}", server_line.trim()),
@@ -847,38 +1037,34 @@ fn identify_banner_or_probe(
                 .tag("banner")
                 .tag("http")
                 .tag("version-disclosure")
-                .build()
-                .ok()?,
-            );
+        );
         }
     }
 
     // Redis
     if port == 6379 && (b.starts_with('+') || b.starts_with('-')) {
-        return Some(
+        return build_banner_finding(
             finding_builder(
                 &Target::Service(svc.clone()),
                 Severity::Critical,
                 "Redis responds without authentication",
-                "Redis accepted connection and responded — likely unauthenticated. Full data access and potential RCE via cron/SSH key write.",
+                "Redis accepted connection and responded, likely unauthenticated. Full data access and potential RCE via cron/SSH key write.",
             )
             .evidence(Evidence::Banner { raw: banner.to_string().into() })
             .tag("banner")
             .tag("redis")
             .tag("no-auth")
             .kind(secfinding::FindingKind::Vulnerability)
-            .build()
-            .ok()?,
         );
     }
 
     // MongoDB
     if port == 27017 && (banner.contains("MongoDB") || b.contains("ismaster")) {
-        return Some(
+        return build_banner_finding(
             finding_builder(
                 &Target::Service(svc.clone()),
                 Severity::Critical,
-                "MongoDB responds — likely unauthenticated",
+                "MongoDB responds, likely unauthenticated",
                 "MongoDB accepted connection. May allow unauthenticated full database access.",
             )
             .evidence(Evidence::Banner {
@@ -888,27 +1074,23 @@ fn identify_banner_or_probe(
             .tag("mongodb")
             .tag("no-auth")
             .kind(secfinding::FindingKind::Vulnerability)
-            .build()
-            .ok()?,
         );
     }
 
     // Telnet
     if port == 23 {
-        return Some(
+        return build_banner_finding(
             finding_builder(
                 &Target::Service(svc.clone()),
                 Severity::Critical,
                 "Telnet service responds",
-                "Telnet is active and responding. All traffic is plaintext — immediate credential interception risk.",
+                "Telnet is active and responding. All traffic is plaintext, immediate credential interception risk.",
             )
             .evidence(Evidence::Banner { raw: banner.to_string().into() })
             .tag("banner")
             .tag("telnet")
             .tag("plaintext")
             .kind(secfinding::FindingKind::Vulnerability)
-            .build()
-            .ok()?,
         );
     }
 
@@ -916,11 +1098,11 @@ fn identify_banner_or_probe(
     if (port == 9200 || port == 9300)
         && (b.contains("lucene") || b.contains("elasticsearch") || b.contains("\"cluster_name\""))
     {
-        return Some(
+        return build_banner_finding(
             finding_builder(
                 &Target::Service(svc.clone()),
                 Severity::Critical,
-                "Elasticsearch responds — likely unauthenticated",
+                "Elasticsearch responds, likely unauthenticated",
                 format!(
                     "Elasticsearch on port {} accepted connection and returned cluster info. \
                      Unauthenticated access allows full index enumeration, data exfiltration, \
@@ -935,8 +1117,6 @@ fn identify_banner_or_probe(
             .tag("elasticsearch")
             .tag("no-auth")
             .kind(secfinding::FindingKind::Vulnerability)
-            .build()
-            .ok()?,
         );
     }
 
@@ -949,7 +1129,7 @@ fn identify_banner_or_probe(
         } else {
             Severity::High
         };
-        return Some(
+        return build_banner_finding(
             finding_builder(
                 &Target::Service(svc.clone()),
                 severity,
@@ -963,8 +1143,6 @@ fn identify_banner_or_probe(
             .tag("postgresql")
             .tag("database")
             .kind(secfinding::FindingKind::Exposure)
-            .build()
-            .ok()?,
         );
     }
 
@@ -972,7 +1150,7 @@ fn identify_banner_or_probe(
     if port == 3306
         && (banner.contains("mysql") || b.contains("mariadb") || b.contains("caching_sha2"))
     {
-        return Some(
+        return build_banner_finding(
             finding_builder(
                 &Target::Service(svc.clone()),
                 Severity::High,
@@ -990,8 +1168,6 @@ fn identify_banner_or_probe(
             .tag("mysql")
             .tag("database")
             .kind(secfinding::FindingKind::Exposure)
-            .build()
-            .ok()?,
         );
     }
 
@@ -999,11 +1175,11 @@ fn identify_banner_or_probe(
     if port == 11211
         && (b.starts_with("stat") || b.starts_with("version") || b.starts_with("error"))
     {
-        return Some(
+        return build_banner_finding(
             finding_builder(
                 &Target::Service(svc.clone()),
                 Severity::Critical,
-                "Memcached responds — likely unauthenticated",
+                "Memcached responds, likely unauthenticated",
                 "Memcached on port 11211 accepted connection. Unauthenticated access allows full \
                  cache dump, data injection, and DDoS amplification (UDP reflection).",
             )
@@ -1014,8 +1190,6 @@ fn identify_banner_or_probe(
             .tag("memcached")
             .tag("no-auth")
             .kind(secfinding::FindingKind::Vulnerability)
-            .build()
-            .ok()?,
         );
     }
 
@@ -1029,7 +1203,7 @@ fn identify_banner_or_probe(
         } else {
             Severity::Critical
         };
-        return Some(
+        return build_banner_finding(
             finding_builder(
                 &Target::Service(svc.clone()),
                 severity,
@@ -1052,14 +1226,12 @@ fn identify_banner_or_probe(
             .tag("kubernetes")
             .tag("api")
             .kind(secfinding::FindingKind::Exposure)
-            .build()
-            .ok()?,
         );
     }
 
     // Probe-based matches (from active probes)
     for m in probe_matches {
-        return Some(
+        return build_banner_finding(
             finding_builder(
                 &Target::Service(svc.clone()),
                 Severity::Info,
@@ -1069,8 +1241,6 @@ fn identify_banner_or_probe(
             .tag("banner")
             .tag("probe")
             .kind(secfinding::FindingKind::TechDetect)
-            .build()
-            .ok()?,
         );
     }
 
@@ -1135,21 +1305,25 @@ fn extract_root_domain(domain: &str) -> String {
     let last_two = format!("{}.{}", parts[parts.len() - 2], parts[parts.len() - 1]);
     let common_two_part_suffixes = [
         "co.uk", "org.uk", "me.uk", "ltd.uk", "plc.uk", "sch.uk", "gov.uk", "ac.uk", "net.uk",
-        "com.au", "net.au", "org.au", "edu.au", "gov.au", "asn.au", "id.au",
-        "com.cn", "edu.cn", "gov.cn", "org.cn", "net.cn", "ac.cn",
-        "com.br", "net.br", "org.br", "edu.br", "gov.br",
-        "co.jp", "or.jp", "ne.jp", "ac.jp", "ad.jp", "ed.jp", "go.jp",
-        "com.sg", "org.sg", "edu.sg", "gov.sg", "net.sg",
-        "co.nz", "net.nz", "org.nz", "edu.nz", "gov.nz",
-        "com.tw", "org.tw", "gov.tw", "edu.tw", "net.tw",
-        "com.hk", "org.hk", "gov.hk", "edu.hk", "net.hk",
+        "com.au", "net.au", "org.au", "edu.au", "gov.au", "asn.au", "id.au", "com.cn", "edu.cn",
+        "gov.cn", "org.cn", "net.cn", "ac.cn", "com.br", "net.br", "org.br", "edu.br", "gov.br",
+        "co.jp", "or.jp", "ne.jp", "ac.jp", "ad.jp", "ed.jp", "go.jp", "com.sg", "org.sg",
+        "edu.sg", "gov.sg", "net.sg", "co.nz", "net.nz", "org.nz", "edu.nz", "gov.nz", "com.tw",
+        "org.tw", "gov.tw", "edu.tw", "net.tw", "com.hk", "org.hk", "gov.hk", "edu.hk", "net.hk",
     ];
     if common_two_part_suffixes.contains(&last_two.as_str()) && parts.len() >= 3 {
-        format!("{}.{}.{}", parts[parts.len() - 3], parts[parts.len() - 2], parts[parts.len() - 1])
+        format!(
+            "{}.{}.{}",
+            parts[parts.len() - 3],
+            parts[parts.len() - 2],
+            parts[parts.len() - 1]
+        )
     } else {
         last_two
     }
 }
 
+#[cfg(test)]
+mod edge_tests;
 #[cfg(test)]
 mod tests;

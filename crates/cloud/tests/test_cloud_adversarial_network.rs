@@ -8,24 +8,13 @@ use std::sync::Arc;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use hickory_resolver::{
-    config::{ResolverConfig, ResolverOpts},
-    TokioAsyncResolver,
-};
-
-/// Build a no-op resolver for tests. The original
-/// `Resolver::builder_with_config(...).with_options(...).build()` form
-/// targeted hickory-resolver 0.25; the workspace pins 0.24, where
-/// `TokioAsyncResolver::tokio(config, opts)` is the supported
-/// constructor. The resolver isn't actually used by the SSRF-protection
-/// tests below — those exercise the early-exit path in `CloudScanner`
-/// when a target IP is in the metadata-service range — but a real
-/// `Arc<TokioAsyncResolver>` is required to construct `ScanInput`.
-fn dummy_resolver() -> Arc<TokioAsyncResolver> {
-    Arc::new(TokioAsyncResolver::tokio(
-        ResolverConfig::default(),
-        ResolverOpts::default(),
-    ))
+/// Build a no-op resolver for tests using the same helper the
+/// production code uses.
+fn dummy_resolver() -> Arc<hickory_resolver::TokioResolver> {
+    Arc::new(
+        gossan_core::net::build_resolver(&gossan_core::Config::default())
+            .expect("test resolver"),
+    )
 }
 
 /// Build a streaming-API ScanInput for the SSRF tests. The
@@ -39,15 +28,15 @@ fn streaming_input(
     targets: Vec<Target>,
 ) -> (
     ScanInput,
-    tokio::sync::mpsc::UnboundedReceiver<secfinding::Finding>,
+    tokio::sync::mpsc::Receiver<secfinding::Finding>,
 ) {
-    let (in_tx, in_rx) = tokio::sync::mpsc::unbounded_channel::<Target>();
+    let (in_tx, in_rx) = tokio::sync::mpsc::channel::<Target>(1024);
     for t in targets {
-        let _ = in_tx.send(t);
+        let _ = in_tx.try_send(t);
     }
     drop(in_tx);
-    let (live_tx, live_rx) = tokio::sync::mpsc::unbounded_channel();
-    let (target_tx, _target_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (live_tx, live_rx) = tokio::sync::mpsc::channel(1024);
+    let (target_tx, _target_rx) = tokio::sync::mpsc::channel(1024);
     let input = ScanInput {
         seed: seed.to_string(),
         target_rx: tokio::sync::Mutex::new(in_rx),
@@ -89,7 +78,7 @@ async fn test_cloudfront_adversarial_403() {
             n: &str,
             t: &Target,
         ) -> anyhow::Result<Vec<secfinding::Finding>> {
-            let cf = CloudFrontProvider;
+            let cf = CloudFrontProvider::default();
             cf.probe(c, n, t).await
         }
     }
@@ -117,7 +106,7 @@ async fn test_multi_cloud_correlation() {
 
 #[test]
 fn test_cloudfront_endpoint_generation() {
-    let cf = CloudFrontProvider;
+    let cf = CloudFrontProvider::default();
     assert_eq!(
         cf.endpoint("d111111abcdef8"),
         "https://d111111abcdef8.cloudfront.net/"
@@ -205,7 +194,7 @@ async fn test_lambda_adversarial_403() {
             n: &str,
             t: &Target,
         ) -> anyhow::Result<Vec<secfinding::Finding>> {
-            let lambda = LambdaProvider;
+            let lambda = LambdaProvider::default();
             lambda.probe(c, n, t).await
         }
     }
@@ -217,7 +206,7 @@ async fn test_lambda_adversarial_403() {
 
 #[test]
 fn test_lambda_endpoint_generation() {
-    let lambda = LambdaProvider;
+    let lambda = LambdaProvider::default();
     let url_id = "0123456789abcdef0123456789abcdef"; // 32 chars
     assert_eq!(
         lambda.endpoint(url_id),

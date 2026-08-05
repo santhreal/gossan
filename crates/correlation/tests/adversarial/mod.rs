@@ -1,1 +1,1 @@
-mod test_legendary_adversarial;
+mod test_depth_adversarial;

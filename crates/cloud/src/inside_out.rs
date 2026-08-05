@@ -1,4 +1,4 @@
-//! Inside-out cloud discovery — uses AWS credentials to find unmapped assets.
+//! Inside-out cloud discovery (uses AWS credentials to find unmapped assets).
 
 #[cfg(feature = "cloud")]
 use aws_config::{BehaviorVersion, SdkConfig};
@@ -22,7 +22,7 @@ use tracing::{error, info, warn};
 /// `~/.aws/credentials`, IAM instance role).
 ///
 /// Discovered assets are emitted directly via `ScanInput::emit_target`
-/// — the historical signature took an extra `out: &mut Vec<Target>`
+///: the historical signature took an extra `out: &mut Vec<Target>`
 /// buffer parameter that was retired when the streaming refactor
 /// landed; the placeholder type after `&mut ` was deleted but the
 /// signature wasn't fully fixed up, leaving the file uncompilable.
@@ -46,12 +46,12 @@ pub async fn discover_aws_with_config(input: &ScanInput, config: &SdkConfig) -> 
                         domain,
                         source: DiscoverySource::CloudDiscovery,
                     });
-                    // Single emit — the duplicate `emit_target` at the
+                    // Single emit, the duplicate `emit_target` at the
                     // call site was a leftover from the pre-streaming
                     // API where one push went to a local Vec and the
                     // other to the live channel. Now both are the same
                     // path so we'd be emitting every bucket twice.
-                    input.emit_target(target);
+                    input.emit_target(target).await;
                 }
             }
         }
@@ -87,8 +87,7 @@ pub async fn discover_aws_with_config(input: &ScanInput, config: &SdkConfig) -> 
                                 ip: parsed_ip,
                                 domain: instance.public_dns_name().map(String::from),
                             });
-                            input.emit_target(target.clone());
-                            input.emit_target(target);
+                            input.emit_target(target).await;
                         }
                     }
                     if let Some(ip) = instance.private_ip_address() {
@@ -97,8 +96,7 @@ pub async fn discover_aws_with_config(input: &ScanInput, config: &SdkConfig) -> 
                                 ip: parsed_ip,
                                 domain: instance.private_dns_name().map(String::from),
                             });
-                            input.emit_target(target.clone());
-                            input.emit_target(target);
+                            input.emit_target(target).await;
                         }
                     }
                 }
@@ -126,8 +124,7 @@ pub async fn discover_aws_with_config(input: &ScanInput, config: &SdkConfig) -> 
                                 domain: name.trim_end_matches('.').to_string(),
                                 source: DiscoverySource::CloudDiscovery,
                             });
-                            input.emit_target(target.clone());
-                            input.emit_target(target);
+                            input.emit_target(target).await;
                         }
                     }
                     Err(e) => warn!(
@@ -151,8 +148,7 @@ pub async fn discover_aws_with_config(input: &ScanInput, config: &SdkConfig) -> 
                             domain: addr.to_string(),
                             source: DiscoverySource::CloudDiscovery,
                         });
-                        input.emit_target(target.clone());
-                        input.emit_target(target);
+                        input.emit_target(target).await;
                     }
                 }
             }
@@ -167,7 +163,7 @@ pub async fn discover_aws_with_config(input: &ScanInput, config: &SdkConfig) -> 
 mod tests {
     use super::*;
     use aws_sdk_s3::config::{Credentials, Region, SharedCredentialsProvider};
-    use hickory_resolver::TokioAsyncResolver;
+    use hickory_resolver::TokioResolver;
     use std::sync::Arc;
     use tokio::sync::mpsc;
 
@@ -185,10 +181,11 @@ mod tests {
             target_rx: tokio::sync::Mutex::new(in_rx),
             live_tx,
             target_tx,
-            resolver: Arc::new(TokioAsyncResolver::tokio(
-                hickory_resolver::config::ResolverConfig::default(),
-                hickory_resolver::config::ResolverOpts::default(),
-            )),
+            resolver: Arc::new(
+                TokioResolver::builder_tokio()
+                    .unwrap()
+                    .build()
+            ),
         };
         (input, rx)
     }
@@ -208,7 +205,7 @@ mod tests {
             .endpoint_url("http://localhost:1") // Guaranteed to fail
             .build();
 
-        // discover_aws_with_config emits via input.emit_target now —
+        // discover_aws_with_config emits via input.emit_target now 
         // the historical `out: &mut Vec<Target>` parameter was removed
         // when the streaming refactor replaced buffered fan-out with
         // channel emission. We verify nothing was emitted by polling

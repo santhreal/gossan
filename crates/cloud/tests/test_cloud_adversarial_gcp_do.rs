@@ -64,7 +64,7 @@ async fn test_gcs_adversarial_403() {
 
 #[test]
 fn test_gcs_endpoint_generation() {
-    let gcs = GcsProvider;
+    let gcs = GcsProvider::default();
     assert_eq!(
         gcs.endpoint("test-bucket"),
         "https://test-bucket.storage.googleapis.com/"
@@ -133,7 +133,7 @@ async fn test_do_spaces_adversarial_403() {
 
 #[test]
 fn test_do_spaces_endpoint_generation() {
-    let do_spaces = DoSpacesProvider;
+    let do_spaces = DoSpacesProvider::default();
     // DO Spaces uses ams3 by default in the implementation `endpoint` method
     assert_eq!(
         do_spaces.endpoint("test-bucket"),

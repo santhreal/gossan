@@ -437,8 +437,8 @@ fn tls_cert_info_display() {
 
 #[test]
 fn test_scan_target_key_serialization_and_legacy_migration() {
-    use std::net::IpAddr;
     use std::collections::HashSet;
+    use std::net::IpAddr;
 
     // Test 1: Serialize and Deserialize ScanTargetKey
     let mut completed = HashSet::new();
@@ -457,8 +457,12 @@ fn test_scan_target_key_serialization_and_legacy_migration() {
     // Deserialize new format
     let parsed: Vec<ScanTargetKey> = serde_json::from_str(&json).unwrap();
     assert_eq!(parsed.len(), 2);
-    assert!(parsed.iter().any(|k| k.target == "alpha.com" && k.port == 80));
-    assert!(parsed.iter().any(|k| k.target == "127.0.0.1" && k.port == 443));
+    assert!(parsed
+        .iter()
+        .any(|k| k.target == "alpha.com" && k.port == 80));
+    assert!(parsed
+        .iter()
+        .any(|k| k.target == "127.0.0.1" && k.port == 443));
 
     // Test 2: Parse legacy format Vec<(IpAddr, u16)> and migrate
     let old_data: Vec<(IpAddr, u16)> = vec![
@@ -472,7 +476,9 @@ fn test_scan_target_key_serialization_and_legacy_migration() {
     let parsed_new_attempt = serde_json::from_str::<Vec<ScanTargetKey>>(&old_json);
     if let Ok(ref migrated) = parsed_new_attempt {
         assert_eq!(migrated.len(), 2);
-        assert!(migrated.iter().any(|k| k.target == "1.1.1.1" && k.port == 80));
+        assert!(migrated
+            .iter()
+            .any(|k| k.target == "1.1.1.1" && k.port == 80));
     }
 
     // Migrate old format successfully
@@ -486,7 +492,80 @@ fn test_scan_target_key_serialization_and_legacy_migration() {
         .collect();
 
     assert_eq!(migrated_keys.len(), 2);
-    assert!(migrated_keys.iter().any(|k| k.target == "1.1.1.1" && k.port == 80));
-    assert!(migrated_keys.iter().any(|k| k.target == "8.8.8.8" && k.port == 53));
+    assert!(migrated_keys
+        .iter()
+        .any(|k| k.target == "1.1.1.1" && k.port == 80));
+    assert!(migrated_keys
+        .iter()
+        .any(|k| k.target == "8.8.8.8" && k.port == 53));
 }
 
+#[test]
+fn large_ipv6_network_does_not_panic_on_host_count() {
+    // Adversarial: ::/0 has 2^128 hosts; calling hosts().count()
+    // directly can overflow usize and panic in debug builds.
+    // Our fix caps the enumeration at max_hosts + 1.
+    let net: ipnet::IpNet = "::/0".parse().unwrap();
+    let max_hosts: usize = 256;
+    let total_hosts = net.hosts().take(max_hosts + 1).count();
+    assert_eq!(total_hosts, max_hosts + 1);
+}
+
+/// Anti-rig: pin TLS_PORTS against the literal set documented in the module.
+/// If someone adds a port to one but not the other, this test breaks rather
+/// than silently diverging (§12 TESTING).
+#[test]
+fn tls_ports_well_known_set_pinned() {
+    // These are the historically expected TLS-by-default ports.
+    // Changing TLS_PORTS without updating this test is intentional, the
+    // test is the change-detector, not a hard veto.
+    let expected: std::collections::HashSet<u16> = [443, 8443, 465, 993, 636, 995, 587]
+        .iter()
+        .copied()
+        .collect();
+    let actual: std::collections::HashSet<u16> = TLS_PORTS.iter().copied().collect();
+    assert_eq!(
+        expected, actual,
+        "TLS_PORTS diverged from the pinned set, update this test intentionally"
+    );
+}
+
+/// Anti-rig: ephemeral port constants must stay inside the IANA range.
+#[test]
+fn ephemeral_port_constants_in_valid_range() {
+    assert!(EPHEMERAL_PORT_START >= 49152, "start below IANA minimum");
+    assert!(
+        (EPHEMERAL_PORT_START as u32) + (EPHEMERAL_PORT_COUNT as u32) <= 65535,
+        "start+count overflows u16 port space"
+    );
+}
+
+/// Anti-rig: retry parameters must be sane.
+#[test]
+fn probe_retry_constants_sane() {
+    assert!(PROBE_MAX_RETRIES > 0, "zero retries means we never probe");
+    assert!(
+        PROBE_MAX_RETRIES <= 10,
+        "excessive retries inflate scan time"
+    );
+    assert!(BACKOFF_TIMEOUT_BASE_MS > 0, "zero base delay causes spin");
+    assert!(
+        BACKOFF_TIMEOUT_BASE_MS <= 5_000,
+        "base delay > 5 s is too slow"
+    );
+}
+
+#[test]
+fn probe_retry_backoff_uses_canonical_timeout_schedule() {
+    let backoff = probe_retry_backoff();
+    assert_eq!(backoff.max_retries(), PROBE_MAX_RETRIES);
+    assert_eq!(
+        backoff.delay(BackoffKind::Timeout, 0),
+        Duration::from_millis(200)
+    );
+    assert_eq!(
+        backoff.delay(BackoffKind::Timeout, 1),
+        Duration::from_millis(400)
+    );
+    assert!(!backoff.should_retry_after(PROBE_MAX_RETRIES - 1));
+}

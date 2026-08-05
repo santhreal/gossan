@@ -1,7 +1,7 @@
 //! Azure Blob Storage probe.
 //!
 //! Azure storage account names are 3–24 lowercase alphanumeric chars (no hyphens).
-//! Containers are probed by name — common names and the special `$web` container
+//! Containers are probed by name, common names and the special `$web` container
 //! (used for static website hosting) are checked.
 //!
 //! URL format: `https://{account}.blob.core.windows.net/{container}/`
@@ -18,11 +18,30 @@ use crate::provider::CloudProvider;
 #[derive(Debug, Clone, Deserialize)]
 struct AzureContainer {
     name: String,
-    #[allow(dead_code)]
     description: String,
-    #[allow(dead_code)]
     #[serde(rename = "severity_if_exposed")]
     severity: String,
+}
+
+impl AzureContainer {
+    /// Parse the TOML severity string into a `Severity` variant.
+    /// Unknown strings default to `High` (conservative but not silent).
+    fn severity(&self) -> Severity {
+        match self.severity.to_ascii_lowercase().as_str() {
+            "critical" => Severity::Critical,
+            "high" => Severity::High,
+            "medium" => Severity::Medium,
+            "low" => Severity::Low,
+            _ => {
+                tracing::warn!(
+                    container = %self.name,
+                    raw = %self.severity,
+                    "unknown severity in azure.toml; defaulting to High"
+                );
+                Severity::High
+            }
+        }
+    }
 }
 
 /// TOML file containing Azure container definitions.
@@ -42,15 +61,7 @@ fn builtin_azure_containers() -> &'static Vec<AzureContainer> {
     AZURE_CONTAINERS.get_or_init(|| {
         match toml::from_str::<AzureContainersFile>(BUILTIN_AZURE) {
             Ok(file) => file.container,
-            Err(e) => {
-                tracing::error!(error = %e, "failed to parse built-in azure.toml");
-                // Fallback to minimal hardcoded list only on parse failure
-                vec![AzureContainer {
-                    name: "$web".to_string(),
-                    description: "static website hosting".to_string(),
-                    severity: "critical".to_string(),
-                }]
-            }
+            Err(e) => panic!("gossan-cloud: built-in azure.toml is malformed: {e}")
         }
     })
 }
@@ -60,7 +71,30 @@ fn container_names() -> &'static [AzureContainer] {
     builtin_azure_containers()
 }
 /// Azure Blob Storage container enumeration.
-pub struct AzureProvider;
+pub struct AzureProvider {
+    /// Optional endpoint override for testing.
+    pub(crate) endpoint_override: Option<String>,
+}
+
+impl AzureProvider {
+    /// Create a new Azure provider with the default Microsoft endpoint.
+    #[must_use]
+    pub fn new() -> Self {
+        Self { endpoint_override: None }
+    }
+
+    /// Create an Azure provider with a custom endpoint (for tests).
+    #[must_use]
+    pub fn with_endpoint(url: impl Into<String>) -> Self {
+        Self { endpoint_override: Some(url.into()) }
+    }
+}
+
+impl Default for AzureProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[async_trait]
 impl CloudProvider for AzureProvider {
@@ -69,6 +103,9 @@ impl CloudProvider for AzureProvider {
     }
 
     fn endpoint(&self, name: &str) -> String {
+        if let Some(ref url) = self.endpoint_override {
+            return url.clone();
+        }
         format!("https://{}.blob.core.windows.net/", name)
     }
 
@@ -97,35 +134,59 @@ impl CloudProvider for AzureProvider {
             let url = format!("{}{}/", base_endpoint, container_name);
             let resp = match client.get(&url).send().await {
                 Ok(r) => r,
-                Err(_) => continue,
+                Err(e) => {
+                    tracing::warn!(
+                        account = %account,
+                        container = %container_name,
+                        url = %url,
+                        error = %e,
+                        "Azure blob probe send failed"
+                    );
+                    continue;
+                }
             };
             let status = resp.status().as_u16();
 
             match status {
                 200 => {
-                    let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
-                        .await
-                        .unwrap_or_default();
+                    let body = match gossan_core::net::bounded_text(
+                        resp,
+                        crate::MAX_CLOUD_RESPONSE_BYTES,
+                    )
+                    .await
+                    {
+                        Ok(b) => b,
+                        Err(e) => {
+                            tracing::warn!(
+                                account = %account,
+                                container = %container_name,
+                                url = %url,
+                                error = %e,
+                                "Azure blob body read failed"
+                            );
+                            continue;
+                        }
+                    };
                     let is_web = container_name == "$web";
-                    gossan_core::try_push_finding(crate::finding_builder(target, Severity::Critical,
+                    gossan_core::try_push_finding(crate::finding_builder(target, container.severity(),
                             format!("Azure Blob container public: {}/{}", account, container_name),
                             if is_web {
                                 format!(
                                     "https://{}.blob.core.windows.net/$web is the static website \
-                                     hosting container and is publicly readable — all files accessible.",
-                                    account
+                                     hosting container ({}) and is publicly readable, all files accessible.",
+                                    account, container.description
                                 )
                             } else {
                                 format!(
-                                    "https://{}.blob.core.windows.net/{} is publicly accessible \
+                                    "https://{}.blob.core.windows.net/{} ({}) is publicly accessible \
                                      and returns a directory listing.",
-                                    account, container_name
+                                    account, container_name, container.description
                                 )
                             })
                         .evidence(Evidence::HttpResponse {
                             status,
                             headers: vec![("url".into(), url.clone().into())],
-                            body_excerpt: Some(body.chars().take(300).collect::<String>().into()),
+                            body_excerpt: Some(body.chars().take(crate::MAX_BODY_EXCERPT_CHARS).collect::<String>().into()),
                         })
                         .tag("azure").tag("cloud").tag("exposure"), &mut findings);
                     return Ok(findings); // one public container is enough to report
@@ -135,19 +196,6 @@ impl CloudProvider for AzureProvider {
                     // still confirms the account exists
                     if status == 403 {
                         account_confirmed = true;
-                        gossan_core::try_push_finding(crate::finding_builder(target, Severity::Low,
-                                format!("Azure storage account exists: {}", account),
-                                format!(
-                                    "https://{}.blob.core.windows.net exists — account name confirmed \
-                                     via HTTP 403 on container probe.",
-                                    account
-                                ))
-                            .evidence(Evidence::HttpResponse {
-                                status,
-                                headers: vec![("url".into(), url.clone().into())],
-                                body_excerpt: None,
-                            })
-                            .tag("azure").tag("cloud"), &mut findings);
                     }
                 }
                 _ => {}

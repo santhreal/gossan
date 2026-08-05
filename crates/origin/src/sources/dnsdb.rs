@@ -42,30 +42,40 @@ pub async fn scan(
     match client.execute(req).await {
         Ok(resp) => {
             if resp.status().is_success() {
-                let limit = config.max_response_size.min(10 * 1024 * 1024);
+                let limit = config.max_response_size.min(crate::MAX_ORIGIN_JSON_BYTES);
                 // DNSDB NDJSON: one JSON object per line.
-                let text = bounded_text(resp, limit).await.unwrap_or_default();
+                let text = bounded_text(resp, limit).await?;
                 for line in text.lines() {
                     if line.trim().is_empty() {
                         continue;
                     }
-                    if let Ok(obj) = serde_json::from_str::<serde_json::Value>(line) {
-                        if let Some(rdata) = obj.get("rdata").and_then(|v| v.as_array()) {
-                            for entry in rdata {
-                                if let Some(ip_str) = entry.as_str() {
-                                    // DNSDB A records are quoted JSON strings: "1.2.3.4"
-                                    let clean = ip_str.trim_matches('"');
-                                    if let Ok(ip) = IpAddr::from_str(clean) {
-                                        if is_routable_ip(ip) && seen.insert(ip) {
-                                            candidates.push(OriginCandidate::new(
-                                                ip,
-                                                "dnsdb_historical_a",
-                                                85,
-                                            ));
+                    match serde_json::from_str::<serde_json::Value>(line) {
+                        Ok(obj) => {
+                            if let Some(rdata) = obj.get("rdata").and_then(|v| v.as_array()) {
+                                for entry in rdata {
+                                    if let Some(ip_str) = entry.as_str() {
+                                        // DNSDB A records are quoted JSON strings: "1.2.3.4"
+                                        let clean = ip_str.trim_matches('"');
+                                        if let Ok(ip) = IpAddr::from_str(clean) {
+                                            if is_routable_ip(ip) && seen.insert(ip) {
+                                                candidates.push(OriginCandidate::new(
+                                                    ip,
+                                                    "dnsdb_historical_a",
+                                                    85,
+                                                ));
+                                            }
                                         }
                                     }
                                 }
                             }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                source = "dnsdb",
+                                error = %e,
+                                line = %line.chars().take(80).collect::<String>(),
+                                "DNSDB NDJSON line parse failed; skipping line"
+                            );
                         }
                     }
                 }

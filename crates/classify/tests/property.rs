@@ -1,6 +1,6 @@
 //! Property tests for the banner classifier.
 //!
-//! Per GOSSAN_LEGENDARY A22: arbitrary ASCII banners (10k cases)
+//! Per GOSSAN_DEPTH_CONTRACT A22: arbitrary ASCII banners (10k cases)
 //! must never panic and `classify_top` must always return either
 //! `None` or a `ServiceMatch` whose `name` is non-empty and whose
 //! `confidence` is in `[0, 100]`.
@@ -14,7 +14,7 @@ proptest! {
         ..ProptestConfig::default()
     })]
 
-    /// Random ASCII bytes — no panic, no out-of-range confidence.
+    /// Random ASCII bytes (no panic, no out-of-range confidence).
     #[test]
     fn classify_never_panics_on_arbitrary_ascii(input in "\\PC*") {
         let cls = BannerClassifier::new();
@@ -37,7 +37,7 @@ proptest! {
         ..ProptestConfig::default()
     })]
 
-    /// Arbitrary bytes, including non-printable and high-bit set —
+    /// Arbitrary bytes, including non-printable and high-bit set
     /// classification still must not panic. The classifier reads via
     /// `&str` so we filter out anything that wouldn't pass the
     /// reqwest/banner-grab string conversion at the boundary.

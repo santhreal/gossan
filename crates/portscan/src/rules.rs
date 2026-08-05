@@ -92,8 +92,12 @@ const BUILTIN_RISKY_SERVICES: &str = include_str!("../rules/risky_services.toml"
 /// Global cache for built-in port lists.
 static PORT_LISTS: OnceLock<HashMap<String, Vec<u16>>> = OnceLock::new();
 
-/// Global cache for built-in risky services.
+/// Global cache for built-in risky services (ordered Vec, for full enumeration).
 static RISKY_SERVICES: OnceLock<Vec<RiskyService>> = OnceLock::new();
+
+/// O(1) port→service index built once from `RISKY_SERVICES`.
+/// The value is an index into the `RISKY_SERVICES` Vec so we don't double-store.
+static RISKY_PORT_INDEX: OnceLock<HashMap<u16, usize>> = OnceLock::new();
 
 /// Parse port lists from TOML content.
 fn parse_port_lists(content: &str) -> Result<Vec<PortList>, toml::de::Error> {
@@ -129,12 +133,9 @@ fn builtin_port_lists() -> &'static HashMap<String, Vec<u16>> {
 ///
 /// This is called lazily on first access. The result is cached for subsequent calls.
 fn builtin_risky_services() -> &'static Vec<RiskyService> {
-    RISKY_SERVICES.get_or_init(|| match parse_risky_services(BUILTIN_RISKY_SERVICES) {
-        Ok(services) => services,
-        Err(e) => {
-            tracing::error!(error = %e, "failed to parse built-in risky_services.toml");
-            Vec::new()
-        }
+    RISKY_SERVICES.get_or_init(|| {
+        parse_risky_services(BUILTIN_RISKY_SERVICES)
+            .expect("compiled-in risky_services.toml must be valid")
     })
 }
 
@@ -142,13 +143,14 @@ fn builtin_risky_services() -> &'static Vec<RiskyService> {
 ///
 /// # Returns
 ///
-/// Returns a slice of the 52 built-in default ports. If parsing fails,
-/// returns an empty slice (should never happen with embedded defaults).
+/// Returns a slice of the 52 built-in default ports. Falls back to the
+/// compile-time constant [`crate::top_ports::DEFAULT_PORTS`] if the embedded
+/// TOML fails to parse (guarantees the scanner never silently scans zero ports).
 pub fn default_ports() -> &'static [u16] {
     builtin_port_lists()
         .get("default")
         .map(|v| v.as_slice())
-        .unwrap_or(&[])
+        .unwrap_or(crate::top_ports::DEFAULT_PORTS)
 }
 
 /// Get the top 100 ports list.
@@ -186,10 +188,29 @@ pub fn risky_services() -> &'static [RiskyService] {
     builtin_risky_services()
 }
 
+/// Look up a risky service by port in O(1).
+///
+/// Preferred over `risky_services().iter().find(|r| r.port == port)` in hot paths
+/// (called once per probed open port; an O(n) scan there is O(n·ports) total).
+///
+/// # Returns
+///
+/// `Some(&RiskyService)` if the port is in the built-in risky-services list, else `None`.
+pub fn risky_service_by_port(port: u16) -> Option<&'static RiskyService> {
+    let index = RISKY_PORT_INDEX.get_or_init(|| {
+        builtin_risky_services()
+            .iter()
+            .enumerate()
+            .map(|(i, svc)| (svc.port, i))
+            .collect()
+    });
+    index.get(&port).map(|&i| &builtin_risky_services()[i])
+}
+
 /// Load community port lists from a directory of `*.toml` files.
 ///
 /// Each file must contain `[[ports]]` entries. Invalid files are logged and
-/// skipped — a single malformed community file must not crash the scan.
+/// skipped (a single malformed community file must not crash the scan).
 ///
 /// # Arguments
 ///
@@ -249,7 +270,7 @@ pub fn load_community_port_lists(dir: &std::path::Path) -> HashMap<String, Vec<u
 /// Load community risky services from a directory of `*.toml` files.
 ///
 /// Each file must contain `[[service]]` entries. Invalid files are logged and
-/// skipped — a single malformed community file must not crash the scan.
+/// skipped (a single malformed community file must not crash the scan).
 ///
 /// # Arguments
 ///
@@ -417,6 +438,70 @@ mod tests {
         );
     }
 
+    // ── risky_service_by_port O(1) index ────────────────────────────────────
+
+    #[test]
+    fn risky_service_by_port_returns_known_port() {
+        // Redis (6379) and Docker daemon (2375) are always in the built-in list.
+        let redis = risky_service_by_port(6379);
+        assert!(
+            redis.is_some(),
+            "port 6379 should be in the risky-service index"
+        );
+        assert_eq!(redis.unwrap().port, 6379);
+
+        let docker = risky_service_by_port(2375);
+        assert!(
+            docker.is_some(),
+            "port 2375 should be in the risky-service index"
+        );
+        assert_eq!(docker.unwrap().port, 2375);
+    }
+
+    #[test]
+    fn risky_service_by_port_returns_none_for_unknown_port() {
+        // Port 1 is not in any risky-services list.
+        assert!(risky_service_by_port(1).is_none());
+        // Port 65535 is not risky.
+        assert!(risky_service_by_port(65535).is_none());
+    }
+
+    #[test]
+    fn risky_service_by_port_agrees_with_linear_scan() {
+        // Invariant: for every port in the built-in list, the O(1) and O(n) paths agree.
+        for svc in risky_services() {
+            let by_index = risky_service_by_port(svc.port);
+            assert!(
+                by_index.is_some(),
+                "port {} present in risky_services() but missing from index",
+                svc.port
+            );
+            assert_eq!(
+                by_index.unwrap().port,
+                svc.port,
+                "index returned wrong service for port {}",
+                svc.port
+            );
+        }
+    }
+
+    #[test]
+    fn risky_service_by_port_boundary_port_zero() {
+        // Port 0 is never a real service.
+        assert!(risky_service_by_port(0).is_none());
+    }
+
+    #[test]
+    fn builtin_risky_services_is_non_empty_and_loaded() {
+        let services = risky_services();
+        assert!(
+            !services.is_empty(),
+            "built-in risky services must load successfully and not be empty"
+        );
+        // Spot-check well-known risky ports from the embedded TOML.
+        assert!(services.iter().any(|s| s.port == 21 || s.port == 23 || s.port == 3389));
+    }
+
     #[test]
     fn risky_services_have_required_fields() {
         for svc in risky_services() {
@@ -557,5 +642,49 @@ detail = "Test detail."
         // `severity` is a public field on RiskyService, not an
         // accessor method.
         assert_eq!(services[0].severity, Severity::High);
+    }
+
+    #[test]
+    fn parse_port_lists_empty_string_is_error() {
+        assert!(parse_port_lists("").is_err());
+    }
+
+    #[test]
+    fn parse_risky_services_empty_string_is_error() {
+        assert!(parse_risky_services("").is_err());
+    }
+
+    #[test]
+    fn parse_port_lists_malformed_does_not_panic() {
+        let bad = "[[ports]]\nlist = \"x\"\nports = [not_a_number]\n";
+        let _ = parse_port_lists(bad);
+        let bad2 = "this is not toml at all";
+        let _ = parse_port_lists(bad2);
+    }
+
+    #[test]
+    fn parse_risky_services_malformed_does_not_panic() {
+        let bad = "[[service]]\nport = \"not_a_number\"\n";
+        let _ = parse_risky_services(bad);
+        let bad2 = "random garbage";
+        let _ = parse_risky_services(bad2);
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn parse_port_lists_never_panics(input in "[ -~]{0,200}") {
+            let _ = parse_port_lists(&input);
+        }
+
+        #[test]
+        fn parse_risky_services_never_panics(input in "[ -~]{0,200}") {
+            let _ = parse_risky_services(&input);
+        }
     }
 }

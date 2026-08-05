@@ -21,6 +21,12 @@ use secfinding::{Evidence, Finding, Severity};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
+/// Maximum characters of a CVE description to include in the finding detail string.
+const MAX_NVD_DETAIL_CHARS: usize = 200;
+
+/// Maximum characters of a CVE description to include in the evidence banner.
+const MAX_NVD_BANNER_CHARS: usize = 120;
+
 static NVD: OnceLock<NvdDatabase> = OnceLock::new();
 
 /// NVD CVE database backed by a local SQLite cache.
@@ -89,7 +95,13 @@ impl NvdDatabase {
             )
             .ok()?;
 
-        let parsed: serde_json::Value = serde_json::from_str(&data).ok()?;
+        let parsed: serde_json::Value = match serde_json::from_str(&data) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("corrupt CVE DB JSON; skipping finding: cve_id={} error={}", cve_id, e);
+                return None;
+            }
+        };
         let description = parsed
             .pointer("/description/description_data")
             .and_then(|v| v.as_array())
@@ -112,11 +124,14 @@ impl NvdDatabase {
             &target,
             severity,
             format!(
-                "NVD: {} — {}",
+                "NVD: {}: {}",
                 cve_id,
                 description.split('.').next().unwrap_or("")
             ),
-            &description.chars().take(200).collect::<String>(),
+            &description
+                .chars()
+                .take(MAX_NVD_DETAIL_CHARS)
+                .collect::<String>(),
         )
         .cve(cve_id)
         .confidence(match severity {
@@ -128,13 +143,23 @@ impl NvdDatabase {
             _ => 0.5,
         })
         .evidence(Evidence::Banner {
-            raw: description.chars().take(120).collect::<String>().into(),
+            raw: description
+                .chars()
+                .take(MAX_NVD_BANNER_CHARS)
+                .collect::<String>()
+                .into(),
         })
         .tag("cve")
         .tag("nvd")
         .tag("version-disclosure");
 
-        builder.build().ok()
+        match builder.build() {
+            Ok(finding) => Some(finding),
+            Err(e) => {
+                tracing::warn!(error = %e, cve = %cve_id, "nvd finding build failed");
+                None
+            }
+        }
     }
 }
 

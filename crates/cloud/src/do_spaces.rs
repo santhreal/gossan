@@ -18,10 +18,15 @@ use crate::provider::CloudProvider;
 #[derive(Debug, Clone, Deserialize)]
 struct DoRegion {
     id: String,
-    #[allow(dead_code)]
     location: String,
-    #[allow(dead_code)]
     country: String,
+}
+
+impl DoRegion {
+    /// Human-readable label for use in finding details, e.g. "nyc3 (New York City, US)".
+    fn label(&self) -> String {
+        format!("{} ({}, {})", self.id, self.location, self.country)
+    }
 }
 
 /// TOML file containing DO Spaces region definitions.
@@ -41,22 +46,7 @@ fn builtin_do_regions() -> &'static Vec<DoRegion> {
     DO_REGIONS.get_or_init(|| {
         match toml::from_str::<DoRegionsFile>(BUILTIN_DO_SPACES) {
             Ok(file) => file.region,
-            Err(e) => {
-                tracing::error!(error = %e, "failed to parse built-in do_spaces.toml");
-                // Fallback to minimal hardcoded list only on parse failure
-                vec![
-                    DoRegion {
-                        id: "nyc3".to_string(),
-                        location: "New York City".to_string(),
-                        country: "US".to_string(),
-                    },
-                    DoRegion {
-                        id: "ams3".to_string(),
-                        location: "Amsterdam".to_string(),
-                        country: "NL".to_string(),
-                    },
-                ]
-            }
+            Err(e) => panic!("gossan-cloud: built-in do_spaces.toml is malformed: {e}")
         }
     })
 }
@@ -66,7 +56,30 @@ fn region_ids() -> &'static [DoRegion] {
     builtin_do_regions()
 }
 /// DigitalOcean Spaces bucket enumeration provider.
-pub struct DoSpacesProvider;
+pub struct DoSpacesProvider {
+    /// Optional endpoint override for testing.
+    pub(crate) endpoint_override: Option<String>,
+}
+
+impl DoSpacesProvider {
+    /// Create a new DO Spaces provider with the default DigitalOcean endpoint.
+    #[must_use]
+    pub fn new() -> Self {
+        Self { endpoint_override: None }
+    }
+
+    /// Create a DO Spaces provider with a custom endpoint (for tests).
+    #[must_use]
+    pub fn with_endpoint(url: impl Into<String>) -> Self {
+        Self { endpoint_override: Some(url.into()) }
+    }
+}
+
+impl Default for DoSpacesProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[async_trait]
 impl CloudProvider for DoSpacesProvider {
@@ -75,6 +88,9 @@ impl CloudProvider for DoSpacesProvider {
     }
 
     fn endpoint(&self, name: &str) -> String {
+        if let Some(ref url) = self.endpoint_override {
+            return url.clone();
+        }
         format!("https://{}.ams3.digitaloceanspaces.com/", name)
     }
 
@@ -84,28 +100,45 @@ impl CloudProvider for DoSpacesProvider {
         name: &str,
         target: &Target,
     ) -> anyhow::Result<Vec<Finding>> {
+        let base = self.endpoint(name);
         let mut findings = Vec::new();
 
-        for region in region_ids() {
-            let region_id = &region.id;
-            let url = if self.endpoint(name).contains("digitaloceanspaces.com") {
-                format!("https://{}.{}.digitaloceanspaces.com/", name, region_id)
-            } else {
-                // If overridden in tests, just use the test endpoint directly
-                self.endpoint(name)
-            };
-
-            let resp = match client.get(&url).send().await {
+        // If the endpoint has been overridden (e.g. in tests) we only need to
+        // probe once (iterating regions is meaningless).
+        if !base.contains("digitaloceanspaces.com") {
+            let resp = match client.get(&base).send().await {
                 Ok(r) => r,
-                Err(_) => continue,
+                Err(e) => {
+                    tracing::warn!(
+                        bucket = %name,
+                        url = %base,
+                        error = %e,
+                        "DO Spaces custom-endpoint probe send failed"
+                    );
+                    return Ok(findings);
+                }
             };
             let status = resp.status().as_u16();
 
             match status {
                 200 => {
-                    let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
-                        .await
-                        .unwrap_or_default();
+                    let body = match gossan_core::net::bounded_text(
+                        resp,
+                        crate::MAX_CLOUD_RESPONSE_BYTES,
+                    )
+                    .await
+                    {
+                        Ok(b) => b,
+                        Err(e) => {
+                            tracing::warn!(
+                                bucket = %name,
+                                url = %base,
+                                error = %e,
+                                "DO Spaces custom-endpoint body read failed"
+                            );
+                            return Ok(vec![]);
+                        }
+                    };
                     let listed = is_xml_listing(&body);
                     gossan_core::try_push_finding(
                         crate::finding_builder(
@@ -115,24 +148,105 @@ impl CloudProvider for DoSpacesProvider {
                             } else {
                                 Severity::High
                             },
-                            format!("Public DO Spaces bucket: {} ({})", name, region.id),
+                            format!("Public DO Spaces bucket: {} (custom)", name),
                             if listed {
                                 format!(
-                                    "DO Spaces bucket '{}' ({}) is publicly listable — \
-                                     all object keys enumerable.",
-                                    name, region.id
+                                    "DO Spaces bucket '{}' (custom endpoint) is publicly listable.",
+                                    name
                                 )
                             } else {
                                 format!(
-                                    "DO Spaces bucket '{}' ({}) returns 200 — publicly accessible.",
-                                    name, region.id
+                                    "DO Spaces bucket '{}' (custom endpoint) returns 200, publicly accessible.",
+                                    name
+                                )
+                            },
+                        )
+                        .evidence(Evidence::HttpResponse {
+                            status,
+                            headers: vec![("url".into(), base.clone().into())],
+                            body_excerpt: Some(body.chars().take(crate::MAX_BODY_EXCERPT_CHARS).collect::<String>().into()),
+                        })
+                        .tag("cloud")
+                        .tag("storage")
+                        .tag("do-spaces"),
+                        &mut findings,
+                    );
+                    try_write(client, name, "custom", &base, target, &mut findings).await;
+                }
+                403 => {
+                    try_write(client, name, "custom", &base, target, &mut findings).await;
+                }
+                _ => {}
+            }
+            return Ok(findings);
+        }
+
+        for region in region_ids() {
+            let region_id = &region.id;
+            let url = format!("https://{}.{}.digitaloceanspaces.com/", name, region_id);
+
+            let resp = match client.get(&url).send().await {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!(
+                        bucket = %name,
+                        region = %region_id,
+                        url = %url,
+                        error = %e,
+                        "DO Spaces probe send failed"
+                    );
+                    continue;
+                }
+            };
+            let status = resp.status().as_u16();
+
+            match status {
+                200 => {
+                    let body = match gossan_core::net::bounded_text(
+                        resp,
+                        crate::MAX_CLOUD_RESPONSE_BYTES,
+                    )
+                    .await
+                    {
+                        Ok(b) => b,
+                        Err(e) => {
+                            tracing::warn!(
+                                bucket = %name,
+                                region = %region_id,
+                                url = %url,
+                                error = %e,
+                                "DO Spaces body read failed"
+                            );
+                            continue;
+                        }
+                    };
+                    let listed = is_xml_listing(&body);
+                    gossan_core::try_push_finding(
+                        crate::finding_builder(
+                            target,
+                            if listed {
+                                Severity::Critical
+                            } else {
+                                Severity::High
+                            },
+                            format!("Public DO Spaces bucket: {} ({})", name, region.label()),
+                            if listed {
+                                format!(
+                                    "DO Spaces bucket '{}' in {} is publicly listable. \
+                                     all object keys enumerable.",
+                                    name, region.label()
+                                )
+                            } else {
+                                format!(
+                                    "DO Spaces bucket '{}' in {} returns 200, publicly accessible.",
+                                    name, region.label()
                                 )
                             },
                         )
                         .evidence(Evidence::HttpResponse {
                             status,
                             headers: vec![("url".into(), url.clone().into())],
-                            body_excerpt: Some(body.chars().take(200).collect::<String>().into()),
+                            body_excerpt: Some(body.chars().take(crate::MAX_BODY_EXCERPT_CHARS).collect::<String>().into()),
                         })
                         .tag("cloud")
                         .tag("storage")
@@ -143,25 +257,6 @@ impl CloudProvider for DoSpacesProvider {
                     break;
                 }
                 403 => {
-                    gossan_core::try_push_finding(
-                        crate::finding_builder(
-                            target,
-                            Severity::Low,
-                            format!(
-                                "DO Spaces bucket exists (private): {} ({})",
-                                name, region.id
-                            ),
-                            format!(
-                                "DO Spaces bucket '{}' ({}) exists but is private (HTTP 403). \
-                                 Verify ownership.",
-                                name, region.id
-                            ),
-                        )
-                        .tag("cloud")
-                        .tag("storage")
-                        .tag("do-spaces"),
-                        &mut findings,
-                    );
                     try_write(client, name, &region.id, &url, target, &mut findings).await;
                     break;
                 }
@@ -183,15 +278,20 @@ async fn try_write(
     findings: &mut Vec<Finding>,
 ) {
     const PROBE_KEY: &str = "gossan-write-probe-delete-me.txt";
-    let put_url = format!(
-        "https://{}.{}.digitaloceanspaces.com/{}",
-        bucket, region, PROBE_KEY
-    );
+    let put_url = if !_base_url.contains("digitaloceanspaces.com") {
+        // Custom endpoint (e.g. test mock) (append probe key directly).
+        format!("{}/{}", _base_url.trim_end_matches('/'), PROBE_KEY)
+    } else {
+        format!(
+            "https://{}.{}.digitaloceanspaces.com/{}",
+            bucket, region, PROBE_KEY
+        )
+    };
 
     let Ok(resp) = client
         .put(&put_url)
         .header("content-type", "text/plain")
-        .body("gossan-security-probe — safe to delete")
+        .body("gossan-security-probe, safe to delete")
         .send()
         .await
     else {

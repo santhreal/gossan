@@ -40,12 +40,15 @@ struct CompiledProbe {
 }
 
 static PROBES: OnceLock<Vec<CompiledProbe>> = OnceLock::new();
+/// Name→index lookup built once from the same static probe list so
+/// `run_active_probes` never reconstructs the map per call.
+static PROBE_BY_NAME: OnceLock<HashMap<String, usize>> = OnceLock::new();
 
 fn builtin_probes_toml() -> &'static str {
     // Path is relative to THIS file (src/probes/mod.rs), so the
     // crate-level `rules/` directory needs `../../rules/`. The other
     // probe data files (`src/rules.rs`) use `../rules/` because
-    // they're one directory shallower — different relative anchor.
+    // they're one directory shallower (different relative anchor).
     // Getting this wrong is silent at edit-time but a hard
     // include_str! failure at compile-time.
     include_str!("../../rules/service_probes.toml")
@@ -62,7 +65,17 @@ fn compiled_probes() -> &'static Vec<CompiledProbe> {
         };
         defs.into_iter()
             .filter_map(|def| {
-                let payload = parse_payload(&def.payload);
+                let payload = match parse_payload(&def.payload) {
+                    Some(p) => p,
+                    None => {
+                        tracing::warn!(
+                            probe = %def.name,
+                            payload = %def.payload,
+                            "invalid probe hex payload; skipping probe"
+                        );
+                        return None;
+                    }
+                };
                 let regex = match Regex::new(&def.match_regex) {
                     Ok(r) => r,
                     Err(e) => {
@@ -80,15 +93,32 @@ fn compiled_probes() -> &'static Vec<CompiledProbe> {
     })
 }
 
+/// Return the static name→index map, built once alongside `compiled_probes`.
+fn probe_by_name() -> &'static HashMap<String, usize> {
+    PROBE_BY_NAME.get_or_init(|| {
+        compiled_probes()
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (p.def.name.clone(), i))
+            .collect()
+    })
+}
+
 fn parse_probes(content: &str) -> Result<Vec<ProbeDef>, toml::de::Error> {
     toml::from_str::<ProbeFile>(content).map(|f| f.probe)
 }
 
-fn parse_payload(s: &str) -> Vec<u8> {
+fn parse_payload(s: &str) -> Option<Vec<u8>> {
     if let Some(hex) = s.strip_prefix("0x") {
-        hex::decode(hex).unwrap_or_default()
+        match hex::decode(hex) {
+            Ok(bytes) => Some(bytes),
+            Err(e) => {
+                tracing::warn!(error = %e, payload = %s, "invalid hex probe payload");
+                None
+            }
+        }
     } else {
-        s.as_bytes().to_vec()
+        Some(s.as_bytes().to_vec())
     }
 }
 
@@ -135,7 +165,7 @@ impl ProbeEngine {
             return (banner, matches);
         }
 
-        // 2. No banner — send active probes
+        // 2. No banner, send active probes
         let matches = self.run_active_probes(&mut stream, port, &[]).await;
         (None, matches)
     }
@@ -149,11 +179,8 @@ impl ProbeEngine {
         let mut matches = Vec::new();
         let mut seen = std::collections::HashSet::new();
         let probes = compiled_probes();
-        let by_name: HashMap<String, usize> = probes
-            .iter()
-            .enumerate()
-            .map(|(i, p)| (p.def.name.clone(), i))
-            .collect();
+        // Use the pre-built static map (no heap allocation per call).
+        let by_name = probe_by_name();
 
         for (idx, probe) in probes.iter().enumerate() {
             if seen.contains(&idx) {
@@ -216,7 +243,7 @@ impl ProbeEngine {
             // Combine initial read with probe response for matching
             let mut combined = initial_data.to_vec();
             combined.extend_from_slice(&buf[..n]);
-            // Leak into a static-like slice — not ideal, but we only need it briefly.
+            // Leak into a static-like slice (not ideal, but we only need it briefly).
             // Better: check regex against combined directly.
             return if probe.regex.is_match(&combined) {
                 Some(probe.def.name.clone())
@@ -286,12 +313,19 @@ mod tests {
 
     #[test]
     fn parse_payload_hex() {
-        assert_eq!(parse_payload("0x48656c6c6f"), b"Hello");
+        assert_eq!(parse_payload("0x48656c6c6f").as_deref(), Some(b"Hello".as_slice()));
     }
 
     #[test]
+    fn parse_payload_invalid_hex() {
+        assert_eq!(parse_payload("0xzz"), None);
+    }
+
     fn parse_payload_ascii() {
-        assert_eq!(parse_payload("GET / HTTP/1.1\r\n"), b"GET / HTTP/1.1\r\n");
+        assert_eq!(
+            parse_payload("GET / HTTP/1.1\r\n").as_deref(),
+            Some(b"GET / HTTP/1.1\r\n".as_slice())
+        );
     }
 
     #[test]
@@ -327,7 +361,7 @@ mod tests {
                 let elapsed = start.elapsed();
                 assert!(
                     elapsed < std::time::Duration::from_millis(200),
-                    "probe `{}` regex took {:?} on 1 MiB input — possible ReDoS",
+                    "probe `{}` regex took {:?} on 1 MiB input, possible ReDoS",
                     cp.def.name,
                     elapsed
                 );
@@ -364,6 +398,28 @@ mod tests {
                     target
                 );
             }
+        }
+    }
+
+    /// The static name→index map covers every compiled probe and produces
+    /// valid indices. This pins the `probe_by_name()` invariant so a probe
+    /// addition that creates a name collision fails loudly here.
+    #[test]
+    fn probe_by_name_covers_all_probes() {
+        let probes = compiled_probes();
+        let by_name = probe_by_name();
+        assert_eq!(
+            by_name.len(),
+            probes.len(),
+            "probe_by_name must have one entry per compiled probe"
+        );
+        for (i, cp) in probes.iter().enumerate() {
+            let mapped = by_name.get(&cp.def.name).copied().unwrap_or(usize::MAX);
+            assert_eq!(
+                mapped, i,
+                "probe `{}` maps to index {} but expected {}",
+                cp.def.name, mapped, i
+            );
         }
     }
 }

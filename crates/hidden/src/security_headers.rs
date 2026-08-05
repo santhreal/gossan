@@ -4,6 +4,25 @@ use gossan_core::Target;
 use reqwest::Client;
 use secfinding::{Evidence, Finding, Severity};
 
+/// True when CSP includes a `frame-ancestors` directive (case-insensitive).
+fn csp_has_frame_ancestors(csp: &str) -> bool {
+    csp.to_ascii_lowercase().contains("frame-ancestors")
+}
+
+/// True when neither X-Frame-Options nor CSP frame-ancestors is present.
+fn missing_clickjacking_protection(
+    has_x_frame_options: bool,
+    csp: Option<&str>,
+) -> bool {
+    if has_x_frame_options {
+        return false;
+    }
+    match csp {
+        Some(val) => !csp_has_frame_ancestors(val),
+        None => true,
+    }
+}
+
 /// Check for missing or weak security headers on HTTPS endpoints.
 pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Finding>> {
     let Target::Web(asset) = target else {
@@ -18,8 +37,12 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
     let mut findings = Vec::new();
     let base = asset.url.as_str();
 
-    let Ok(resp) = client.get(base).send().await else {
-        return Ok(findings);
+    let resp = match client.get(base).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("security_headers: request failed url={base} error={e}");
+            return Ok(findings);
+        }
     };
 
     let headers = resp.headers();
@@ -28,7 +51,13 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
     // ── HSTS (Strict-Transport-Security) ────────────────────────────────
     let hsts = headers
         .get("strict-transport-security")
-        .and_then(|v| v.to_str().ok());
+        .and_then(|v| match v.to_str() {
+            Ok(s) => Some(s),
+            Err(e) => {
+                tracing::warn!("security_headers: invalid HSTS header bytes error={e}");
+                None
+            }
+        });
 
     match hsts {
         None => {
@@ -86,13 +115,17 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
         }
     }
 
-    // ── X-Frame-Options ─────────────────────────────────────────────────
-    if headers.get("x-frame-options").is_none()
-        && headers
-            .get("content-security-policy")
-            .and_then(|v| v.to_str().ok())
-            .map_or(true, |csp| !csp.contains("frame-ancestors"))
-    {
+    // ── X-Frame-Options / CSP frame-ancestors (case-insensitive) ─────────
+    let csp = headers
+        .get("content-security-policy")
+        .and_then(|v| match v.to_str() {
+            Ok(s) => Some(s),
+            Err(e) => {
+                tracing::warn!("security_headers: invalid CSP header bytes error={e}");
+                None
+            }
+        });
+    if missing_clickjacking_protection(headers.get("x-frame-options").is_some(), csp) {
         gossan_core::try_push_finding(
             crate::misconfig_finding(
                 target,
@@ -134,4 +167,41 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
     }
 
     Ok(findings)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn csp_has_frame_ancestors_case_insensitive() {
+        assert!(csp_has_frame_ancestors("frame-ancestors 'none'"));
+        assert!(csp_has_frame_ancestors("Frame-Ancestors 'none'"));
+        assert!(csp_has_frame_ancestors("FRAME-ANCESTORS 'self'"));
+        assert!(csp_has_frame_ancestors(
+            "default-src 'self'; Frame-Ancestors 'none'; script-src 'self'"
+        ));
+        assert!(!csp_has_frame_ancestors("default-src 'self'"));
+        assert!(!csp_has_frame_ancestors(""));
+    }
+
+    /// Adversarial: mixed-case Frame-Ancestors must count as clickjacking protection.
+    #[test]
+    fn frame_ancestors_mixed_case_not_missing_clickjacking() {
+        assert!(!missing_clickjacking_protection(
+            false,
+            Some("Frame-Ancestors 'none'")
+        ));
+        assert!(!missing_clickjacking_protection(
+            false,
+            Some("default-src 'self'; FRAME-ANCESTORS 'self'")
+        ));
+        assert!(missing_clickjacking_protection(false, Some("default-src 'self'")));
+        assert!(missing_clickjacking_protection(false, None));
+        assert!(!missing_clickjacking_protection(true, None));
+        assert!(!missing_clickjacking_protection(
+            true,
+            Some("Frame-Ancestors 'none'")
+        ));
+    }
 }

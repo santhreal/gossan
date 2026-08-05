@@ -228,7 +228,11 @@ const COMPILED_PROBES: &[CompiledDebugProbe] = &[
 ];
 
 /// Probe all debug/monitoring endpoints for this web asset.
-pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Finding>> {
+pub async fn probe(
+    client: &Client,
+    target: &Target,
+    baseline: Option<&crate::soft404::BaselineFingerprint>,
+) -> anyhow::Result<Vec<Finding>> {
     let Target::Web(asset) = target else {
         return Ok(vec![]);
     };
@@ -241,7 +245,10 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
 
         let resp = match client.get(&url).send().await {
             Ok(r) => r,
-            Err(_) => continue,
+            Err(e) => {
+                tracing::warn!("debug endpoint probe send failed: url={} error={}", url, e);
+                continue;
+            }
         };
 
         let status = resp.status().as_u16();
@@ -259,7 +266,18 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
 
         if debug_probe.path.contains("heapdump") {
             if content_type.contains("octet-stream") {
-                let bytes = crate::soft404::read_limited(resp, 1024).await.unwrap_or_default();
+                // Real heap dumps far exceed 1 KiB; take a bounded prefix for
+                // magic-byte detection instead of discarding oversized bodies.
+                let Some(bytes) = crate::soft404::read_prefix(resp, 1024).await else {
+                    tracing::warn!(
+                        "heapdump body stream error at {}; skipping",
+                        debug_probe.path
+                    );
+                    continue;
+                };
+                if crate::soft404::is_likely_404(status, &bytes, baseline, false) {
+                    continue;
+                }
                 if bytes.starts_with(b"JAVA PROFILE") {
                     findings.push(
                         crate::exposure_finding(
@@ -296,19 +314,28 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
             continue;
         }
 
-        let body = match gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await {
+        let body = match gossan_core::net::bounded_text(resp, crate::MAX_BODY_BYTES).await {
             Ok(b) => b,
-            Err(_) => continue,
+            Err(e) => {
+                tracing::warn!("debug endpoint body read failed: url={} error={}", url, e);
+                continue;
+            }
         };
+
+        if crate::soft404::is_likely_404(status, body.as_bytes(), baseline, false) {
+            continue;
+        }
 
         let confirmed = debug_probe.confirm_strings.is_empty()
             || debug_probe.confirm_strings.iter().any(|s| body.contains(s));
 
         if confirmed {
-            let excerpt = if body.len() > 200 {
-                format!("{}...", &body[..200])
+            let mut chars = body.chars();
+            let excerpt: String = chars.by_ref().take(200).collect();
+            let excerpt = if chars.next().is_some() {
+                format!("{}...", excerpt)
             } else {
-                body.clone()
+                excerpt
             };
 
             findings.push(
@@ -393,5 +420,132 @@ mod tests {
         paths.sort();
         paths.dedup();
         assert_eq!(paths.len(), probes.len(), "duplicate paths in debug probes");
+    }
+
+    #[test]
+    fn compiled_probes_include_actuator_env() {
+        let probes = get_probes();
+        assert!(probes.iter().any(|p| p.path == "/actuator/env"));
+    }
+
+    #[test]
+    fn compiled_probes_include_php_info() {
+        let probes = get_probes();
+        assert!(probes.iter().any(|p| p.path == "/info.php"));
+    }
+
+    #[test]
+    fn compiled_probes_count_is_reasonable() {
+        let probes = get_probes();
+        assert!(
+            probes.len() > 10,
+            "expected >10 debug probes, got {}",
+            probes.len()
+        );
+    }
+
+    #[test]
+    fn get_probes_includes_heapdump() {
+        let probes = get_probes();
+        let heapdump = probes.iter().find(|p| p.path.contains("heapdump"));
+        assert!(heapdump.is_some());
+        assert_eq!(heapdump.unwrap().severity, Severity::Critical);
+    }
+
+    #[test]
+    fn probe_list_includes_graphiql() {
+        let probes = get_probes();
+        assert!(probes.iter().any(|p| p.path == "/graphiql"));
+    }
+
+    #[test]
+    fn compiled_probes_include_go_pprof() {
+        let probes = get_probes();
+        assert!(probes.iter().any(|p| p.path == "/debug/pprof/"));
+    }
+
+    #[test]
+    fn compiled_probes_include_apache_server_status() {
+        let probes = get_probes();
+        assert!(probes.iter().any(|p| p.path == "/server-status"));
+    }
+
+    #[test]
+    fn compiled_probes_include_symfony_profiler() {
+        let probes = get_probes();
+        assert!(probes.iter().any(|p| p.path == "/_profiler/"));
+    }
+
+    #[test]
+    fn get_probes_returns_consistent_count() {
+        let first = get_probes().len();
+        let second = get_probes().len();
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn compiled_probes_include_elmah() {
+        let probes = get_probes();
+        assert!(probes.iter().any(|p| p.path == "/elmah.axd"));
+    }
+
+    #[tokio::test]
+    async fn empty_confirm_endpoint_suppressed_on_catch_all_spa() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let shell = "<html><body>SPA shell</body></html>";
+        // /healthz has empty confirm_strings; a catch-all returns HTML.
+        Mock::given(method("GET"))
+            .and(path("/healthz"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(shell))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(shell))
+            .mount(&server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let target = gossan_core::testkit::web_target(&server.uri());
+        let baseline = crate::soft404::establish(&client, &server.uri()).await;
+        let findings = probe(&client, &target, baseline.as_ref()).await.unwrap();
+        assert!(
+            findings.is_empty(),
+            "expected /healthz finding suppressed on catch-all SPA, got {:?}",
+            findings
+        );
+    }
+
+    #[tokio::test]
+    async fn real_empty_confirm_endpoint_fires_when_body_differs_from_baseline() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let shell = "<html><body>SPA shell</body></html>";
+        // Make the /healthz body much larger than the baseline shell so the
+        // length check does not classify it as a soft-404.
+        let body = "ok ".repeat(300);
+        Mock::given(method("GET"))
+            .and(path("/healthz"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(body))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(shell))
+            .mount(&server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let target = gossan_core::testkit::web_target(&server.uri());
+        let baseline = crate::soft404::establish(&client, &server.uri()).await;
+        let findings = probe(&client, &target, baseline.as_ref()).await.unwrap();
+        assert!(
+            findings.iter().any(|f| f.title().contains("Health Check")),
+            "expected /healthz finding when body differs from baseline, got {:?}",
+            findings
+        );
     }
 }

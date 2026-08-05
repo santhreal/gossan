@@ -1,6 +1,6 @@
 //! Wordlist integrity tests.
 //!
-//! Per GOSSAN_LEGENDARY A10 + B6: every shipped wordlist must:
+//! Per GOSSAN_DEPTH_CONTRACT A10 + B6: every shipped wordlist must:
 //!  - have no duplicate entries,
 //!  - have no leading `/` (the brute-forcer adds it),
 //!  - have no comment lines (those belong in README, not the data file),

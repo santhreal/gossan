@@ -22,19 +22,24 @@ impl SubdomainSource for Binaryedge {
         limiter: &DefaultDirectRateLimiter,
     ) -> anyhow::Result<Vec<Target>> {
         
-        let Some(_key) = crate::sources::get_api_key(config, "binaryedge", "BINARYEDGE_API_KEY") else {
+        let Some(key) = crate::sources::get_api_key(config, "binaryedge", "BINARYEDGE_API_KEY") else {
             return Ok(vec![]);
         };
 
-        let url = format!("https://api.binaryedge.io/v2/query/domains/subdomain/{}&page=1", domain);
+        let url = format!("https://api.binaryedge.io/v2/query/domains/subdomain/{}?page=1", domain);
         limiter.until_ready().await;
-        let resp = client.get(&url).send().await?;
+        let resp = client
+            .get(&url)
+            .header("X-Key", key)
+            .send()
+            .await?
+            .error_for_status()?;
         let max_size = config.max_response_size;
         let bytes = gossan_core::read_response_limited(resp, max_size).await?;
         let mut seen = std::collections::HashSet::new();
         let domain_lower = domain.to_lowercase();
         
-        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
+        let json: serde_json::Value = serde_json::from_slice(&bytes)?;
         if let Some(arr) = json.get("events").and_then(|v| v.as_array()) {
             for item in arr {
                 if let Some(v) = item.as_str() {
@@ -50,5 +55,19 @@ impl SubdomainSource for Binaryedge {
             domain: d,
             source: DiscoverySource::BinaryEdge,
         })).collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn request_has_x_key_header_and_query_url() {
+        let client = reqwest::Client::new();
+        let url = format!("https://api.binaryedge.io/v2/query/domains/subdomain/{}?page=1", "example.com");
+        let req = client.get(&url).header("X-Key", "secret").build().unwrap();
+        assert_eq!(req.url().as_str(), "https://api.binaryedge.io/v2/query/domains/subdomain/example.com?page=1");
+        assert_eq!(req.headers().get("X-Key").unwrap(), "secret");
     }
 }

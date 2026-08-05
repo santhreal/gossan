@@ -13,18 +13,17 @@
 //! (Google, Mailchimp, SendGrid, etc.) and reports which signing infrastructure is active.
 
 use gossan_core::Target;
-use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::TokioResolver;
 use secfinding::{Evidence, Finding, FindingBuilder, FindingKind, Severity};
 use serde::Deserialize;
 use std::sync::OnceLock;
 
-use crate::resolver::lookup_txt;
+use crate::resolver::{lookup_txt, lookup_txt_classified, TxtLookup};
 
 /// DKIM selector definition from TOML.
 #[derive(Debug, Clone, Deserialize)]
 struct DkimSelector {
     name: String,
-    #[allow(dead_code)]
     provider: String,
 }
 
@@ -87,7 +86,7 @@ fn fb(
 }
 
 /// Run all email authentication checks against a domain.
-pub async fn check(resolver: &TokioAsyncResolver, domain: &str, target: &Target) -> Vec<Finding> {
+pub async fn check(resolver: &TokioResolver, domain: &str, target: &Target) -> Vec<Finding> {
     let mut findings = Vec::new();
     findings.extend(check_spf(resolver, domain, target).await);
     findings.extend(check_dmarc(resolver, domain, target).await);
@@ -98,12 +97,35 @@ pub async fn check(resolver: &TokioAsyncResolver, domain: &str, target: &Target)
 // ── SPF ─────────────────────────────────────────────────────────────────────
 
 /// SPF analysis with recursive `include:` resolution and lookup counting.
-async fn check_spf(resolver: &TokioAsyncResolver, domain: &str, target: &Target) -> Vec<Finding> {
+async fn check_spf(resolver: &TokioResolver, domain: &str, target: &Target) -> Vec<Finding> {
     let mut findings = Vec::new();
 
-    let records = match lookup_txt(resolver, domain).await {
-        Ok(r) => r,
-        Err(_) => return findings,
+    let records = match lookup_txt_classified(resolver, domain).await {
+        Ok(TxtLookup::Records(r)) => r,
+        Ok(TxtLookup::Absent) => Vec::new(),
+        Err(e) => {
+            tracing::warn!(
+                domain,
+                error = %e,
+                "SPF TXT lookup failed; not treating as missing SPF"
+            );
+            gossan_core::try_push_finding(
+                fb(
+                    target,
+                    Severity::Info,
+                    "SPF check could not complete",
+                    format!(
+                        "TXT lookup for {domain} failed ({e}); SPF presence/strength was not evaluated."
+                    ),
+                )
+                .kind(FindingKind::Misconfiguration)
+                .tag("email-security")
+                .tag("spf")
+                .tag("incomplete"),
+                &mut findings,
+            );
+            return findings;
+        }
     };
 
     let spf_rec = match records.iter().find(|r| r.starts_with("v=spf1")) {
@@ -114,7 +136,7 @@ async fn check_spf(resolver: &TokioAsyncResolver, domain: &str, target: &Target)
                     target,
                     Severity::Medium,
                     "No SPF record",
-                    format!("{domain} has no SPF record — email spoofing is possible."),
+                    format!("{domain} has no SPF record, email spoofing is possible."),
                 )
                 .kind(FindingKind::Misconfiguration)
                 .tag("email-security")
@@ -132,7 +154,7 @@ async fn check_spf(resolver: &TokioAsyncResolver, domain: &str, target: &Target)
                 target,
                 Severity::High,
                 "SPF allows all senders (+all)",
-                format!("{domain} SPF has +all — any server can send as this domain."),
+                format!("{domain} SPF has +all, any server can send as this domain."),
             )
             .tag("email-security")
             .tag("spf")
@@ -147,8 +169,8 @@ async fn check_spf(resolver: &TokioAsyncResolver, domain: &str, target: &Target)
             fb(
                 target,
                 Severity::Low,
-                "SPF softfail (~all) — not enforced",
-                format!("{domain} uses ~all — emails failing SPF are still delivered."),
+                "SPF softfail (~all), not enforced",
+                format!("{domain} uses ~all, emails failing SPF are still delivered."),
             )
             .tag("email-security")
             .tag("spf"),
@@ -156,7 +178,7 @@ async fn check_spf(resolver: &TokioAsyncResolver, domain: &str, target: &Target)
         );
     }
 
-    // Recursive include resolution — count total lookups
+    // Recursive include resolution, count total lookups
     let lookup_count = count_spf_lookups(resolver, &spf_rec, 0).await;
     if lookup_count > MAX_SPF_INCLUDES {
         gossan_core::try_push_finding(
@@ -165,7 +187,7 @@ async fn check_spf(resolver: &TokioAsyncResolver, domain: &str, target: &Target)
                 Severity::Medium,
                 format!("SPF exceeds 10-lookup limit ({lookup_count} lookups)"),
                 format!(
-                    "{domain} SPF record requires {lookup_count} DNS lookups — \
+                    "{domain} SPF record requires {lookup_count} DNS lookups. \
                         exceeding RFC 7208 §4.6.4 limit of 10. Mail receivers will \
                         return permerror, effectively disabling SPF protection."
                 ),
@@ -189,7 +211,7 @@ async fn check_spf(resolver: &TokioAsyncResolver, domain: &str, target: &Target)
 /// Each `include:`, `a:`, `mx:`, `ptr:`, `exists:`, and `redirect=` mechanism
 /// costs one lookup. `include:` is followed recursively.
 /// Returns total lookup count across the full include chain.
-async fn count_spf_lookups(resolver: &TokioAsyncResolver, spf_record: &str, depth: usize) -> usize {
+async fn count_spf_lookups(resolver: &TokioResolver, spf_record: &str, depth: usize) -> usize {
     if depth > 12 {
         return 100; // circular reference protection
     }
@@ -205,9 +227,19 @@ async fn count_spf_lookups(resolver: &TokioAsyncResolver, spf_record: &str, dept
         if mechanism.starts_with("include:") {
             count += 1;
             let included_domain = mechanism.trim_start_matches("include:");
-            if let Ok(records) = lookup_txt(resolver, included_domain).await {
-                if let Some(child_spf) = records.iter().find(|r| r.starts_with("v=spf1")) {
-                    count += Box::pin(count_spf_lookups(resolver, child_spf, depth + 1)).await;
+            match lookup_txt_classified(resolver, included_domain).await {
+                Ok(TxtLookup::Records(records)) => {
+                    if let Some(child_spf) = records.iter().find(|r| r.starts_with("v=spf1")) {
+                        count += Box::pin(count_spf_lookups(resolver, child_spf, depth + 1)).await;
+                    }
+                }
+                Ok(TxtLookup::Absent) => {}
+                Err(e) => {
+                    tracing::warn!(
+                        domain = %included_domain,
+                        error = %e,
+                        "SPF include: TXT lookup failed; not counting nested lookups"
+                    );
                 }
             }
         } else if mechanism.starts_with("a:")
@@ -223,9 +255,19 @@ async fn count_spf_lookups(resolver: &TokioAsyncResolver, spf_record: &str, dept
         } else if mechanism.starts_with("redirect=") {
             count += 1;
             let redirect_domain = mechanism.trim_start_matches("redirect=");
-            if let Ok(records) = lookup_txt(resolver, redirect_domain).await {
-                if let Some(child_spf) = records.iter().find(|r| r.starts_with("v=spf1")) {
-                    count += Box::pin(count_spf_lookups(resolver, child_spf, depth + 1)).await;
+            match lookup_txt_classified(resolver, redirect_domain).await {
+                Ok(TxtLookup::Records(records)) => {
+                    if let Some(child_spf) = records.iter().find(|r| r.starts_with("v=spf1")) {
+                        count += Box::pin(count_spf_lookups(resolver, child_spf, depth + 1)).await;
+                    }
+                }
+                Ok(TxtLookup::Absent) => {}
+                Err(e) => {
+                    tracing::warn!(
+                        domain = %redirect_domain,
+                        error = %e,
+                        "SPF redirect: TXT lookup failed; not counting nested lookups"
+                    );
                 }
             }
         }
@@ -238,7 +280,7 @@ async fn count_spf_lookups(resolver: &TokioAsyncResolver, spf_record: &str, dept
 /// Parsed DMARC TXT record fields (RFC 7489).
 ///
 /// Returned by [`parse_dmarc`]. Tags absent from the source record are
-/// `None` — the caller is responsible for applying RFC defaults
+/// `None`: the caller is responsible for applying RFC defaults
 /// (`sp=p`, `pct=100`, `adkim=r`, `aspf=r`, `fo=0`, `rf=afrf`, `ri=86400`).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DmarcRecord {
@@ -269,7 +311,7 @@ pub struct DmarcRecord {
 /// Parse a DMARC TXT record into structured fields.
 ///
 /// Returns `None` if the record does not begin with `v=DMARC1` (case
-/// sensitive per RFC 7489 §6.4 — the version tag is the marker).
+/// sensitive per RFC 7489 §6.4 (the version tag is the marker)).
 /// Unknown tags are tolerated and dropped silently. Whitespace
 /// around `;` separators and `=` is permitted and stripped.
 #[must_use]
@@ -375,16 +417,48 @@ pub fn analyze_dmarc(record: &str) -> Vec<DmarcIssue> {
 }
 
 /// DMARC policy analysis: presence, enforcement level, subdomain policy, report URIs.
-async fn check_dmarc(resolver: &TokioAsyncResolver, domain: &str, target: &Target) -> Vec<Finding> {
+async fn check_dmarc(resolver: &TokioResolver, domain: &str, target: &Target) -> Vec<Finding> {
     let mut findings = Vec::new();
     let dmarc_domain = format!("_dmarc.{domain}");
 
-    let records = match lookup_txt(resolver, &dmarc_domain).await {
-        Ok(r) => r,
-        Err(_) => {
-            gossan_core::try_push_finding(fb(target, Severity::Medium, "No DMARC record",
-                   format!("{domain} has no DMARC record — phishing via email spoofing is unmitigated."))
-                .tag("email-security").tag("dmarc"), &mut findings);
+    let records = match lookup_txt_classified(resolver, &dmarc_domain).await {
+        Ok(TxtLookup::Records(r)) => r,
+        Ok(TxtLookup::Absent) => {
+            gossan_core::try_push_finding(
+                fb(
+                    target,
+                    Severity::Medium,
+                    "No DMARC record",
+                    format!(
+                        "{domain} has no DMARC record, phishing via email spoofing is unmitigated."
+                    ),
+                )
+                .tag("email-security")
+                .tag("dmarc"),
+                &mut findings,
+            );
+            return findings;
+        }
+        Err(e) => {
+            tracing::warn!(
+                domain = %dmarc_domain,
+                error = %e,
+                "DMARC TXT lookup failed; not treating as missing DMARC"
+            );
+            gossan_core::try_push_finding(
+                fb(
+                    target,
+                    Severity::Info,
+                    "DMARC check could not complete",
+                    format!(
+                        "TXT lookup for {dmarc_domain} failed ({e}); DMARC presence/policy was not evaluated."
+                    ),
+                )
+                .tag("email-security")
+                .tag("dmarc")
+                .tag("incomplete"),
+                &mut findings,
+            );
             return findings;
         }
     };
@@ -419,7 +493,7 @@ async fn check_dmarc(resolver: &TokioAsyncResolver, domain: &str, target: &Targe
                 target,
                 Severity::Low,
                 "DMARC policy is p=none (monitor only)",
-                format!("{domain} DMARC does not reject or quarantine — unenforced."),
+                format!("{domain} DMARC does not reject or quarantine, unenforced."),
             )
             .tag("email-security")
             .tag("dmarc"),
@@ -447,7 +521,7 @@ async fn check_dmarc(resolver: &TokioAsyncResolver, domain: &str, target: &Targe
                 target,
                 Severity::Low,
                 "DMARC missing sp=reject (subdomain spoofing risk)",
-                format!("{domain} DMARC lacks sp=reject — unconfigured subdomains are spoofable."),
+                format!("{domain} DMARC lacks sp=reject, unconfigured subdomains are spoofable."),
             )
             .tag("email-security")
             .tag("dmarc"),
@@ -481,38 +555,52 @@ async fn check_dmarc(resolver: &TokioAsyncResolver, domain: &str, target: &Targe
 // ── DKIM ────────────────────────────────────────────────────────────────────
 
 /// Probe common DKIM selectors loaded from TOML to discover email signing infrastructure.
-async fn check_dkim(resolver: &TokioAsyncResolver, domain: &str, target: &Target) -> Vec<Finding> {
+async fn check_dkim(resolver: &TokioResolver, domain: &str, target: &Target) -> Vec<Finding> {
     let mut findings = Vec::new();
     let mut dkim_found = false;
 
     for selector in dkim_selector_names() {
         let dkim_name = format!("{}._domainkey.{domain}", selector.name);
-        if let Ok(records) = lookup_txt(resolver, &dkim_name).await {
-            if records
-                .iter()
-                .any(|r| r.contains("v=DKIM1") || r.contains("p="))
-            {
-                dkim_found = true;
-                gossan_core::try_push_finding(
-                    fb(
-                        target,
-                        Severity::Info,
-                        format!("DKIM selector active: {}", selector.name),
-                        format!(
-                            "{domain} DKIM selector '{}' resolves — email signing configured.",
-                            selector.name
-                        ),
-                    )
-                    .evidence(Evidence::DnsRecord {
-                        record_type: "TXT".into(),
-                        value: records.first().cloned().unwrap_or_default().into(),
-                    })
-                    .tag("email-security")
-                    .tag("dkim"),
-                    &mut findings,
+        let records = match lookup_txt_classified(resolver, &dkim_name).await {
+            Ok(TxtLookup::Records(r)) => r,
+            Ok(TxtLookup::Absent) => continue,
+            Err(e) => {
+                tracing::warn!(
+                    name = %dkim_name,
+                    error = %e,
+                    "DKIM selector TXT lookup failed; skipping selector"
                 );
-                break; // one active selector is sufficient confirmation
+                continue;
             }
+        };
+        {
+            let Some(evidence) = records
+                .iter()
+                .find(|r| r.contains("v=DKIM1") || r.contains("p="))
+                .cloned()
+            else {
+                continue;
+            };
+            dkim_found = true;
+            gossan_core::try_push_finding(
+                fb(
+                    target,
+                    Severity::Info,
+                    format!("DKIM selector active: {}", selector.name),
+                    format!(
+                        "{domain} DKIM selector '{}' ({}) resolves, email signing configured.",
+                        selector.name, selector.provider
+                    ),
+                )
+                .evidence(Evidence::DnsRecord {
+                    record_type: "TXT".into(),
+                    value: evidence.into(),
+                })
+                .tag("email-security")
+                .tag("dkim"),
+                &mut findings,
+            );
+            break; // one active selector is sufficient confirmation
         }
     }
 
@@ -523,7 +611,7 @@ async fn check_dkim(resolver: &TokioAsyncResolver, domain: &str, target: &Target
                 Severity::Low,
                 "No DKIM record found",
                 format!(
-                    "{domain} — none of {} common DKIM selectors resolved.",
+                    "{domain}, none of {} common DKIM selectors resolved.",
                     dkim_selector_names().len()
                 ),
             )
@@ -539,6 +627,7 @@ async fn check_dkim(resolver: &TokioAsyncResolver, domain: &str, target: &Target
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn dkim_selectors_load_from_toml() {
@@ -649,6 +738,52 @@ mod tests {
             MAX_SPF_INCLUDES, 10,
             "RFC 7208 §4.6.4 mandates 10-lookup limit"
         );
+    }
+
+    /// Adversarial: SPF record with empty include domain must not panic.
+    #[test]
+    fn parse_spf_includes_handles_empty_include() {
+        let includes = parse_spf_includes("v=spf1 +include: -all");
+        assert!(includes.iter().any(|s| s.is_empty()));
+    }
+
+    proptest! {
+        /// Property: `parse_dmarc` never panics for arbitrary input.
+        #[test]
+        fn parse_dmarc_never_panics(record in ".*") {
+            let _ = parse_dmarc(&record);
+        }
+
+        /// Property: `parse_dmarc` only returns Some when the record starts
+        /// with a DMARC1 version tag (case-insensitive).
+        #[test]
+        fn parse_dmarc_some_iff_dmarc1(record in ".{0,512}") {
+            let result = parse_dmarc(&record);
+            let is_dmarc = record.trim().len() >= 8
+                && record.trim().chars().take(8).collect::<String>()
+                    .eq_ignore_ascii_case("v=dmarc1");
+            prop_assert_eq!(result.is_some(), is_dmarc);
+        }
+
+        /// Property: `analyze_dmarc` never panics.
+        #[test]
+        fn analyze_dmarc_never_panics(record in ".*") {
+            let _ = analyze_dmarc(&record);
+        }
+
+        /// Property: `parse_spf_includes` never panics.
+        #[test]
+        fn parse_spf_includes_never_panics(record in ".*") {
+            let _ = parse_spf_includes(&record);
+        }
+
+        /// Property: `identify_email_services` never panics.
+        #[test]
+        fn identify_email_services_never_panics(
+            includes in prop::collection::vec(".*", 0..20)
+        ) {
+            let _ = identify_email_services(&includes);
+        }
     }
 }
 

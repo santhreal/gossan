@@ -1,6 +1,6 @@
 # gossan-scm
 
-Source Control Mapping for Gossan — discovers GitHub / GitLab
+Source Control Mapping for Gossan, discovers GitHub / GitLab
 organizations and repositories tied to the seed domain, then mines them
 for secrets and internal-package references.
 
@@ -20,7 +20,7 @@ for secrets and internal-package references.
 
 > **Note:** This crate is currently excluded from the workspace because
 > its keyhog dependencies trigger a cross-workspace `workspace = true`
-> resolution issue. See `GOSSAN_LEGENDARY.md` Section B2 for the
+> resolution issue. See `GOSSAN_DEPTH.md` Section B2 for the
 > vendor-slice plan that re-includes it.
 
 ## License

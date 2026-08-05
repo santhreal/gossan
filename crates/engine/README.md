@@ -1,6 +1,6 @@
 # gossan-engine
 
-High-performance stateless SYN scanner and banner grabber — the
+High-performance stateless SYN scanner and banner grabber, the
 masscan-class scan engine for the Gossan attack-surface scanner.
 
 ## Architecture

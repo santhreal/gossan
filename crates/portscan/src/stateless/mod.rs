@@ -38,7 +38,7 @@ pub enum Outcome {
 }
 
 /// One SYN to transmit.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Probe {
     pub dst: SocketAddrV4,
     pub seq: u32,
@@ -75,7 +75,7 @@ pub struct StatelessScanner {
 }
 
 impl StatelessScanner {
-    /// `src` is our bound address (source IP + a fixed source port  - 
+    /// `src` is our bound address (source IP + a fixed source port  -
     /// the cookie covers the 4-tuple so a single source port is fine).
     #[must_use]
     pub fn new(
@@ -219,8 +219,17 @@ impl MockTransport {
 
 impl SynTransport for MockTransport {
     fn send(&mut self, dst: SocketAddrV4, ip_tcp: &[u8]) -> std::io::Result<()> {
-        let our = packet::parse_tcp_reply(ip_tcp).expect("engine builds valid SYNs");
-        self.sent.insert(dst, our.ackno /* = our seq, ack field is 0 */);
+        let our = match packet::parse_tcp_reply(ip_tcp) {
+            Some(p) => p,
+            None => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "MockTransport received invalid SYN packet",
+                ));
+            }
+        };
+        self.sent
+            .insert(dst, our.ackno /* = our seq, ack field is 0 */);
         let our_src = our.to; // SYN: IP dst is the responder, our src is IP src
         let _ = our_src;
         // Reply must ack our_seq + 1, computed with the SAME cookie.
@@ -371,7 +380,8 @@ mod tests {
         let c = SynCookie::with_key([2; 16]);
         let s = scanner(1, &c);
         // Valid-looking SYN/ACK but IP dst is not our source IP.
-        let mut pkt = packet::build_syn(sa([1, 1, 1, 1], 443), sa([8, 8, 8, 8], 40000), 1, 64, 1, 1);
+        let mut pkt =
+            packet::build_syn(sa([1, 1, 1, 1], 443), sa([8, 8, 8, 8], 40000), 1, 64, 1, 1);
         pkt[20 + 13] = 0x12;
         assert_eq!(s.classify(&pkt), None);
     }
@@ -447,7 +457,11 @@ mod tests {
                 }
             }
         }
-        assert_eq!(emitted.len(), 2, "two distinct opens must report once each: {emitted:?}");
+        assert_eq!(
+            emitted.len(),
+            2,
+            "two distinct opens must report once each: {emitted:?}"
+        );
         assert!(emitted.contains(&Outcome::Open(p1.dst)));
         assert!(emitted.contains(&Outcome::Open(p2.dst)));
     }
@@ -513,5 +527,36 @@ mod tests {
             },
             "each open port must appear exactly once despite 5 retransmits: {outs:?}"
         );
+    }
+
+    #[test]
+    fn mock_transport_rejects_garbage_instead_of_panicking() {
+        // Adversarial: feeding non-TCP garbage to MockTransport must
+        // return an error, not panic.
+        let c = SynCookie::with_key([1; 16]);
+        let mut t = MockTransport::new(c, vec![], vec![]);
+        let result = t.send(
+            SocketAddrV4::new(Ipv4Addr::new(1, 1, 1, 1), 80),
+            b"this is not a valid ip+tcp packet",
+        );
+        assert!(
+            result.is_err(),
+            "MockTransport must return Err for garbage, not panic"
+        );
+    }
+
+    #[test]
+    fn empty_ports_produces_no_probes() {
+        // Adversarial: empty port list should yield no probes.
+        let c = SynCookie::with_key([2; 16]);
+        let mut s = StatelessScanner::new(
+            SocketAddrV4::new(Ipv4Addr::new(10, 0, 0, 1), 40000),
+            vec![Ipv4Addr::new(1, 1, 1, 1)],
+            vec![],
+            c,
+            42,
+        );
+        assert_eq!(s.total(), 0);
+        assert_eq!(s.next_probe(), None);
     }
 }

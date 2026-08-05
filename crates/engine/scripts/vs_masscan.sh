@@ -15,7 +15,7 @@
 # What this is NOT: an apples-to-apples microbench (we measure full
 # wall-time including DNS resolve / RX collection / output write).
 # What this IS: the user-visible "did your scanner finish faster?"
-# metric — which is what matters for actually beating masscan.
+# metric: which is what matters for actually beating masscan.
 
 set -euo pipefail
 

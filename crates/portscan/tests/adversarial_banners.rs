@@ -1,11 +1,11 @@
-//! Adversarial banner robustness — gossan-portscan must NOT panic
+//! Adversarial banner robustness, gossan-portscan must NOT panic
 //! or run unbounded memory on:
 //!
 //!   * 10 MB banner (bounded body read enforced)
-//!   * Slowloris (1 byte/sec drip — connect timeout enforced)
+//!   * Slowloris (1 byte/sec drip, connect timeout enforced)
 //!   * UTF-16 / control bytes / null bytes (no panic in classify path)
 //!
-//! Per GOSSAN_LEGENDARY A4. We don't drive the full PortScanner trait
+//! Per GOSSAN_DEPTH_CONTRACT A4. We don't drive the full PortScanner trait
 //! here (that would couple the test to the streaming pipeline);
 //! instead we feed the adversarial banner through the lower-level
 //! `gossan_classify::CpuMatcher` (the consumer of the banner that
@@ -28,7 +28,7 @@ fn classify_handles_10mb_banner_no_oom_no_panic() {
     let hits = m.match_banner(&banner);
     let elapsed = t0.elapsed();
     // Pure-Rust substring matching against ~100 rules over 10 MiB does
-    // dominate — production reads cap at 4 KiB so the production path
+    // dominate, production reads cap at 4 KiB so the production path
     // is unaffected. The point of this test is "does NOT OOM / does NOT
     // panic", not "is fast at 10 MiB". Gate at 30 s.
     assert!(

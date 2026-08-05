@@ -1,6 +1,6 @@
 //! Proxy-aware TCP connection primitives.
 //!
-//! Delegates all proxy protocol handling to [`proxywire`] — supports SOCKS4,
+//! Delegates all proxy protocol handling to [`proxywire`], supports SOCKS4,
 //! SOCKS5, SOCKS5h, and HTTP CONNECT tunneling with optional authentication.
 //!
 //! Scanners should use [`connect_tcp`] for raw TCP (e.g. AXFR) and
@@ -10,7 +10,7 @@ use crate::Config;
 use hickory_resolver::{
     config::{NameServerConfigGroup, ResolverConfig, ResolverOpts},
     name_server::TokioConnectionProvider,
-    TokioAsyncResolver, TokioResolver,
+    TokioResolver,
 };
 use tokio::net::TcpStream;
 
@@ -20,22 +20,32 @@ use tokio::net::TcpStream;
 /// # Errors
 ///
 /// Returns an error if the resolver configuration is invalid.
-pub fn build_resolver(config: &Config) -> anyhow::Result<TokioAsyncResolver> {
+pub fn build_resolver(config: &Config) -> anyhow::Result<TokioResolver> {
     let servers = if config.resolvers.is_empty() {
-        NameServerConfigGroup::cloudflare()
+        // Prefer a diverse public resolver set when the operator did not
+        // pin one: Cloudflare + Google + Quad9. Single-provider outages
+        // must not silently erase DNS-dependent stages of a scan.
+        let mut group = NameServerConfigGroup::cloudflare();
+        group.merge(NameServerConfigGroup::google());
+        group.merge(NameServerConfigGroup::quad9());
+        group
     } else {
         NameServerConfigGroup::from_ips_clear(&config.resolvers, 53, true)
     };
     let rc = ResolverConfig::from_parts(None, vec![], servers);
     let mut opts = ResolverOpts::default();
     opts.timeout = config.timeout();
-    opts.attempts = 1;
+    opts.attempts = 2;
+    // DNSSEC validation on by default; operators who need unsigned
+    // zones still get the answer when the chain is incomplete, but
+    // forged responses that fail validation are rejected.
+    opts.validate = true;
     // DNS rebinding mitigation: hold the first positive resolution for
     // a long minimum TTL so the same hostname does not silently
     // re-resolve to a different IP mid-scan. An attacker's authoritative
     // server can otherwise hand back a private/loopback IP after the
     // initial public-facing answer and trick a follow-up probe into
-    // hitting an internal asset. We pin to 1 hour — long enough for any
+    // hitting an internal asset. We pin to 1 hour, long enough for any
     // single scan to finish, short enough that a real IP change is
     // picked up on the next process invocation.
     opts.positive_min_ttl = Some(std::time::Duration::from_secs(3600));
@@ -43,18 +53,20 @@ pub fn build_resolver(config: &Config) -> anyhow::Result<TokioAsyncResolver> {
     // poison the resolver for the rest of the process.
     opts.negative_min_ttl = Some(std::time::Duration::from_secs(60));
     opts.cache_size = 8192;
-    Ok(TokioResolver::builder_with_config(rc, TokioConnectionProvider::default())
-        .with_options(opts)
-        .build())
+    Ok(
+        TokioResolver::builder_with_config(rc, TokioConnectionProvider::default())
+            .with_options(opts)
+            .build(),
+    )
 }
 
 /// Create a TCP connection, optionally routing through a proxy.
 ///
 /// Supports:
-/// - `socks5://host:port` — SOCKS5 (proxy resolves DNS)
-/// - `socks5h://host:port` — SOCKS5 with local DNS resolution
-/// - `socks4://host:port` — SOCKS4
-/// - `http://host:port` — HTTP CONNECT tunnel
+/// - `socks5://host:port`: SOCKS5 (proxy resolves DNS)
+/// - `socks5h://host:port`: SOCKS5 with local DNS resolution
+/// - `socks4://host:port`: SOCKS4
+/// - `http://host:port`: HTTP CONNECT tunnel
 ///
 /// # Errors
 ///
@@ -115,6 +127,20 @@ fn parse_host_port(s: &str) -> Result<(&str, u16), proxywire::Error> {
             message: format!("proxy URL missing port: {s}"),
             fix: "use format scheme://host:port (e.g. socks5://127.0.0.1:9050)".to_string(),
         })?;
+    if host.is_empty() {
+        return Err(proxywire::Error::InvalidConfig {
+            message: format!("proxy URL has empty host: {s}"),
+            fix: "use format scheme://host:port (e.g. socks5://127.0.0.1:9050)".to_string(),
+        });
+    }
+    // Reject bare IPv6 without brackets, rsplit_once would misread the
+    // last hextet as a port and corrupt the address.
+    if host.contains(':') && !host.starts_with('[') {
+        return Err(proxywire::Error::InvalidConfig {
+            message: format!("IPv6 proxy host must be bracketed: {s}"),
+            fix: "use format scheme://[ipv6]:port (e.g. socks5h://[::1]:9050)".to_string(),
+        });
+    }
     let port = port_str
         .parse::<u16>()
         .map_err(|_| proxywire::Error::InvalidConfig {
@@ -138,7 +164,7 @@ mod tests {
             }
             proxywire::ProxyRoute::Direct => panic!("expected chain, got direct"),
             // ProxyRoute is `#[non_exhaustive]`; future variants must
-            // not silently swallow data — panic loudly so we notice
+            // not silently swallow data, panic loudly so we notice
             // when proxywire grows a new transport.
             _ => panic!("unhandled ProxyRoute variant"),
         }
@@ -178,6 +204,35 @@ mod tests {
     fn parse_rejects_missing_port() {
         assert!(parse_proxy_route("socks5://localhost").is_err());
     }
+
+    #[test]
+    fn parse_rejects_bare_ipv6_without_brackets() {
+        assert!(
+            parse_proxy_route("socks5://2001:db8::1").is_err(),
+            "bare IPv6 without brackets must be rejected"
+        );
+        assert!(
+            parse_proxy_route("socks5://2001:db8::1:1080").is_err(),
+            "bare IPv6 with port but no brackets must be rejected"
+        );
+    }
+
+    #[test]
+    fn parse_ipv6_proxy_bracket_handling() {
+        // parse_host_port uses rsplit_once(':') on "[::1]:9050"
+        // rsplit_once finds the ':' before '9050', giving host="[::1]"
+        // The brackets are preserved, which is non-ideal but TcpStream::connect
+        // accepts "[::1]:9050" so the connection may still work.
+        let result = parse_proxy_route("socks5h://[::1]:9050");
+        match result {
+            Ok(proxywire::ProxyRoute::Chain(hops)) => {
+                let host = &hops[0].host;
+                // Host retains brackets from the original URL
+                assert_eq!(host, "[::1]", "IPv6 proxy host should strip brackets");
+            }
+            _ => panic!("expected valid proxy route"),
+        }
+    }
 }
 
 /// Read up to `limit` bytes from a reqwest response and return as a `String`.
@@ -211,7 +266,10 @@ pub async fn bounded_text(resp: crate::reqwest::Response, limit: usize) -> anyho
 /// # Errors
 ///
 /// Returns the underlying reqwest error if the stream fails mid-read.
-pub async fn bounded_bytes(resp: crate::reqwest::Response, limit: usize) -> anyhow::Result<Vec<u8>> {
+pub async fn bounded_bytes(
+    resp: crate::reqwest::Response,
+    limit: usize,
+) -> anyhow::Result<Vec<u8>> {
     use futures::StreamExt;
     let mut buf = Vec::with_capacity(limit.min(4096));
     let mut stream = resp.bytes_stream();

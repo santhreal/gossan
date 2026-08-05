@@ -1,6 +1,6 @@
 # gossan-keyhog-lite
 
-**Vendor slice — not for general use.** This crate is a frozen, pure-CPU
+**Vendor slice, not for general use.** This crate is a frozen, pure-CPU
 subset of [keyhog-core](https://github.com/santhreal/keyhog) +
 keyhog-scanner + keyhog-verifier, vendored inside the Gossan workspace
 so that `gossan-js`, `gossan-scm`, and `gossan-crawl` can detect
@@ -22,7 +22,7 @@ use gossan_keyhog_lite::{
 };
 ```
 
-This is intentionally narrower than upstream — it covers only what
+This is intentionally narrower than upstream, it covers only what
 gossan-js + gossan-scm + gossan-crawl import.
 
 ## Detection path
@@ -38,14 +38,14 @@ Stubbed: `VerificationEngine::verify_all` returns each input
 `RawMatch` as `VerificationResult::Unknown`. Live verification (HTTP
 probes against AWS / Stripe / etc) lives in upstream keyhog-verifier
 and pulls in `tokio` + provider SDKs that we deliberately keep out of
-the gossan build graph. Verification is implemented honestly — the
+the gossan build graph. Verification is implemented honestly, the
 result is "we have no way to verify from inside gossan", not
 "verified".
 
 ## Sync from upstream
 
 Detectors live in `software/keyhog/detectors/`. This crate carries
-**no** detector TOML files of its own — at runtime
+**no** detector TOML files of its own, at runtime
 `load_detectors(path)` reads whichever directory the caller points
 it at (gossan-js and gossan-scm point at the keyhog detector tree;
 in vendored builds the caller drops a frozen copy alongside the

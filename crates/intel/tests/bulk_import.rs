@@ -1,8 +1,8 @@
 //! Bulk-import + per-shape query tests.
 //!
-//! Per GOSSAN_LEGENDARY A20:
+//! Per GOSSAN_DEPTH_CONTRACT A20:
 //!  - Bulk import 100k records in <10s.
-//!  - Query by IP, host, port, protocol — one test each.
+//!  - Query by IP, host, port, protocol (one test each).
 
 use gossan_intel::db::{IntelDb, IntelRecord};
 use std::time::{Duration, Instant};

@@ -1,6 +1,6 @@
 # Tier B Hidden Path Wordlist (SecLists-derived, community extensible)
 # Loaded by gossan-hidden directory brute-force probe.
-# Add custom paths below — one per line, lines starting with # are ignored.
+# Add custom paths below (one per line, lines starting with # are ignored).
 
 # Admin / management
 admin

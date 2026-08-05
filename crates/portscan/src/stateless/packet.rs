@@ -1,7 +1,7 @@
 //! Hand-built IPv4 + TCP SYN frames and the RFC 1071 checksum.
 //!
 //! The stateless engine does not use the kernel TCP stack, so it must
-//! construct the SYN itself and parse the raw reply. Pure byte math  - 
+//! construct the SYN itself and parse the raw reply. Pure byte math  -
 //! no `unsafe`, no sockets here (transport lives behind a trait).
 
 use std::net::SocketAddrV4;
@@ -49,7 +49,7 @@ pub fn build_syn(
     pkt[6..8].copy_from_slice(&0x4000u16.to_be_bytes()); // Don't Fragment
     pkt[8] = ttl;
     pkt[9] = 6; // protocol = TCP
-    // pkt[10..12] checksum  -  zero for computation
+                // pkt[10..12] checksum  -  zero for computation
     pkt[12..16].copy_from_slice(&src.ip().octets());
     pkt[16..20].copy_from_slice(&dst.ip().octets());
     let ip_csum = internet_checksum(&pkt[..IPV4_HDR_LEN]);
@@ -157,9 +157,10 @@ mod tests {
     fn internet_checksum_rfc1071_vector() {
         // Classic RFC 1071 example bytes; the checksum of a buffer
         // already containing its own correct checksum sums to 0.
-        let data = [0x45u8, 0x00, 0x00, 0x73, 0x00, 0x00, 0x40, 0x00,
-                    0x40, 0x11, 0x00, 0x00, 0xc0, 0xa8, 0x00, 0x01,
-                    0xc0, 0xa8, 0x00, 0xc7];
+        let data = [
+            0x45u8, 0x00, 0x00, 0x73, 0x00, 0x00, 0x40, 0x00, 0x40, 0x11, 0x00, 0x00, 0xc0, 0xa8,
+            0x00, 0x01, 0xc0, 0xa8, 0x00, 0xc7,
+        ];
         let c = internet_checksum(&data);
         let mut withc = data;
         withc[10] = (c >> 8) as u8;
@@ -198,7 +199,7 @@ mod tests {
     fn classifies_synack_and_rst() {
         let src = sa([1, 2, 3, 4], 50000); // responder
         let dst = sa([10, 0, 0, 5], 40001); // us
-        // SYN/ACK
+                                            // SYN/ACK
         let mut p = build_syn(src, dst, 7, 64, 512, 1);
         p[20 + 13] = 0x12; // SYN|ACK
         let r = parse_tcp_reply(&p).unwrap();
@@ -220,5 +221,52 @@ mod tests {
         let mut not_tcp = build_syn(sa([1, 1, 1, 1], 1), sa([2, 2, 2, 2], 2), 1, 64, 1, 1);
         not_tcp[9] = 17; // UDP
         assert!(parse_tcp_reply(&not_tcp).is_none());
+    }
+
+    #[test]
+    fn parse_tcp_reply_random_bytes_never_panics() {
+        // Adversarial: fuzz-like random byte slices should not panic
+        for len in [0, 1, 19, 20, 39, 40, 60, 1000] {
+            let buf = vec![0x45u8; len];
+            let _ = parse_tcp_reply(&buf);
+            let buf = vec![0xffu8; len];
+            let _ = parse_tcp_reply(&buf);
+        }
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+    use std::net::Ipv4Addr;
+
+    proptest! {
+        #[test]
+        fn parse_tcp_reply_never_panics(pkt in prop::collection::vec(any::<u8>(), 0..256)) {
+            let _ = parse_tcp_reply(&pkt);
+        }
+
+        #[test]
+        fn build_syn_then_parse_roundtrips_fields(
+            src_a in any::<u8>(), src_b in any::<u8>(),
+            src_c in any::<u8>(), src_d in any::<u8>(),
+            src_p in any::<u16>(),
+            dst_a in any::<u8>(), dst_b in any::<u8>(),
+            dst_c in any::<u8>(), dst_d in any::<u8>(),
+            dst_p in any::<u16>(),
+            seq in any::<u32>(), ttl in any::<u8>(),
+            window in any::<u16>(), id in any::<u16>(),
+        ) {
+            let src = SocketAddrV4::new(Ipv4Addr::new(src_a, src_b, src_c, src_d), src_p);
+            let dst = SocketAddrV4::new(Ipv4Addr::new(dst_a, dst_b, dst_c, dst_d), dst_p);
+            let pkt = build_syn(src, dst, seq, ttl, window, id);
+            let rep = parse_tcp_reply(&pkt);
+            prop_assert!(rep.is_some(), "our own SYN must parse");
+            let rep = rep.unwrap();
+            prop_assert_eq!(rep.from, src);
+            prop_assert_eq!(rep.to, dst);
+            prop_assert!(rep.syn);
+        }
     }
 }

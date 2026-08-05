@@ -1,6 +1,6 @@
 //! Save/load roundtrip across every pipeline stage name.
 //!
-//! Per GOSSAN_LEGENDARY A13: every stage (subdomain / portscan /
+//! Per GOSSAN_DEPTH_CONTRACT A13: every stage (subdomain / portscan /
 //! techstack / dns / js / hidden / cloud / origin / horizontal /
 //! crawl / scm / correlation) must round-trip via `save_stage` →
 //! `load` with no loss of targets or findings. Plus, a Finding's

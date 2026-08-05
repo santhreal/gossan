@@ -1,4 +1,4 @@
-//! Per GOSSAN_LEGENDARY G: `--out` must reject path-traversal
+//! Per GOSSAN_DEPTH_CONTRACT G: `--out` must reject path-traversal
 //! arguments like `../../etc/passwd`. We don't depend on a sandbox;
 //! the CLI itself validates the supplied output path.
 //!
@@ -23,7 +23,7 @@ fn cli_bin() -> std::path::PathBuf {
 
 #[test]
 fn out_path_with_dotdot_either_errors_or_resolves_safely() {
-    // We can't actually do the destructive part — we just assert the
+    // We can't actually do the destructive part, we just assert the
     // CLI exits cleanly with a refusal-grade exit code (>=1) when
     // pointed at /etc/passwd, OR exits 0 only because nothing was
     // written (we'd then verify /etc/passwd timestamp didn't change,
@@ -38,7 +38,7 @@ fn out_path_with_dotdot_either_errors_or_resolves_safely() {
         ])
         .output();
     let Ok(out) = out else {
-        // Spawn failure is itself acceptable — the path resolution
+        // Spawn failure is itself acceptable, the path resolution
         // could fail before exec.
         return;
     };
@@ -48,7 +48,7 @@ fn out_path_with_dotdot_either_errors_or_resolves_safely() {
     let absolute = std::path::Path::new("/etc/passwd-gossan-test");
     if absolute.exists() {
         let _ = std::fs::remove_file(absolute);
-        panic!("--out path-traversal escaped to /etc/ — security regression");
+        panic!("--out path-traversal escaped to /etc/, security regression");
     }
     // Exit code must be defined (no segfault).
     assert!(out.status.code().is_some());
@@ -68,7 +68,7 @@ fn out_path_to_relative_dot_dot_either_errors_or_stays_in_cwd() {
         if p.exists() {
             let _ = std::fs::remove_file(p);
             panic!(
-                "--out ../escaped.txt landed at {} — should have been rejected or kept inside cwd",
+                "--out ../escaped.txt landed at {}, should have been rejected or kept inside cwd",
                 p.display()
             );
         }

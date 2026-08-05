@@ -16,7 +16,7 @@
     clippy::missing_errors_doc
 )]
 
-//! Scan checkpoint and resume — persists stage results to a local SQLite file.
+//! Scan checkpoint and resume (persists stage results to a local SQLite file).
 //!
 //! # Usage
 //! ```ignore
@@ -33,6 +33,7 @@
 //! }
 //! ```
 
+use std::cell::RefCell;
 use std::path::Path;
 
 use anyhow::Context;
@@ -44,7 +45,7 @@ use uuid::Uuid;
 
 /// Persistent scan store backed by SQLite.
 pub struct CheckpointStore {
-    conn: Connection,
+    conn: RefCell<Connection>,
 }
 
 /// A single completed pipeline stage stored in the checkpoint.
@@ -55,7 +56,7 @@ pub struct StageRecord {
     pub completed_at: String,
 }
 
-/// All data for a saved scan — used to restore state on `--resume`.
+/// All data for a saved scan (used to restore state on `--resume`).
 pub struct ScanRecord {
     pub scan_id: Uuid,
     pub seed: String,
@@ -91,13 +92,13 @@ impl CheckpointStore {
             );",
         )
         .context("initialising checkpoint schema")?;
-        Ok(Self { conn })
+        Ok(Self { conn: RefCell::new(conn) })
     }
 
     /// Create a new scan record and return its UUID.
     pub fn new_scan(&self, seed: &str, config_json: &str) -> anyhow::Result<Uuid> {
         let id = Uuid::new_v4();
-        self.conn.execute(
+        self.conn.borrow().execute(
             "INSERT INTO scans (scan_id, seed, config, created_at) VALUES (?1, ?2, ?3, ?4)",
             params![id.to_string(), seed, config_json, Utc::now().to_rfc3339()],
         )?;
@@ -105,6 +106,9 @@ impl CheckpointStore {
     }
 
     /// Persist a completed stage.
+    ///
+    /// Errors if a stage record already exists for this scan so that
+    /// completed checkpoint data is never silently overwritten.
     pub fn save_stage(
         &self,
         scan_id: Uuid,
@@ -114,8 +118,8 @@ impl CheckpointStore {
     ) -> anyhow::Result<()> {
         let targets_json = serde_json::to_string(targets)?;
         let findings_json = serde_json::to_string(findings)?;
-        self.conn.execute(
-            "INSERT OR REPLACE INTO stages
+        let rows = self.conn.borrow().execute(
+            "INSERT OR IGNORE INTO stages
              (scan_id, stage, targets_json, findings_json, completed_at)
              VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
@@ -126,14 +130,20 @@ impl CheckpointStore {
                 Utc::now().to_rfc3339()
             ],
         )?;
+        if rows == 0 {
+            anyhow::bail!(
+                "checkpoint stage {stage} already exists for scan {scan_id}; \
+                 refusing to overwrite"
+            );
+        }
         tracing::debug!(scan_id = %scan_id, stage, "checkpoint saved");
         Ok(())
     }
 
     /// Load all stage records for a given scan UUID.
     pub fn load(&self, scan_id: Uuid) -> anyhow::Result<ScanRecord> {
-        let seed: String = self
-            .conn
+        let conn = self.conn.borrow();
+        let seed: String = conn
             .query_row(
                 "SELECT seed FROM scans WHERE scan_id = ?1",
                 params![scan_id.to_string()],
@@ -141,7 +151,8 @@ impl CheckpointStore {
             )
             .context("scan not found")?;
 
-        let mut stmt = self.conn.prepare(
+        let conn = self.conn.borrow();
+        let mut stmt = conn.prepare(
             "SELECT stage, targets_json, findings_json, completed_at
              FROM stages WHERE scan_id = ?1 ORDER BY id",
         )?;
@@ -181,21 +192,24 @@ impl CheckpointStore {
 
     /// Delete a scan and all its stage records.
     pub fn delete_scan(&self, scan_id: Uuid) -> anyhow::Result<()> {
-        self.conn.execute(
+        let mut conn = self.conn.borrow_mut();
+        let tx = conn.transaction()?;
+        tx.execute(
             "DELETE FROM stages WHERE scan_id = ?1",
             params![scan_id.to_string()],
         )?;
-        self.conn.execute(
+        tx.execute(
             "DELETE FROM scans  WHERE scan_id = ?1",
             params![scan_id.to_string()],
         )?;
+        tx.commit()?;
         Ok(())
     }
 
     /// List all saved scan IDs and seeds (for `gossan list-scans`).
     pub fn list_scans(&self) -> anyhow::Result<Vec<(Uuid, String, String)>> {
-        let mut stmt = self
-            .conn
+        let conn = self.conn.borrow();
+        let mut stmt = conn
             .prepare("SELECT scan_id, seed, created_at FROM scans ORDER BY created_at DESC")?;
         let rows = stmt
             .query_map([], |row| {
@@ -205,9 +219,13 @@ impl CheckpointStore {
                     row.get::<_, String>(2)?,
                 ))
             })?
-            .filter_map(|r| r.ok())
-            .filter_map(|(id, seed, ts)| Uuid::parse_str(&id).ok().map(|u| (u, seed, ts)))
-            .collect();
+            .map(|r| {
+                let (id, seed, ts) = r?;
+                let u = Uuid::parse_str(&id)
+                    .map_err(|e| anyhow::anyhow!("invalid scan_id UUID in database: {e}"))?;
+                Ok((u, seed, ts))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
         Ok(rows)
     }
 }
@@ -347,7 +365,7 @@ pub struct ScanDelta {
 pub fn diff_findings(baseline: &[Finding], current: &[Finding]) -> ScanDelta {
     use std::collections::HashSet;
 
-    // Key: (scanner, target, title) — uniquely identifies a finding class
+    // Key: (scanner, target, title), uniquely identifies a finding class
     let baseline_keys: HashSet<(String, String, String)> = baseline
         .iter()
         .map(|f| {

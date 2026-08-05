@@ -12,11 +12,17 @@
 //! **MX enumeration**: Discovers mail topology for intelligence gathering.
 
 use gossan_core::Target;
-use hickory_resolver::{proto::rr::RecordType, TokioAsyncResolver};
+use hickory_resolver::{proto::rr::RecordType, TokioResolver};
 use secfinding::{Evidence, Finding, FindingKind, Severity};
 
+/// Length of a SOA serial in YYYYMMDDNN format (10 digits: 4 year + 2 month + 2 day + 2 counter).
+const SOA_SERIAL_YYYYMMDDNN_LEN: usize = 10;
+
+/// SOA expire threshold below which a Low finding is raised (7 days in seconds).
+const SOA_MIN_EXPIRE_SECS: i32 = 604_800;
+
 /// Run all posture checks.
-pub async fn check(resolver: &TokioAsyncResolver, domain: &str, target: &Target) -> Vec<Finding> {
+pub async fn check(resolver: &TokioResolver, domain: &str, target: &Target) -> Vec<Finding> {
     let mut findings = Vec::new();
     findings.extend(check_caa(resolver, domain, target).await);
     findings.extend(check_mx_info(resolver, domain, target).await);
@@ -28,7 +34,7 @@ pub async fn check(resolver: &TokioAsyncResolver, domain: &str, target: &Target)
 // ── SOA ─────────────────────────────────────────────────────────────────────
 
 /// Start of Authority (SOA) record audit.
-async fn check_soa(resolver: &TokioAsyncResolver, domain: &str, target: &Target) -> Vec<Finding> {
+async fn check_soa(resolver: &TokioResolver, domain: &str, target: &Target) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     let soa_records = match resolver.lookup(domain, RecordType::SOA).await {
@@ -44,17 +50,17 @@ async fn check_soa(resolver: &TokioAsyncResolver, domain: &str, target: &Target)
 
         // Check if serial follows YYYYMMDDNN format
         let serial_str = serial.to_string();
-        if serial_str.len() == 10 {
+        if serial_str.len() == SOA_SERIAL_YYYYMMDDNN_LEN {
             let year: i32 = serial_str[0..4].parse().unwrap_or(0);
             if !(1990..=2100).contains(&year) {
                 // Not YYYYMMDDNN
             }
         } else {
-            // Not standard format — often just an incrementing counter, which is fine
+            // Not standard format, often just an incrementing counter, which is fine
             // but YYYYMMDDNN is preferred for human auditing.
         }
 
-        if expire < 604800 {
+        if expire < SOA_MIN_EXPIRE_SECS {
             // Less than 7 days
             gossan_core::try_push_finding(
                 Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Low)
@@ -86,7 +92,7 @@ async fn check_soa(resolver: &TokioAsyncResolver, domain: &str, target: &Target)
 /// - IP distribution (colocation risk)
 /// - Provider identification (tech intel)
 async fn check_ns_resilience(
-    resolver: &TokioAsyncResolver,
+    resolver: &TokioResolver,
     domain: &str,
     target: &Target,
 ) -> Vec<Finding> {
@@ -130,7 +136,7 @@ async fn check_ns_resilience(
     gossan_core::try_push_finding(
         Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Info)
             .title(format!(
-                "Nameserver infrastructure: {} — {}",
+                "Nameserver infrastructure: {}: {}",
                 provider.unwrap_or("custom/managed"),
                 nameservers.len()
             ))
@@ -186,7 +192,7 @@ async fn check_ns_resilience(
 }
 
 /// Detect common DNS providers from nameserver hostnames.
-fn detect_ns_provider(nameservers: &[String]) -> Option<&'static str> {
+pub fn detect_ns_provider(nameservers: &[String]) -> Option<&'static str> {
     for ns in nameservers {
         let lower = ns.to_lowercase();
         if lower.contains("awsdns") {
@@ -285,7 +291,7 @@ pub struct CaaRrset {
 
 impl CaaRrset {
     /// Build from an iterator of CAA record strings. Unparseable rows are
-    /// dropped silently.
+    /// logged and skipped (never treated as "no CAA").
     pub fn from_records<I, S>(records: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -294,6 +300,10 @@ impl CaaRrset {
         let mut out = Self::default();
         for r in records {
             let Some(e) = parse_caa(r.as_ref()) else {
+                tracing::warn!(
+                    record = %r.as_ref(),
+                    "dns posture: unparseable CAA record skipped"
+                );
                 continue;
             };
             match e.tag.as_str() {
@@ -330,7 +340,7 @@ impl CaaRrset {
 /// - Presence of CAA records (missing = any CA can issue)
 /// - `issuewild` restrictions (missing = wildcard certs uncontrolled)
 /// - `iodef` reporting URI (best practice for incident notification)
-async fn check_caa(resolver: &TokioAsyncResolver, domain: &str, target: &Target) -> Vec<Finding> {
+async fn check_caa(resolver: &TokioResolver, domain: &str, target: &Target) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     let caa_records = match resolver.lookup(domain, RecordType::CAA).await {
@@ -338,7 +348,7 @@ async fn check_caa(resolver: &TokioAsyncResolver, domain: &str, target: &Target)
         Err(_) => {
             gossan_core::try_push_finding(
                 Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Low)
-                    .title("No CAA records — any CA may issue certificates")
+                    .title("No CAA records, any CA may issue certificates")
                     .detail(format!(
                         "{domain} has no CAA DNS records. Any Certificate Authority \
                          can issue TLS certificates for this domain. CAA records \
@@ -430,7 +440,7 @@ async fn check_caa(resolver: &TokioAsyncResolver, domain: &str, target: &Target)
 
 /// Enumerate mail servers and report topology for intelligence gathering.
 async fn check_mx_info(
-    resolver: &TokioAsyncResolver,
+    resolver: &TokioResolver,
     domain: &str,
     target: &Target,
 ) -> Vec<Finding> {
@@ -466,7 +476,7 @@ async fn check_mx_info(
     gossan_core::try_push_finding(
         Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Info)
             .title(format!(
-                "Mail topology: {} MX record(s) — {}",
+                "Mail topology: {} MX record(s): {}",
                 exchanges.len(),
                 provider.unwrap_or("custom infrastructure")
             ))
@@ -489,7 +499,7 @@ async fn check_mx_info(
 }
 
 /// Detect common email provider from MX records.
-fn detect_mail_provider(exchanges: &[(u16, String)]) -> Option<&'static str> {
+pub fn detect_mail_provider(exchanges: &[(u16, String)]) -> Option<&'static str> {
     for (_, mx) in exchanges {
         let lower = mx.to_lowercase();
         if lower.contains("google") || lower.contains("aspmx") || lower.contains("googlemail") {

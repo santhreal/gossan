@@ -22,7 +22,7 @@
     clippy::missing_errors_doc
 )]
 
-//! Horizontal discovery — ASN/BGP prefix mapping and sibling domain correlation.
+//! Horizontal discovery: ASN/BGP prefix mapping and sibling domain correlation.
 //!
 //! Expands the attack surface beyond a single domain by mapping the
 //! organization's network footprint via public BGP and WHOIS data.
@@ -35,9 +35,19 @@ use gossan_core::{
 use secfinding::{Finding, Severity};
 use std::sync::Arc;
 
+/// Maximum bytes for ASN and reverse-IP lookup text responses.
+/// These endpoints return compact text; 1 MiB is very generous while
+/// preventing unbounded reads from adversarial or malfunctioning APIs.
+pub(crate) const MAX_HORIZONTAL_TEXT_BYTES: usize = 1 * 1024 * 1024;
+
 pub mod asn;
 pub mod conservative;
 pub mod ownership;
+pub mod permutation;
+pub mod private_ip;
+pub mod tld;
+pub mod passive_dns;
+
 /// ASN/BGP prefix mapper and sibling domain correlator for attack surface expansion.
 pub struct HorizontalScanner;
 
@@ -59,22 +69,22 @@ impl Scanner for HorizontalScanner {
     async fn run(&self, input: ScanInput, config: &Config) -> anyhow::Result<()> {
         let client = gossan_core::ScanClient::from_config(config, Arc::clone(&input.resolver))?;
 
-        // Drain the inbound stream up-front. The original code held a
-        // `targets: Vec<Target>` field on ScanInput; the streaming
-        // refactor replaced it with `target_rx: Mutex<UnboundedReceiver>`
-        // and horizontal was missed in that pass. The horizontal stage
-        // does ASN/PTR/ownership pivots that need to see the full input
-        // batch (it can't act incrementally on each new target the way
-        // a portscan can), so collecting here matches the stage's
-        // semantics — not a performance regression.
+        // Collect the inbound target stream. The horizontal stage does
+        // ASN/PTR/ownership pivots that need to see the full input batch
+        // (it can't act incrementally on each new target the way a portscan
+        // can), so collecting until the channel closes is the intended batch
+        // semantics. Using `recv().await` waits for the sender to close
+        // rather than exiting early on an empty buffer like `try_recv`.
         let inbound: Vec<Target> = {
             let mut rx = input.target_rx.lock().await;
             let mut buf = Vec::new();
-            while let Ok(t) = rx.try_recv() {
+            while let Some(t) = rx.recv().await {
                 buf.push(t);
             }
             buf
         };
+
+        let mut seed_domains: Vec<String> = Vec::new();
 
         for target in &inbound {
             // 1. IP → ASN → BGP Prefixes
@@ -93,12 +103,12 @@ impl Scanner for HorizontalScanner {
                         // double-emit; `target_tx` is no longer
                         // optional, so `emit_target` alone is correct
                         // and emits exactly once.)
-                        input.emit_target(network);
+                        input.emit_target(network).await;
                     }
                 }
             }
 
-            // 2. Network → PTR Sweep (Legendary Internal Discovery)
+            // 2. Network → PTR Sweep (Oneshot Internal Discovery)
             if let Target::Network(net) = target {
                 if let Ok(prefix) = net.cidr.parse::<ipnet::IpNet>() {
                     // Sample the first 16 IPs in the block for PTR records
@@ -107,11 +117,24 @@ impl Scanner for HorizontalScanner {
                         .map(|ip| {
                             let resolver = Arc::clone(&input.resolver);
                             async move {
-                                resolver.reverse_lookup(ip).await.ok().and_then(|r| {
-                                    r.iter().next().map(|name| {
+                                match resolver.reverse_lookup(ip).await {
+                                    Ok(r) => r.iter().next().map(|name| {
                                         name.to_string().trim_end_matches('.').to_string()
-                                    })
-                                })
+                                    }),
+                                    Err(e)
+                                        if e.is_nx_domain() || e.is_no_records_found() =>
+                                    {
+                                        None
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            %ip,
+                                            error = %e,
+                                            "PTR reverse lookup failed; skipping host"
+                                        );
+                                        None
+                                    }
+                                }
                             }
                         })
                         .buffer_unordered(config.concurrency)
@@ -123,34 +146,107 @@ impl Scanner for HorizontalScanner {
                             domain: name.clone(),
                             source: DiscoverySource::Crawl, // Discovered via PTR sweep
                         });
-                        input.emit_target(new_domain);
+                        input.emit_target(new_domain).await;
                     }
                 }
             }
 
-            // 3. Domain → Organization → Root Domains
+            // 3. Domain → permutations + passive DNS
             if let Target::Domain(d) = target {
-                if let Ok(sibling_domains) =
-                    ownership::get_sibling_domains(&client, &d.domain).await
+                seed_domains.push(d.domain.clone());
+
+                const PREFIXES: &[&str] =
+                    &["dev", "staging", "api", "admin", "test", "mail", "vpn"];
+                const SUFFIXES: &[&str] = &["-dev", "-staging", "-backup", "-old"];
+                for perm in permutation::deduplicate_permutations(
+                    &permutation::generate_all_permutations(&d.domain, PREFIXES, SUFFIXES),
+                ) {
+                    if perm == d.domain {
+                        continue;
+                    }
+                    input.emit_target(Target::Domain(DomainTarget {
+                        domain: perm,
+                        source: DiscoverySource::DnsBruteforce,
+                    })).await;
+                }
+
+                if let Ok(records) =
+                    passive_dns::query_hostsearch(&client, &d.domain, "https://api.hackertarget.com")
+                        .await
                 {
-                    for domain in sibling_domains {
-                        let new_domain = Target::Domain(DomainTarget {
-                            domain: domain.clone(),
-                            source: DiscoverySource::Crawl, // Pivoted from ownership
-                        });
+                    for domain in passive_dns::extract_unique_domains(&records) {
+                        input.emit_target(Target::Domain(DomainTarget {
+                            domain,
+                            source: DiscoverySource::PassiveDns,
+                        })).await;
+                    }
+                    for ip in private_ip::filter_private_ips(
+                        &passive_dns::extract_unique_ips(&records)
+                            .into_iter()
+                            .collect::<Vec<_>>(),
+                    ) {
+                        if let Ok(addr) = ip.parse() {
+                            input.emit_target(Target::Host(gossan_core::HostTarget {
+                                ip: addr,
+                                domain: Some(d.domain.clone()),
+                            })).await;
+                        }
+                    }
+                }
 
-                        input.emit_target(new_domain);
+                // 3c. TLD variations for the same registrable domain.
+                const TLDS: &[&str] = &[
+                    "com", "net", "org", "io", "co", "info", "biz", "us",
+                ];
+                for variant in tld::generate_tld_variations(&d.domain, TLDS) {
+                    if variant == d.domain {
+                        continue;
+                    }
+                    input.emit_target(Target::Domain(DomainTarget {
+                        domain: variant,
+                        source: DiscoverySource::DnsBruteforce,
+                    })).await;
+                }
+            }
+        }
 
-                        // Create a finding for the discovery
-                        if let Some(finding) = Finding::builder("horizontal", &d.domain, Severity::Info)
-                            .title("Horizontal discovery: sibling domain found via ownership correlation".to_string())
-                            .detail(format!("Domain {} shares ownership attributes with {}. This reveals a wider attack surface.", domain, d.domain))
+        // 4. Ownership correlation via WHOIS/RDAP across the inbound domain set.
+        // Reverse-IP hosting is intentionally not used (shared-hosting FPs).
+        if seed_domains.len() > 1 {
+            if let Ok(groups) = ownership::group_siblings_by_ownership(
+                &client,
+                &seed_domains,
+                "https://api.hackertarget.com",
+            )
+            .await
+            {
+                for (_key, domains) in groups {
+                    for domain in &domains {
+                        for sibling in domains.iter().filter(|s| *s != domain) {
+                            input.emit_target(Target::Domain(DomainTarget {
+                                domain: sibling.clone(),
+                                source: DiscoverySource::Crawl,
+                            })).await;
+                            if let Some(finding) = Finding::builder(
+                                "horizontal",
+                                domain,
+                                Severity::Info,
+                            )
+                            .title(
+                                "Horizontal discovery: sibling domain found via ownership correlation"
+                                    .to_string(),
+                            )
+                            .detail(format!(
+                                "Domain {} shares WHOIS/RDAP ownership attributes with {}.",
+                                sibling, domain
+                            ))
                             .tag("horizontal")
                             .tag("ownership-pivot")
                             .kind(secfinding::FindingKind::InfoDisclosure)
                             .build_or_log()
-                        {
-                            input.emit(finding);
+                            {
+                                input.emit(finding).await;
+                            }
                         }
                     }
                 }

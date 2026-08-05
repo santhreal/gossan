@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use url::Url;
 
-/// How a target was discovered — preserved for auditing and deduplication.
+/// How a target was discovered (preserved for auditing and deduplication).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -175,7 +175,7 @@ pub enum DiscoverySource {
     ZoneWalk,
 }
 
-/// A discovered domain — the entry point for most scans.
+/// A discovered domain (the entry point for most scans).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DomainTarget {
     /// Fully qualified domain name (e.g. `api.example.com`).
@@ -208,7 +208,7 @@ pub enum ScmService {
     GitLab,
 }
 
-/// A resolved host — an IP address with an optional reverse-DNS domain.
+/// A resolved host (an IP address with an optional reverse-DNS domain).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HostTarget {
     /// Resolved IP address (v4 or v6).
@@ -228,7 +228,7 @@ pub enum Protocol {
     Udp,
 }
 
-/// A network service discovered on a host — port, protocol, optional banner.
+/// A network service discovered on a host (port, protocol, optional banner).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceTarget {
     /// The host this service runs on.
@@ -249,7 +249,7 @@ impl ServiceTarget {
     /// Banner detection is prioritized over port matching since it's more reliable.
     #[must_use]
     pub fn is_web(&self) -> bool {
-        // Banner check first — most reliable signal
+        // Banner check first, most reliable signal
         self.banner
             .as_deref()
             .is_some_and(|b| b.starts_with("HTTP"))
@@ -286,7 +286,10 @@ impl ServiceTarget {
         };
         let host = match &self.host.domain {
             Some(d) => d.clone(),
-            None => self.host.ip.to_string(),
+            None => match self.host.ip {
+                IpAddr::V6(v6) => format!("[{v6}]"),
+                IpAddr::V4(v4) => v4.to_string(),
+            },
         };
         let port_str = match (scheme, self.port) {
             ("https", 443) | ("http", 80) => String::new(),
@@ -475,7 +478,7 @@ impl Target {
             Target::Domain(d) => Some(&d.domain),
             Target::Host(h) => h.domain.as_deref(),
             Target::Service(s) => s.host.domain.as_deref(),
-            // Prefer the service's recorded domain when present —
+            // Prefer the service's recorded domain when present 
             // probes that derive bait origins (CORS, host-header, etc.)
             // need the real DNS name, not whatever happens to be in the
             // URL (which may be an IP or an internal name). Fall back
@@ -507,7 +510,10 @@ impl Target {
     pub fn base_url(&self) -> Option<String> {
         match self {
             Target::Domain(d) => Some(format!("https://{}/", d.domain)),
-            Target::Host(h) => Some(format!("http://{}/", h.ip)),
+            Target::Host(h) => Some(match h.ip {
+                IpAddr::V6(v6) => format!("http://[{v6}]/"),
+                IpAddr::V4(v4) => format!("http://{v4}/"),
+            }),
             Target::Service(s) => s.base_url().map(|u| u.to_string()),
             Target::Web(w) => {
                 let mut u = w.url.clone();
@@ -602,6 +608,23 @@ mod tests {
     fn base_url_falls_back_to_ip_when_domain_missing() {
         let url = service(8080, false, None, None).base_url().unwrap();
         assert_eq!(url.as_str(), "http://203.0.113.10:8080/");
+    }
+
+    #[test]
+    fn base_url_brackets_ipv6_service_host() {
+        let mut svc = service(8080, false, None, None);
+        svc.host.ip = "2001:db8::1".parse().unwrap();
+        let url = svc.base_url().unwrap();
+        assert_eq!(url.as_str(), "http://[2001:db8::1]:8080/");
+    }
+
+    #[test]
+    fn target_host_base_url_brackets_ipv6() {
+        let t = Target::Host(HostTarget {
+            ip: "2001:db8::1".parse().unwrap(),
+            domain: None,
+        });
+        assert_eq!(t.base_url().as_deref(), Some("http://[2001:db8::1]/"));
     }
 
     #[test]

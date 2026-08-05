@@ -1,10 +1,10 @@
 //! Perf gate for the classify hot path.
 //!
-//! Per GOSSAN_LEGENDARY Section F: classify must sustain ≥100k
-//! banners/sec on a single thread. This is the wall-clock check —
+//! Per GOSSAN_DEPTH_CONTRACT Section F: classify must sustain ≥100k
+//! banners/sec on a single thread. This is the wall-clock check
 //! criterion microbench in a separate file gives detailed median/IQR.
 //!
-//! The test runs in `--release` mode only — debug-build numbers are
+//! The test runs in `--release` mode only, debug-build numbers are
 //! 10–30× slower and would fail this gate for no good reason. CI
 //! invokes this via `cargo test --release -p gossan-classify`.
 
@@ -63,7 +63,7 @@ fn classify_sustains_100k_banners_per_sec_single_thread() {
 
 #[test]
 fn classify_perf_gate_is_release_only() {
-    // Stub test so debug builds report something — the real gate runs
+    // Stub test so debug builds report something, the real gate runs
     // only when debug_assertions is off (release / opt-level≥1).
     let c = BannerClassifier::new();
     let _ = c.classify("Server: nginx");

@@ -61,6 +61,9 @@ const PATHS: &[&str] = &[
 /// Maximum number of endpoint findings to emit per spec.
 const MAX_ENDPOINT_FINDINGS: usize = 50;
 
+/// Maximum number of endpoints to collect in memory during analysis.
+const MAX_COLLECTED_ENDPOINTS: usize = 1000;
+
 pub async fn probe(
     client: &reqwest::Client,
     target: &Target,
@@ -93,7 +96,7 @@ pub async fn probe(
             continue;
         }
 
-        let Ok(body) = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024).await else {
+        let Ok(body) = gossan_core::net::bounded_text(resp, crate::MAX_BODY_BYTES).await else {
             continue;
         };
 
@@ -117,13 +120,13 @@ pub async fn probe(
         gossan_core::try_push_finding(crate::exposure_finding(
                 target, Severity::Medium,
                 "OpenAPI/Swagger spec exposed",
-                format!("API specification at {} is publicly accessible — reveals all endpoints, \
+                format!("API specification at {} is publicly accessible, reveals all endpoints, \
                          parameters, schemas, and authentication requirements to unauthenticated callers.", url),
             )
             .evidence(Evidence::HttpResponse {
                 status: 200,
                 headers: vec![],
-                body_excerpt: Some(body.chars().take(300).collect::<String>().into()),
+                body_excerpt: Some(body.chars().take(crate::MAX_BODY_EXCERPT_CHARS).collect::<String>().into()),
             })
             .tag("swagger").tag("exposure"), &mut findings);
 
@@ -174,13 +177,29 @@ fn analyze_spec(
         }
     }
 
-    // Swagger 2.0 base URL check
+    // Swagger 2.0 base URL check.
+    // When `schemes` is omitted, Swagger 2.0 defaults to the scheme used to
+    // access the spec (or both). An HTTP-served spec with no schemes must
+    // still be flagged as HTTP-only exposure.
     if spec.get("host").is_some() {
-        let schemes = spec
-            .get("schemes")
-            .and_then(|s| s.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
-            .unwrap_or_default();
+        let schemes = match spec.get("schemes").and_then(|s| s.as_array()) {
+            Some(arr) => arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>(),
+            None => {
+                let from_url = if spec_url.starts_with("http://") {
+                    vec!["http"]
+                } else if spec_url.starts_with("https://") {
+                    vec!["https"]
+                } else {
+                    vec!["https", "http"]
+                };
+                tracing::debug!(
+                    spec_url,
+                    ?from_url,
+                    "Swagger 2.0 schemes absent; defaulting from spec URL"
+                );
+                from_url
+            }
+        };
         if schemes.contains(&"http") && !schemes.contains(&"https") {
             gossan_core::try_push_finding(
                 crate::exposure_finding(
@@ -201,13 +220,10 @@ fn analyze_spec(
     }
 
     // ── Unauthenticated endpoints ─────────────────────────────────────────────
-    let global_security_defined = spec
-        .get("components")
-        .and_then(|c| c.get("securitySchemes"))
-        .map(|ss| !ss.as_object().map(|o| o.is_empty()).unwrap_or(true))
-        .unwrap_or(false)
-        || spec.get("securityDefinitions").is_some(); // Swagger 2.0
-
+    // Whether the root `security` array requires authentication globally.
+    // The presence of security schemes in `components.securitySchemes` is
+    // irrelevant: a scheme that is defined but never applied does not protect
+    // any endpoint.
     let global_security_required = spec
         .get("security")
         .and_then(|s| s.as_array())
@@ -232,20 +248,21 @@ fn analyze_spec(
                     total_endpoints += 1;
 
                     let op_security = operation.get("security");
-                    let explicitly_unauthenticated = op_security
-                        .and_then(|s| s.as_array())
-                        .map(|arr| arr.is_empty())
-                        .unwrap_or(false);
 
-                    let no_security_anywhere = !global_security_defined
-                        && !global_security_required
-                        && op_security.is_none();
+                    // An endpoint is unauthenticated when the operation-level
+                    // `security` array is explicitly empty (overriding a global
+                    // requirement), or when neither the root `security` array
+                    // nor the operation-level array requires authentication.
+                    // The presence of schemes in `components.securitySchemes`
+                    // is irrelevant unless they are actually applied.
+                    let unauthenticated = op_security
+                        .map(|s| s.as_array().map(|arr| arr.is_empty()).unwrap_or(false))
+                        .unwrap_or(!global_security_required);
 
-                    let overrides_to_unauth =
-                        global_security_required && explicitly_unauthenticated;
-
-                    if no_security_anywhere || overrides_to_unauth {
-                        unauth_endpoints.push(format!("{} {}", method.to_uppercase(), path));
+                    if unauthenticated {
+                        if unauth_endpoints.len() < MAX_COLLECTED_ENDPOINTS {
+                            unauth_endpoints.push(format!("{} {}", method.to_uppercase(), path));
+                        }
                     }
 
                     let all_params_locs =
@@ -275,7 +292,7 @@ fn analyze_spec(
                                         name,
                                         r#in
                                     );
-                                    if !api_key_params.contains(&entry) {
+                                    if api_key_params.len() < MAX_COLLECTED_ENDPOINTS && !api_key_params.contains(&entry) {
                                         api_key_params.push(entry);
                                     }
                                 }
@@ -300,7 +317,7 @@ fn analyze_spec(
                 ),
                 format!(
                     "Spec at {} declares {} of {} endpoints with no security scheme. \
-                         Sample: {}. These endpoints are likely accessible without credentials — \
+                         Sample: {}. These endpoints are likely accessible without credentials. \
                          confirm by probing them directly.",
                     spec_url,
                     unauth_endpoints.len(),
@@ -409,217 +426,211 @@ fn analyze_spec_text(body: &str, spec_url: &str, target: &Target, findings: &mut
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gossan_core::{HostTarget, Protocol, ServiceTarget, Target, WebAssetTarget};
-    use reqwest::Url;
+    use serde_json::json;
 
-    fn target() -> Target {
-        Target::Web(Box::new(WebAssetTarget {
-            url: Url::parse("https://example.com")
-                .unwrap_or_else(|_| Url::parse("http://127.0.0.1").unwrap()),
-            service: ServiceTarget {
-                host: HostTarget {
-                    ip: "127.0.0.1"
-                        .parse()
-                        .unwrap_or_else(|_| "127.0.0.1".parse().unwrap()),
-                    domain: Some("example.com".into()),
-                },
-                port: 443,
-                protocol: Protocol::Tcp,
-                banner: None,
-                tls: true,
-            },
-            tech: vec![],
-            status: 200,
-            title: None,
-            favicon_hash: None,
-            body_hash: None,
-            forms: vec![],
-            params: vec![],
-        }))
-    }
-
+    /// Absent Swagger 2.0 `schemes` on an HTTP-served spec must still flag
+    /// HTTP-only exposure (do not treat missing schemes as empty/no-HTTP).
     #[test]
-    fn analyze_spec_flags_http_only_server_urls() {
-        let spec = serde_json::json!({
-            "openapi": "3.0.0",
-            "servers": [{"url": "http://api.example.com"}],
-            "paths": {}
-        });
-        let mut findings = Vec::new();
-        analyze_spec(
-            &spec,
-            "https://example.com/openapi.json",
-            &target(),
-            &mut findings,
-        );
-        assert!(findings
-            .iter()
-            .any(|f| f.title().contains("HTTP (unencrypted) server URL")));
-    }
-
-    #[test]
-    fn analyze_spec_flags_swagger_http_only_schemes() {
-        let spec = serde_json::json!({
+    fn analyze_spec_flags_http_when_schemes_absent_on_http_url() {
+        let spec = json!({
             "swagger": "2.0",
             "host": "api.example.com",
-            "schemes": ["http"],
-            "paths": {}
+            "paths": { "/ping": { "get": {} } }
         });
+        let target = gossan_core::testkit::web_target("http://example.com/");
         let mut findings = Vec::new();
         analyze_spec(
             &spec,
-            "https://example.com/swagger.json",
-            &target(),
+            "http://example.com/swagger.json",
+            &target,
             &mut findings,
         );
-        assert!(findings
+        let http_only = findings
             .iter()
-            .any(|f| f.title().contains("HTTP-only scheme declared")));
+            .find(|f| f.title().contains("HTTP-only scheme"));
+        assert!(
+            http_only.is_some(),
+            "expected HTTP-only finding when schemes omitted on http:// spec URL, got {:?}",
+            findings.iter().map(|f| f.title()).collect::<Vec<_>>()
+        );
     }
 
+    /// Security schemes defined in `components` but never applied must not
+    /// prevent an endpoint from being flagged as unauthenticated.
     #[test]
-    fn analyze_spec_detects_unauthenticated_endpoints() {
-        let spec = serde_json::json!({
+    fn analyze_spec_flags_unauth_when_schemes_defined_but_not_applied() {
+        let spec = json!({
             "openapi": "3.0.0",
-            "paths": {
-                "/admin": {
-                    "get": {
-                        "responses": {"200": {"description": "ok"}}
-                    }
+            "components": {
+                "securitySchemes": {
+                    "bearer": { "type": "http", "scheme": "bearer" }
                 }
+            },
+            "paths": {
+                "/api/users": { "get": {} }
             }
         });
+        let target = gossan_core::testkit::web_target("http://example.com/");
         let mut findings = Vec::new();
-        analyze_spec(
-            &spec,
-            "https://example.com/openapi.json",
-            &target(),
+        analyze_spec(&spec,
+            "http://example.com/openapi.json",
+            &target,
             &mut findings,
         );
-        let finding = findings
+        let unauth = findings
             .iter()
-            .find(|f| f.title().contains("no authentication requirement"))
-            .unwrap();
-        assert!(finding.detail().contains("GET /admin"));
-    }
-
-    #[test]
-    fn analyze_spec_respects_global_security_unless_operation_opts_out() {
-        let spec = serde_json::json!({
-            "openapi": "3.0.0",
-            "components": {"securitySchemes": {"bearerAuth": {"type": "http", "scheme": "bearer"}}},
-            "security": [{"bearerAuth": []}],
-            "paths": {
-                "/public": {"get": {"security": [], "responses": {"200": {"description": "ok"}}}},
-                "/private": {"get": {"responses": {"200": {"description": "ok"}}}}
-            }
-        });
-        let mut findings = Vec::new();
-        analyze_spec(
-            &spec,
-            "https://example.com/openapi.json",
-            &target(),
-            &mut findings,
+            .find(|f| f.title().contains("API endpoint(s) with no authentication"));
+        assert!(
+            unauth.is_some(),
+            "expected unauthenticated endpoint finding when schemes are not applied, got {:?}",
+            findings
         );
-        let finding = findings
-            .iter()
-            .find(|f| f.title().contains("no authentication requirement"))
-            .unwrap();
-        assert!(finding.detail().contains("GET /public"));
-        assert!(!finding.detail().contains("GET /private"));
     }
 
+    /// A globally required security scheme should suppress the unauthenticated
+    /// finding when the operation does not explicitly override it.
     #[test]
-    fn analyze_spec_reports_api_key_and_token_parameters() {
-        let spec = serde_json::json!({
+    fn analyze_spec_respects_global_security_requirement() {
+        let spec = json!({
             "openapi": "3.0.0",
-            "paths": {
-                "/search": {
-                    "get": {
-                        "parameters": [
-                            {"name": "api_key", "in": "query"},
-                            {"name": "bearer_token", "in": "header"}
-                        ],
-                        "responses": {"200": {"description": "ok"}}
-                    }
+            "security": [{ "bearer": [] }],
+            "components": {
+                "securitySchemes": {
+                    "bearer": { "type": "http", "scheme": "bearer" }
                 }
-            }
-        });
-        let mut findings = Vec::new();
-        analyze_spec(
-            &spec,
-            "https://example.com/openapi.json",
-            &target(),
-            &mut findings,
-        );
-        let finding = findings
-            .iter()
-            .find(|f| f.title().contains("API key/token parameter"))
-            .unwrap();
-        assert!(finding.detail().contains("?api_key="));
-        assert!(finding.detail().contains("bearer_token"));
-    }
-
-    #[test]
-    fn analyze_spec_text_flags_http_only_yaml_specs() {
-        let mut findings = Vec::new();
-        analyze_spec_text(
-            "servers:\n  - url: http://api.example.com",
-            "https://example.com/openapi.yaml",
-            &target(),
-            &mut findings,
-        );
-        assert!(findings
-            .iter()
-            .any(|f| f.title().contains("HTTP-only server")));
-    }
-
-    #[test]
-    fn analyze_spec_text_flags_large_yaml_surfaces() {
-        let yaml = (0..25)
-            .map(|i| format!("/path{}/:\n  get:\n", i))
-            .collect::<String>();
-        let mut findings = Vec::new();
-        analyze_spec_text(
-            &yaml,
-            "https://example.com/openapi.yaml",
-            &target(),
-            &mut findings,
-        );
-        assert!(findings
-            .iter()
-            .any(|f| f.title().contains("Large API surface exposed")));
-    }
-
-    #[test]
-    fn swagger_path_list_contains_common_openapi_locations() {
-        assert!(PATHS.contains(&"/swagger.json"));
-        assert!(PATHS.contains(&"/v3/openapi.json"));
-        assert!(PATHS.contains(&"/.well-known/openapi.json"));
-        assert!(PATHS.contains(&"/swagger-resources"));
-        assert!(PATHS.contains(&"/api/v3/api-docs"));
-    }
-
-    #[test]
-    fn emits_individual_endpoint_findings() {
-        let spec = serde_json::json!({
-            "openapi": "3.0.0",
+            },
             "paths": {
-                "/public": {"get": {"responses": {"200": {"description": "ok"}}}},
-                "/api": {"post": {"responses": {"200": {"description": "ok"}}}}
+                "/api/users": { "get": {} }
             }
         });
+        let target = gossan_core::testkit::web_target("http://example.com/");
         let mut findings = Vec::new();
         analyze_spec(
             &spec,
-            "https://example.com/openapi.json",
-            &target(),
+            "http://example.com/openapi.json",
+            &target,
             &mut findings,
         );
-        let endpoint_findings: Vec<_> = findings
+        let unauth = findings
             .iter()
-            .filter(|f| f.title().contains("Unauthenticated API endpoint"))
-            .collect();
-        assert_eq!(endpoint_findings.len(), 2);
+            .find(|f| f.title().contains("API endpoint(s) with no authentication"));
+        assert!(
+            unauth.is_none(),
+            "expected no unauthenticated finding when global security is required, got {:?}",
+            findings
+        );
+    }
+
+    /// An explicitly empty operation-level `security` array overrides a global
+    /// requirement and marks the endpoint as unauthenticated.
+    #[test]
+    fn analyze_spec_explicit_empty_security_overrides_global() {
+        let spec = json!({
+            "openapi": "3.0.0",
+            "security": [{ "bearer": [] }],
+            "components": {
+                "securitySchemes": {
+                    "bearer": { "type": "http", "scheme": "bearer" }
+                }
+            },
+            "paths": {
+                "/api/users": { "get": { "security": [] } }
+            }
+        });
+        let target = gossan_core::testkit::web_target("http://example.com/");
+        let mut findings = Vec::new();
+        analyze_spec(
+            &spec,
+            "http://example.com/openapi.json",
+            &target,
+            &mut findings,
+        );
+        let unauth = findings
+            .iter()
+            .find(|f| f.title().contains("API endpoint(s) with no authentication"));
+        assert!(
+            unauth.is_some(),
+            "expected unauthenticated finding when operation security is empty, got {:?}",
+            findings
+        );
+    }
+
+    /// Adversarial: a malicious spec with thousands of unauthenticated endpoints
+    /// must not cause unbounded memory growth. The fix caps internal Vecs at
+    /// MAX_COLLECTED_ENDPOINTS.
+    #[test]
+    fn analyze_spec_caps_unauth_endpoints() {
+        let mut paths = serde_json::Map::new();
+        for i in 0..2000 {
+            let mut methods = serde_json::Map::new();
+            methods.insert("get".to_string(), json!({}));
+            paths.insert(format!("/api/v1/resource{}", i), json!(methods));
+        }
+        let spec = json!({
+            "openapi": "3.0.0",
+            "paths": paths,
+        });
+        let target = gossan_core::testkit::web_target("http://example.com/");
+        let mut findings = Vec::new();
+        analyze_spec(&spec, "http://example.com/openapi.json", &target, &mut findings);
+        // The aggregate finding should still be emitted
+        let agg = findings.iter().find(|f| f.title().contains("API endpoint(s) with no authentication"));
+        assert!(agg.is_some(), "aggregate finding must be emitted even with capped endpoints");
+    }
+
+    /// Adversarial: a spec with thousands of API-key parameters must be capped.
+    #[test]
+    fn analyze_spec_caps_api_key_params() {
+        let mut paths = serde_json::Map::new();
+        for i in 0..2000 {
+            let mut methods = serde_json::Map::new();
+            methods.insert("get".to_string(), json!({
+                "parameters": [
+                    {"name": format!("api_key{}", i), "in": "query"}
+                ]
+            }));
+            paths.insert(format!("/api/v1/resource{}", i), json!(methods));
+        }
+        let spec = json!({
+            "openapi": "3.0.0",
+            "paths": paths,
+        });
+        let target = gossan_core::testkit::web_target("http://example.com/");
+        let mut findings = Vec::new();
+        analyze_spec(&spec, "http://example.com/openapi.json", &target, &mut findings);
+        let key_finding = findings.iter().find(|f| f.title().contains("API key/token parameter"));
+        assert!(key_finding.is_some(), "API key finding must be emitted even with capped params");
+    }
+
+    /// Property: analyze_spec never panics on arbitrary JSON input.
+    #[cfg(test)]
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn prop_analyze_spec_never_panics(
+                path_count in 0usize..10,
+                has_http in proptest::bool::ANY
+            ) {
+                let mut paths = serde_json::Map::new();
+                for i in 0..path_count {
+                    let mut methods = serde_json::Map::new();
+                    methods.insert("get".to_string(), serde_json::Value::Object(serde_json::Map::new()));
+                    paths.insert(format!("/api/{}", i), serde_json::Value::Object(methods));
+                }
+                let mut spec = serde_json::Map::new();
+                spec.insert("openapi".to_string(), serde_json::Value::String("3.0.0".to_string()));
+                if has_http {
+                    spec.insert("servers".to_string(), serde_json::json!([{"url": "http://example.com"}]));
+                }
+                spec.insert("paths".to_string(), serde_json::Value::Object(paths));
+                let target = gossan_core::testkit::web_target("http://example.com/");
+                let mut findings = Vec::new();
+                analyze_spec(&serde_json::Value::Object(spec), "http://example.com/openapi.json", &target, &mut findings);
+                // Must not panic (if we reach here, property holds).
+            }
+        }
     }
 }

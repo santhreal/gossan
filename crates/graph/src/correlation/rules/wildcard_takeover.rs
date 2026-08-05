@@ -79,13 +79,13 @@ impl super::super::CorrelationRule for WildcardTakeoverRule {
                     return false;
                 }
                 let host = normalize_host(f.target());
-                // Same-domain test: takeover host must equal the parent
-                // OR end with `.<parent>` (true subdomain). Apex match
-                // is included because a wildcard at the apex still
-                // shadows a takeover on the apex itself.
+                // True subdomain test: takeover host must end with
+                // `.<parent>`. A wildcard DNS record (*.domain) does not
+                // resolve or shadow the apex domain itself, so apex
+                // equality is intentionally excluded.
                 wildcard_parents
                     .iter()
-                    .any(|p| host == *p || host.ends_with(&format!(".{p}")))
+                    .any(|p| host.ends_with(&format!(".{p}")))
             })
             .collect();
 
@@ -307,7 +307,24 @@ mod tests {
         assert_eq!(chains.len(), 1);
     }
 
-    /// Hierarchical match: wildcard on `*.api.example.com` (target form
+    /// Apex equality must NOT trigger: a wildcard record on
+    /// `*.example.com` does not shadow the apex `example.com` itself.
+    #[test]
+    fn wildcard_takeover_ignores_apex_equality() {
+        let rule = WildcardTakeoverRule;
+        let findings = vec![
+            wildcard_finding("example.com"),
+            finding(
+                "subdomain",
+                "example.com",
+                "Subdomain takeover on dangling CNAME",
+            ),
+        ];
+        assert!(
+            rule.check(&findings, &[]).is_empty(),
+            "apex equality must not trigger wildcard+takeover chain"
+        );
+    }
     /// `api.example.com` post-trim) must chain a takeover on
     /// `dev.api.example.com` but NOT one on `apex.example.com`.
     #[test]

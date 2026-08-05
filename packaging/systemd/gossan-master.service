@@ -1,6 +1,6 @@
 [Unit]
 Description=Gossan Fleet Master (distributed scan coordinator)
-Documentation=https://github.com/santhsecurity/gossan
+Documentation=https://github.com/santhreal/gossan
 After=network-online.target
 Wants=network-online.target
 
@@ -29,7 +29,7 @@ SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources
 
-# Logging — emit structured JSON for journald → loki / cloudwatch.
+# Logging: emit structured JSON for journald → loki / cloudwatch.
 Environment=GOSSAN_LOG_JSON=1
 StandardOutput=journal
 StandardError=journal

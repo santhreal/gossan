@@ -5,7 +5,14 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 use std::time::Duration;
 
-use gossan_core::{net::resolver_port, Target};
+use gossan_core::Target;
+
+fn resolver_port() -> u16 {
+    std::env::var("GOSSAN_RESOLVER_PORT")
+        .expect("GOSSAN_RESOLVER_PORT not set")
+        .parse()
+        .expect("GOSSAN_RESOLVER_PORT must be a u16")
+}
 
 use crate::bruteforce::run_bruteforce_with_words;
 use crate::hermetic_dns::{

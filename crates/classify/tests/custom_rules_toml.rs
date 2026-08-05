@@ -28,7 +28,7 @@ fn loader_parses_two_custom_rules() {
 
 #[test]
 fn builtin_plus_combines_custom_and_builtin() {
-    let combined = builtin_plus(fixture_path());
+    let combined = builtin_plus(fixture_path()).unwrap();
     let baseline = builtin_rules().len();
     assert_eq!(
         combined.len(),
@@ -42,7 +42,7 @@ fn builtin_plus_combines_custom_and_builtin() {
 
 #[test]
 fn custom_rule_actually_matches_a_banner() {
-    let m = CpuMatcher::new(builtin_plus(fixture_path()));
+    let m = CpuMatcher::new(builtin_plus(fixture_path()).unwrap());
     let hits = m.match_banner("HTTP/1.1 200 OK\r\nX-Acme-Version: 3.1.4\r\nServer: AcmeAPI\r\n");
     assert!(
         hits.iter().any(|h| h.service == "AcmeAPI"),

@@ -62,8 +62,17 @@ use tokio::sync::Semaphore;
 /// Maximum concurrent in-flight requests to a single host.
 const PER_HOST_CONCURRENCY: usize = 4;
 
-/// Maximum response body size to read into memory (10 MiB).
-pub const MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
+/// Maximum response body size to read into memory.
+///
+/// Re-exported from `gossan_core::config::DEFAULT_MAX_RESPONSE_SIZE` to keep
+/// a single source of truth, hidden and core both enforce the same 10 MiB cap
+/// so they can never drift (§7 DEDUPLICATION).
+pub const MAX_BODY_BYTES: usize = gossan_core::config::DEFAULT_MAX_RESPONSE_SIZE;
+
+/// Maximum characters included in the `body_excerpt` field of a finding.
+/// Long enough to capture structural response markers (XML error codes,
+/// JSON keys, HTML titles) while keeping finding records compact.
+pub(crate) const MAX_BODY_EXCERPT_CHARS: usize = 300;
 
 struct HostRateLimiterState {
     /// Map of hostname to last request time.
@@ -101,7 +110,7 @@ impl HostRateLimiter {
 
         let now = Instant::now();
         let sleep_duration = {
-            let mut state = self.state.lock().expect("lock poisoned");
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
             let backoff_dur = state.backoff.get(host).copied().unwrap_or_default();
             let effective_delay = self.delay + backoff_dur;
 
@@ -129,7 +138,7 @@ impl HostRateLimiter {
     /// Increase backoff on 429/503 responses.
     pub async fn observe_status(&self, host: &str, status: u16) {
         if status == 429 || status == 503 {
-            let mut state = self.state.lock().expect("lock poisoned");
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
             let current = state.backoff.get(host).copied().unwrap_or_default();
             let next = if current.is_zero() {
                 self.delay
@@ -146,7 +155,7 @@ impl HostRateLimiter {
 
     /// Decay backoff after a successful request.
     pub async fn decay_backoff(&self, host: &str) {
-        let mut state = self.state.lock().expect("lock poisoned");
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(current) = state.backoff.get(host).copied() {
             let next = current / 2;
             if next < self.delay {
@@ -409,7 +418,8 @@ impl Scanner for HiddenScanner {
                                                     "methods" => methods::probe(&client_inner, &target_inner2).await,
                                                     "rate_limit" => rate_limit::probe(&client_inner, &target_inner2).await,
                                                     "security_headers" => security_headers::probe(&client_inner, &target_inner2).await,
-                                                    "debug_endpoints" => debug_endpoints::probe(&client_inner, &target_inner2).await,
+                                                    "debug_endpoints" => debug_endpoints::probe(&client_inner, &target_inner2, baseline_inner.as_ref().as_ref()
+                                                    ).await,
                                                     "error_disclosure" => error_disclosure::probe(&client_inner, &target_inner2).await,
                                                     "robots" => robots::probe(&client_inner, &target_inner2).await,
                                                     "sitemap" => sitemap::probe(&client_inner, &target_inner2).await,
@@ -417,21 +427,33 @@ impl Scanner for HiddenScanner {
                                                     "waf" => waf::probe(&client_inner, &target_inner2).await,
                                                     "tech_probes" => {
                                                         if let Target::Web(asset) = &target_inner2 {
-                                                            Ok(tech_probes::probe(&client_inner, asset, &target_inner2, &rl_inner, &host_inner).await)
+                                                            Ok(tech_probes::probe(
+                                                                &client_inner,
+                                                                asset,
+                                                                &target_inner2,
+                                                                &rl_inner,
+                                                                &host_inner,
+                                                                baseline_inner.as_ref().as_ref(),
+                                                            ).await)
                                                         } else {
                                                             Ok::<Vec<Finding>, anyhow::Error>(Vec::new())
                                                         }
                                                     }
-                                                    "debug_endpoints_follow" => debug_endpoints::probe(&client_inner, &target_inner2).await,
+                                                    "debug_endpoints_follow" => debug_endpoints::probe(&client_inner, &target_inner2, baseline_inner.as_ref().as_ref()
+                                                    ).await,
                                                     "directory_brute" => {
                                                         let words = directory_brute::load_wordlist(None);
                                                         let exts = directory_brute::extensions(&[]);
                                                         let codes = directory_brute::status_codes(&[]);
                                                         Ok(directory_brute::probe(&client_inner, &target_inner2, &words, &exts, &codes, baseline_inner.as_ref().as_ref(), &rl_inner, &host_inner).await)
                                                     }
-                                                    "bypass403" => bypass403::probe(&client_inner, &target_inner2).await,
-                                                    "oauth" => oauth::probe(&client_inner, &target_inner2).await,
-                                                    "dependency_confusion" => dependency_confusion::probe(&client_inner, &target_inner2).await,
+                                                    "bypass403" => bypass403::probe(&client_inner, &target_inner2, baseline_inner.as_ref().as_ref()
+                                                    ).await,
+                                                    "oauth" => oauth::probe(&client_inner, &target_inner2, baseline_inner.as_ref().as_ref()
+                                                    ).await,
+                                                    "dependency_confusion" => dependency_confusion::probe(
+                                                        &client_inner, &target_inner2, baseline_inner.as_ref().as_ref()
+                                                    ).await,
                                                     "backup_files" => backup_files::probe(&client_inner, &target_inner2, &rl_inner, &host_inner).await,
                                                     _ => Ok(Vec::new()),
                                                 };
@@ -486,7 +508,9 @@ impl Scanner for HiddenScanner {
 
                                 // Emit findings for this target directly
                                 for finding in f {
-                                    let _ = live_tx.send(finding);
+                                    if let Err(e) = live_tx.send(finding).await {
+                                        tracing::warn!(err = %e, "failed to emit hidden finding");
+                                    }
                                 }
                             }));
                         }
@@ -564,5 +588,128 @@ mod tests {
         let elapsed = Instant::now().duration_since(start);
         // base 100ms + backoff 100ms = 200ms effective, so two requests should be >= 200ms apart
         assert!(elapsed >= Duration::from_millis(200), "Backoff not applied");
+    }
+
+    #[test]
+    fn host_rate_limiter_new_sets_delay() {
+        let limiter = HostRateLimiter::new(250);
+        assert_eq!(limiter.delay(), Duration::from_millis(250));
+    }
+
+    #[tokio::test]
+    async fn host_rate_limiter_observe_status_429_doubles_backoff() {
+        let limiter = HostRateLimiter::new(100);
+        limiter.observe_status("example.com", 429).await;
+        let state = limiter.state.lock().unwrap();
+        assert_eq!(state.backoff.get("example.com"), Some(&Duration::from_millis(100)));
+    }
+
+    #[tokio::test]
+    async fn host_rate_limiter_observe_status_503_doubles_backoff() {
+        let limiter = HostRateLimiter::new(50);
+        limiter.observe_status("host503", 503).await;
+        let state = limiter.state.lock().unwrap();
+        assert_eq!(state.backoff.get("host503"), Some(&Duration::from_millis(50)));
+    }
+
+    #[tokio::test]
+    async fn host_rate_limiter_decay_backoff_halves_delay() {
+        let limiter = HostRateLimiter::new(10);
+        limiter.observe_status("decay.com", 429).await;
+        limiter.observe_status("decay.com", 429).await;
+        limiter.decay_backoff("decay.com").await;
+        let state = limiter.state.lock().unwrap();
+        assert_eq!(state.backoff.get("decay.com"), Some(&Duration::from_millis(10)));
+    }
+
+    #[tokio::test]
+    async fn host_rate_limiter_decay_backoff_removes_when_below_base() {
+        let limiter = HostRateLimiter::new(100);
+        limiter.observe_status("remove.com", 429).await;
+        limiter.decay_backoff("remove.com").await;
+        limiter.decay_backoff("remove.com").await;
+        let state = limiter.state.lock().unwrap();
+        assert!(!state.backoff.contains_key("remove.com"));
+    }
+
+    #[tokio::test]
+    async fn host_rate_limiter_backoff_caps_at_60_seconds() {
+        let limiter = HostRateLimiter::new(1000);
+        for _ in 0..10 {
+            limiter.observe_status("cap.com", 429).await;
+        }
+        let state = limiter.state.lock().unwrap();
+        assert_eq!(state.backoff.get("cap.com"), Some(&Duration::from_secs(60)));
+    }
+
+    #[tokio::test]
+    async fn host_rate_limiter_success_status_decays_backoff() {
+        let limiter = HostRateLimiter::new(10);
+        limiter.observe_status("decay200.com", 429).await;
+        limiter.observe_status("decay200.com", 429).await;
+        limiter.observe_status("decay200.com", 200).await;
+        let state = limiter.state.lock().unwrap();
+        assert_eq!(state.backoff.get("decay200.com"), Some(&Duration::from_millis(10)));
+    }
+
+    #[tokio::test]
+    async fn host_rate_limiter_different_hosts_independent() {
+        let limiter = HostRateLimiter::new(10);
+        limiter.observe_status("host-a.com", 429).await;
+        limiter.observe_status("host-a.com", 429).await;
+        let state = limiter.state.lock().unwrap();
+        assert_eq!(state.backoff.get("host-a.com"), Some(&Duration::from_millis(20)));
+        assert!(!state.backoff.contains_key("host-b.com"));
+    }
+
+    #[test]
+    fn hidden_scanner_accepts_web_target() {
+        let scanner = HiddenScanner;
+        let target = gossan_core::testkit::web_target("http://example.com/");
+        assert!(scanner.accepts(&target));
+    }
+
+    #[test]
+    fn hidden_scanner_rejects_host_target() {
+        let scanner = HiddenScanner;
+        let target = Target::Host(gossan_core::HostTarget {
+            ip: "127.0.0.1".parse().unwrap(),
+            domain: None,
+        });
+        assert!(!scanner.accepts(&target));
+    }
+
+    #[test]
+    fn hidden_scanner_name_is_hidden() {
+        let scanner = HiddenScanner;
+        assert_eq!(scanner.name(), "hidden");
+    }
+
+    #[test]
+    fn hidden_scanner_tags_contain_web() {
+        let scanner = HiddenScanner;
+        let tags = scanner.tags();
+        assert!(tags.contains(&"web"));
+        assert!(tags.contains(&"active"));
+        assert!(tags.contains(&"hidden"));
+    }
+
+    #[tokio::test]
+    async fn host_rate_limiter_survives_mutex_poison() {
+        let limiter = std::sync::Arc::new(HostRateLimiter::new(10));
+        let limiter_clone = std::sync::Arc::clone(&limiter);
+
+        // Poison the mutex by panicking while holding the lock
+        let handle = std::thread::spawn(move || {
+            let mut state = limiter_clone.state.lock().unwrap();
+            state.backoff.insert("poison.com".to_string(), Duration::from_secs(1));
+            panic!("intentional panic to poison mutex");
+        });
+        let _ = handle.join();
+
+        // After poisoning, operations must NOT panic
+        limiter.wait_for_host("poison.com").await;
+        limiter.observe_status("poison.com", 429).await;
+        limiter.decay_backoff("poison.com").await;
     }
 }

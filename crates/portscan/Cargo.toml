@@ -5,8 +5,8 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 homepage = "https://santh.dev"
-repository = "https://github.com/santhsecurity/gossan"
-description = "TCP port scanner with TLS inspection and banner grabbing for gossan — part of the security research ecosystem"
+repository = "https://github.com/santhreal/gossan"
+description = "TCP port scanner with TLS inspection and banner grabbing for gossan, part of the security research ecosystem"
 readme = "README.md"
 keywords = [ "security", "recon", "portscan", "tls" ]
 categories = ["command-line-utilities", "network-programming"]
@@ -51,6 +51,9 @@ wiremock = "0.6"
 gossan-core = { version = "0.3", path = "../core" }
 hickory-resolver = { workspace = true }
 gossan-classify = { version = "0.3", path = "../classify" }
+rcgen = "0.13"
+rustls-pemfile = "2.2"
+time = "0.3"
 
 [lints]
 workspace = true

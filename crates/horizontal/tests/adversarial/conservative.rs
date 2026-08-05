@@ -1,6 +1,5 @@
 use gossan_core::{Config, DiscoverySource, DomainTarget, Finding, ScanInput, Scanner, Target};
 use gossan_horizontal::conservative::ConservativeScanner;
-use hickory_resolver::TokioAsyncResolver;
 use std::sync::{Arc, Once};
 
 /// `rustls` requires a process-wide default `CryptoProvider` before any
@@ -12,7 +11,7 @@ fn install_rustls_provider() {
     ONCE.call_once(|| {
         // `install_default` returns Err if one is already installed
         // (e.g. another integration test in the same binary). Either
-        // outcome is fine — we just need to guarantee one is present.
+        // outcome is fine (we just need to guarantee one is present).
         let _ = rustls::crypto::ring::default_provider().install_default();
     });
 }
@@ -27,23 +26,27 @@ fn streaming_input(
     targets: Vec<Target>,
 ) -> (
     ScanInput,
-    tokio::sync::mpsc::UnboundedReceiver<Finding>,
-    tokio::sync::mpsc::UnboundedReceiver<Target>,
+    tokio::sync::mpsc::Receiver<Finding>,
+    tokio::sync::mpsc::Receiver<Target>,
 ) {
     install_rustls_provider();
-    let (in_tx, in_rx) = tokio::sync::mpsc::unbounded_channel::<Target>();
+    let (in_tx, in_rx) = tokio::sync::mpsc::channel::<Target>(targets.len().max(1));
     for t in targets {
         let _ = in_tx.send(t);
     }
     drop(in_tx);
-    let (live_tx, live_rx) = tokio::sync::mpsc::unbounded_channel();
-    let (target_tx, target_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (live_tx, live_rx) = tokio::sync::mpsc::channel(1024);
+    let (target_tx, target_rx) = tokio::sync::mpsc::channel(1024);
     let input = ScanInput {
         seed: seed.to_string(),
         target_rx: tokio::sync::Mutex::new(in_rx),
         live_tx,
         target_tx,
-        resolver: Arc::new(TokioAsyncResolver::tokio_from_system_conf().unwrap()),
+        resolver: Arc::new(
+            hickory_resolver::TokioResolver::builder_tokio()
+                .unwrap()
+                .build(),
+        ),
     };
     (input, live_rx, target_rx)
 }
@@ -118,7 +121,7 @@ async fn test_crash_recovery_malformed_responses() {
         .expect("scanner.run on unroutable target must complete within 20s");
     assert!(result.is_ok(), "scanner returned error: {result:?}");
 
-    // `Scanner::run` no longer returns a struct with `.findings` —
+    // `Scanner::run` no longer returns a struct with `.findings` 
     // findings flow through the `live_tx` channel. Drain whatever
     // was emitted; we expect zero because the validation checks
     // against an unroutable target should produce nothing.
@@ -166,7 +169,7 @@ async fn test_adversarial_null_bytes() {
 // roundtrip. The behaviour under no-targets is documented and gated;
 // run this manually with `--ignored` after a network state check.
 #[tokio::test]
-#[ignore = "live network probes against example.com — wall-clock O(minutes); run with --ignored"]
+#[ignore = "live network probes against example.com, wall-clock O(minutes); run with --ignored"]
 async fn test_adversarial_empty_inputs() {
     let scanner = ConservativeScanner;
     let mut config = Config::default();
@@ -211,7 +214,7 @@ async fn test_adversarial_empty_inputs() {
 }
 
 #[tokio::test]
-#[ignore = "live network probes against example.com — wall-clock O(minutes); run with --ignored"]
+#[ignore = "live network probes against example.com, wall-clock O(minutes); run with --ignored"]
 async fn test_adversarial_huge_inputs() {
     let scanner = ConservativeScanner;
     let mut config = Config::default();

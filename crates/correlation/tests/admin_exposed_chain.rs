@@ -1,6 +1,6 @@
-//! AdminExposed correlation rule — positive + negative chains.
+//! AdminExposed correlation rule (positive + negative chains).
 //!
-//! Per GOSSAN_LEGENDARY A12: "AdminExposed coverage" — detects
+//! Per GOSSAN_DEPTH_CONTRACT A12: "AdminExposed coverage", detects
 //! "admin panel + no auth"; doesn't fire on admin-with-auth.
 
 use gossan_correlation::CorrelationEngine;
@@ -42,7 +42,7 @@ fn admin_exposed_chain_fires_when_admin_and_no_auth_share_host() {
 fn admin_exposed_chain_does_not_fire_when_only_admin_finding() {
     let engine = CorrelationEngine::new();
     let host = "https://admin.example.com/";
-    // Admin finding alone — no auth-missing pair.
+    // Admin finding alone (no auth-missing pair).
     let chains = engine.run(&[admin_finding(host)], &[]);
     assert!(
         !chains

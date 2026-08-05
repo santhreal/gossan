@@ -1,4 +1,4 @@
-//! Competitor benchmark — gossan-keyhog-lite vs trufflehog vs gitleaks
+//! Competitor benchmark, gossan-keyhog-lite vs trufflehog vs gitleaks
 //! on a controlled corpus of known fake secrets.
 //!
 //! The corpus used to live in `competitor_corpus/known_secrets.txt`,
@@ -58,8 +58,8 @@ fn run_keyhog_lite(corpus: &CorpusFile) -> (usize, u128) {
     use gossan_keyhog_lite::{load_detectors, Chunk, ChunkMetadata, CompiledScanner};
     use std::path::Path;
 
-    let detector_dir = Path::new("/media/mukund-thiru/SanthData/Santh/software/keyhog/detectors");
-    let detectors = load_detectors(detector_dir).expect("load");
+    let detector_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("detectors");
+    let detectors = load_detectors(&detector_dir).expect("load");
     let scanner = CompiledScanner::compile(detectors).expect("compile");
     let body = std::fs::read_to_string(corpus.path()).expect("read");
     let chunk = Chunk {
@@ -152,12 +152,12 @@ fn keyhog_lite_versus_trufflehog() {
         return;
     };
     println!(
-        "vs trufflehog — ours: findings={ours_n} time={}ms | trufflehog: findings={peer_n} time={}ms",
+        "vs trufflehog, ours: findings={ours_n} time={}ms | trufflehog: findings={peer_n} time={}ms",
         ours_us / 1000,
         peer_us / 1000
     );
     // Equal-or-beat on findings is the headline. Speed is informational
-    // (trufflehog spawns a Go binary; we're an in-process call — apples
+    // (trufflehog spawns a Go binary; we're an in-process call, apples
     // to oranges, but documented anyway).
     assert!(
         ours_n + 2 >= peer_n,
@@ -174,7 +174,7 @@ fn keyhog_lite_versus_gitleaks() {
         return;
     };
     println!(
-        "vs gitleaks — ours: findings={ours_n} time={}ms | gitleaks: findings={peer_n} time={}ms",
+        "vs gitleaks, ours: findings={ours_n} time={}ms | gitleaks: findings={peer_n} time={}ms",
         ours_us / 1000,
         peer_us / 1000
     );

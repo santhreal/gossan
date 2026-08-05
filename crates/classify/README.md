@@ -23,8 +23,8 @@ for m in matches {
 ## Extending
 
 Built-in rules ship as Rust constants in `src/rules.rs`. Community rules
-load from a TOML directory at runtime — see the per-rule contract in
-`GOSSAN_LEGENDARY.md` Section B6 for the schema.
+load from a TOML directory at runtime, see the per-rule contract in
+`GOSSAN_DEPTH.md` Section B6 for the schema.
 
 ## License
 

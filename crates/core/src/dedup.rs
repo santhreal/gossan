@@ -43,7 +43,7 @@ pub fn strip_wildcard(host: &str) -> String {
 ///
 /// A wildcard `*.example.com` covers `sub.example.com` and any
 /// deeper subdomain (`a.b.example.com`) but does NOT cover the apex
-/// `example.com` — RFC 4592 § 4.2 / common-DNS interpretation.
+/// `example.com`: RFC 4592 § 4.2 / common-DNS interpretation.
 pub fn is_wildcard_covered(wildcard: &str, host: &str) -> bool {
     let norm_wild = normalize_host(wildcard);
     let norm_host = normalize_host(host);
@@ -65,7 +65,9 @@ pub fn dedup_findings(findings: &[secfinding::Finding]) -> Vec<secfinding::Findi
     let mut seen = HashSet::new();
     let mut out = Vec::new();
 
-    // First pass: collect all wildcard signals.
+    // Collect wildcard signals once. Process wildcards BEFORE covered
+    // concretes so the survivor is order-independent: a concrete that
+    // arrives first must not discard a later wildcard (or vice versa).
     let wildcards: Vec<String> = findings
         .iter()
         .filter_map(|f| {
@@ -78,7 +80,11 @@ pub fn dedup_findings(findings: &[secfinding::Finding]) -> Vec<secfinding::Findi
         })
         .collect();
 
-    for f in findings {
+    let mut ordered: Vec<&secfinding::Finding> = Vec::with_capacity(findings.len());
+    ordered.extend(findings.iter().filter(|f| normalize_host(f.target()).starts_with("*.")));
+    ordered.extend(findings.iter().filter(|f| !normalize_host(f.target()).starts_with("*.")));
+
+    for f in ordered {
         let norm = normalize_host(f.target());
         // Bucket key. The wildcard and its covered concretes share a
         // key so they collapse to one survivor. That key MUST be the
@@ -88,7 +94,7 @@ pub fn dedup_findings(findings: &[secfinding::Finding]) -> Vec<secfinding::Findi
         // exactly `example.com`. Keying the wildcard bucket on the
         // stripped parent therefore collided with the apex host and
         // silently dropped a distinct apex finding (e.g. a Critical
-        // RCE on the apex) — even though `is_wildcard_covered`
+        // RCE on the apex), even though `is_wildcard_covered`
         // correctly reports the apex as NOT covered.
         let key = if norm.starts_with("*.") {
             norm.clone()
@@ -190,7 +196,7 @@ mod tests {
     /// finding on the *apex* host. The apex is explicitly not
     /// wildcard-covered (RFC 4592); pre-fix the wildcard's stripped key
     /// ("example.com") collided with the apex host's key and silently
-    /// dropped the apex finding — a false negative that could hide a
+    /// dropped the apex finding, a false negative that could hide a
     /// Critical apex RCE. The test runs both orderings to prove the
     /// fix is independent of input order.
     #[test]
@@ -230,21 +236,16 @@ mod tests {
     }
 
     /// PROVING (regression twin): the wildcard and its *covered*
-    /// subdomains still collapse to one survivor — the fix only
+    /// subdomains still collapse to one survivor, the fix only
     /// untangled the apex, it did not disable wildcard collapsing.
     #[test]
     fn dedup_still_collapses_wildcard_and_covered_subdomains() {
         let wildcard =
             secfinding::Finding::new("dns", "*.example.com", secfinding::Severity::Info, "t", "")
                 .unwrap();
-        let sub_a = secfinding::Finding::new(
-            "web",
-            "a.example.com",
-            secfinding::Severity::Info,
-            "t",
-            "",
-        )
-        .unwrap();
+        let sub_a =
+            secfinding::Finding::new("web", "a.example.com", secfinding::Severity::Info, "t", "")
+                .unwrap();
         let sub_b = secfinding::Finding::new(
             "web",
             "deep.b.example.com",
@@ -281,20 +282,17 @@ mod tests {
     /// wildcard collapse picks up the tag. This second case proves
     /// the tag is *not* duplicated when the survivor itself was
     /// originally the wildcard finding (which already carries the
-    /// tag in some pipelines) — i.e. we don't get `wildcard-origin`
+    /// tag in some pipelines), i.e. we don't get `wildcard-origin`
     /// twice and we don't strip an existing tag.
     #[test]
     fn dedup_does_not_double_tag_wildcard_origin() {
-        let pre_tagged = secfinding::Finding::builder(
-            "s",
-            "*.example.com",
-            secfinding::Severity::Info,
-        )
-        .title("t")
-        .detail("")
-        .tag("wildcard-origin")
-        .build()
-        .unwrap();
+        let pre_tagged =
+            secfinding::Finding::builder("s", "*.example.com", secfinding::Severity::Info)
+                .title("t")
+                .detail("")
+                .tag("wildcard-origin")
+                .build()
+                .unwrap();
         let concrete =
             secfinding::Finding::new("s", "sub.example.com", secfinding::Severity::Info, "t", "")
                 .unwrap();
@@ -356,4 +354,25 @@ mod tests {
             "three URL forms of the same host must collapse to one survivor"
         );
     }
+
+    #[test]
+    fn dedup_is_order_independent_for_wildcard_vs_concrete() {
+        let concrete = secfinding::Finding::builder("s", "sub.example.com", secfinding::Severity::Info)
+            .title("t")
+            .detail("")
+            .build()
+            .expect("concrete");
+        let wild = secfinding::Finding::builder("s", "*.example.com", secfinding::Severity::Info)
+            .title("t")
+            .detail("")
+            .build()
+            .expect("wild");
+        let a = dedup_findings(&[concrete.clone(), wild.clone()]);
+        let b = dedup_findings(&[wild.clone(), concrete.clone()]);
+        assert_eq!(a.len(), 1);
+        assert_eq!(b.len(), 1);
+        assert_eq!(a[0].target(), "*.example.com");
+        assert_eq!(b[0].target(), "*.example.com");
+    }
+
 }

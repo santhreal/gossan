@@ -1,6 +1,6 @@
 //! SARIF schema-shape validation test.
 //!
-//! Per GOSSAN_LEGENDARY B5: ensure the JSON gossan emits with
+//! Per GOSSAN_DEPTH_CONTRACT B5: ensure the JSON gossan emits with
 //! `--format sarif` is structurally a valid SARIF 2.1.0 document.
 //!
 //! We don't need a full JSON-Schema validator (that's a separate
@@ -86,7 +86,7 @@ fn sarif_each_result_has_required_fields() {
             "result {i} missing ruleId"
         );
         // SARIF requires either `level` (with values warning|error|note|none)
-        // OR a kind="pass" — gossan emits level on every finding.
+        // OR a kind="pass" (gossan emits level on every finding).
         let level = r
             .get("level")
             .and_then(|x| x.as_str())

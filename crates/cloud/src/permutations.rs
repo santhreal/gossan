@@ -1,7 +1,7 @@
 //! Bucket/asset name permutation generation from organization names.
 
 /// Generate bucket/account name candidates from an org name.
-/// These are the patterns attackers enumerate — we do the same.
+/// These are the patterns attackers enumerate (we do the same).
 use serde::Deserialize;
 use std::sync::OnceLock;
 
@@ -37,34 +37,21 @@ fn builtin_permutations() -> &'static PermutationConfig {
     PERMUTATIONS.get_or_init(|| {
         match toml::from_str::<PermutationConfig>(BUILTIN_PERMUTATIONS) {
             Ok(config) => config,
-            Err(e) => {
-                tracing::error!(error = %e, "failed to parse built-in permutations.toml");
-                // Fallback to minimal hardcoded lists only on parse failure
-                PermutationConfig {
-                    suffixes: StringList {
-                        values: vec![
-                            "".to_string(),
-                            "-assets".to_string(),
-                            "-static".to_string(),
-                            "-dev".to_string(),
-                            "-prod".to_string(),
-                        ],
-                    },
-                    prefixes: StringList {
-                        values: vec!["".to_string(), "assets-".to_string(), "dev-".to_string()],
-                    },
-                    transforms: Transforms {
-                        dot_to_hyphen: true,
-                        hyphen_to_dot: true,
-                    },
-                }
-            }
+            Err(e) => panic!("gossan-cloud: built-in permutations.toml is malformed: {e}"),
         }
     })
 }
 
+/// Maximum length of a cloud bucket/account name (S3/GCS/Spaces/Azure).
+const MAX_BUCKET_LEN: usize = 63;
+
 /// Generate bucket/account name candidates from an organization name.
 pub fn generate(org: &str) -> Vec<String> {
+    // Reject absurdly long org names up-front to prevent DoS via
+    // unbounded allocation in to_lowercase() / format!() / replace().
+    if org.len() > MAX_BUCKET_LEN {
+        return Vec::new();
+    }
     let o = org.to_lowercase();
     let config = builtin_permutations();
     let suffixes = &config.suffixes.values;
@@ -192,6 +179,157 @@ mod tests {
         assert!(
             config.transforms.hyphen_to_dot,
             "hyphen_to_dot should be enabled"
+        );
+    }
+
+    // ── Boundary: OOM guard ──────────────────────────────────────────────
+
+    #[test]
+    fn generate_passes_guard_at_exactly_max_but_rejects_one_past() {
+        // The OOM guard is `org.len() > MAX_BUCKET_LEN`, so an org of
+        // EXACTLY MAX_BUCKET_LEN bytes passes: the bare name (63 chars,
+        // produced by the identity transforms) is a valid 3–63 candidate,
+        // while every prefix/suffix-decorated form exceeds 63 and is
+        // filtered. One byte past the max trips the guard → empty. Pins
+        // the `>` (not `>=`) boundary so a future edit can't silently
+        // shift it.
+        let at_max = generate(&"a".repeat(MAX_BUCKET_LEN));
+        assert!(
+            !at_max.is_empty(),
+            "org of exactly {MAX_BUCKET_LEN} bytes passes the guard (the bare name fits)"
+        );
+        assert!(
+            at_max.iter().all(|c| c.len() == MAX_BUCKET_LEN),
+            "at the max only the bare {MAX_BUCKET_LEN}-char form survives; decorated forms exceed 63: {at_max:?}"
+        );
+
+        let one_past = generate(&"a".repeat(MAX_BUCKET_LEN + 1));
+        assert!(
+            one_past.is_empty(),
+            "org of {} bytes (one past max) trips the OOM guard → empty",
+            MAX_BUCKET_LEN + 1
+        );
+    }
+
+    #[test]
+    fn generate_returns_empty_for_very_long_org() {
+        let org = "a".repeat(10_000);
+        let candidates = generate(&org);
+        assert!(
+            candidates.is_empty(),
+            "very long org must return empty (OOM guard)"
+        );
+    }
+
+    #[test]
+    fn generate_returns_some_for_org_one_below_max_bucket_len() {
+        // An org of MAX_BUCKET_LEN - 1 bytes passes the guard.
+        // With an empty prefix+suffix the bare name = 62 bytes which is valid (3–63).
+        let org = "a".repeat(MAX_BUCKET_LEN - 1);
+        let candidates = generate(&org);
+        assert!(
+            !candidates.is_empty(),
+            "org one byte under limit must produce candidates"
+        );
+        // All produced candidates must be within length bounds.
+        for c in &candidates {
+            assert!(
+                (3..=63).contains(&c.len()),
+                "candidate '{c}' outside [3,63] bounds"
+            );
+        }
+    }
+
+    // ── Boundary: short org names ────────────────────────────────────────
+
+    #[test]
+    fn generate_empty_org_returns_empty_or_minimal() {
+        let candidates = generate("");
+        // All entries must satisfy the 3–63 length gate.
+        for c in &candidates {
+            assert!(
+                (3..=63).contains(&c.len()),
+                "candidate '{c}' outside [3,63] bounds for empty org"
+            );
+        }
+    }
+
+    #[test]
+    fn generate_single_char_org() {
+        let candidates = generate("x");
+        // "x" itself is only 1 char; suffix/prefix combos may push it to ≥3.
+        for c in &candidates {
+            assert!((3..=63).contains(&c.len()));
+        }
+    }
+
+    #[test]
+    fn generate_two_char_org() {
+        let candidates = generate("ab");
+        for c in &candidates {
+            assert!(
+                (3..=63).contains(&c.len()),
+                "candidate '{c}' violates length gate"
+            );
+        }
+    }
+
+    // ── Anti-rig: lowercase invariant ────────────────────────────────────
+
+    #[test]
+    fn generate_all_candidates_are_lowercase() {
+        for org in ["Example", "CORP", "MyOrg-2024"] {
+            let candidates = generate(org);
+            for c in &candidates {
+                assert_eq!(*c, c.to_lowercase(), "candidate '{c}' is not lowercase for org='{org}'");
+            }
+        }
+    }
+
+    // ── Anti-rig: no candidate exceeds 63 chars ──────────────────────────
+
+    #[test]
+    fn generate_no_candidate_exceeds_max_length() {
+        for org in ["example", "my-company", "acme-corp"] {
+            let candidates = generate(org);
+            for c in &candidates {
+                assert!(
+                    c.len() <= 63,
+                    "candidate '{c}' exceeds 63-char S3 limit for org='{org}'"
+                );
+            }
+        }
+    }
+
+    // ── Anti-rig: dedup stability ────────────────────────────────────────
+
+    #[test]
+    fn generate_is_idempotent() {
+        // Calling generate twice with the same org must return the same SET.
+        let mut a = generate("stable-corp");
+        let mut b = generate("stable-corp");
+        a.sort();
+        b.sort();
+        assert_eq!(a, b, "generate must be idempotent for the same input");
+    }
+
+    // ── Dot/hyphen transform boundary ────────────────────────────────────
+
+    #[test]
+    fn generate_dot_to_hyphen_transform_applied() {
+        let candidates = generate("my.org");
+        assert!(
+            candidates.contains(&"my-org".to_string()),
+            "dot_to_hyphen transform must produce 'my-org' from 'my.org'"
+        );
+    }
+
+    #[test]
+    fn generate_hyphen_to_dot_transform_applied() {
+        let candidates = generate("my-org");
+        assert!(
+            candidates.contains(&"my.org".to_string()),
+            "hyphen_to_dot transform must produce 'my.org' from 'my-org'"
         );
     }
 }

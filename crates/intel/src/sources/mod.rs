@@ -1,4 +1,4 @@
-//! Online intelligence source implementations — one source per file.
+//! Online intelligence source implementations (one source per file).
 
 pub mod abuseipdb;
 pub mod asn;
@@ -11,6 +11,12 @@ pub mod virustotal;
 
 use crate::enrichment::IntelEnrichment;
 use async_trait::async_trait;
+
+/// Maximum bytes to read from an intel source JSON response.
+/// 8 MiB is large enough for Shodan host records (potentially hundreds of
+/// services) and VirusTotal/URLScan result sets while guarding against
+/// unbounded reads from adversarial or misconfigured endpoints.
+pub(crate) const MAX_INTEL_JSON_BYTES: usize = 8 * 1024 * 1024;
 
 /// Trait implemented by every online intel source.
 #[async_trait]

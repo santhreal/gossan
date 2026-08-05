@@ -10,11 +10,15 @@ pub async fn probe(client: &reqwest::Client, target: &Target) -> anyhow::Result<
     let url = format!("{}/robots.txt", asset.url.as_str().trim_end_matches('/'));
     let mut findings = Vec::new();
 
-    if let Ok(resp) = client.get(&url).send().await {
-        if resp.status().as_u16() == 200 {
-            let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
-                .await
-                .unwrap_or_default();
+    let resp = match client.get(&url).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("robots.txt probe send failed: url={} error={}", url, e);
+            return Ok(findings);
+        }
+    };
+    if resp.status().as_u16() == 200 {
+            let body = gossan_core::net::bounded_text(resp, crate::MAX_BODY_BYTES).await?;
 
             // Parse robots.txt into groups; extract Sitemap directives and
             // disallow/allow lists that apply to the wildcard User-agent (*).
@@ -101,7 +105,7 @@ pub async fn probe(client: &reqwest::Client, target: &Target) -> anyhow::Result<
                     "robots.txt parsed but no useful directives found".to_string()
                 } else {
                     format!(
-                        "robots.txt: {} — show sample rules below.",
+                        "robots.txt: {}, show sample rules below.",
                         detail_parts.join(", ")
                     )
                 };
@@ -110,13 +114,13 @@ pub async fn probe(client: &reqwest::Client, target: &Target) -> anyhow::Result<
                     crate::file_finding(
                         target,
                         Severity::Info,
-                        "robots.txt parsed — directives found",
+                        "robots.txt parsed, directives found",
                         detail,
                     )
                     .evidence(Evidence::HttpResponse {
                         status: 200,
                         headers: vec![],
-                        body_excerpt: Some(body.chars().take(500).collect::<String>().into()),
+                        body_excerpt: Some(body.chars().take(crate::MAX_BODY_EXCERPT_CHARS).collect::<String>().into()),
                     })
                     .tag("robots")
                     .tag("recon"),
@@ -156,7 +160,6 @@ pub async fn probe(client: &reqwest::Client, target: &Target) -> anyhow::Result<
                     );
                 }
             }
-        }
     }
 
     Ok(findings)

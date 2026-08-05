@@ -49,7 +49,7 @@ pub struct ProbeReport {
     pub sendmmsg_compiled: bool,
     /// pnet feature compiled into this build.
     pub pnet_compiled: bool,
-    /// Detected kernel version, if Linux. (major, minor) — patch is dropped.
+    /// Detected kernel version, if Linux. (major, minor) (patch is dropped).
     pub kernel: Option<(u32, u32)>,
     /// Process holds CAP_NET_RAW (best-effort: euid==0 is the proxy).
     pub cap_net_raw: bool,
@@ -135,7 +135,7 @@ fn detect_libbpf() -> bool {
 /// would `auto_select` pick on this build, on this host, right now?
 ///
 /// This intentionally mirrors `netforge::engine::auto_select`'s order:
-/// XDP > sendmmsg > pnet. We do NOT actually open a raw socket — that
+/// XDP > sendmmsg > pnet. We do NOT actually open a raw socket, that
 /// would change behavior for callers (e.g. depleting a syscall slot).
 pub fn probe() -> ProbeReport {
     let xdp_compiled = cfg!(feature = "xdp");
@@ -147,7 +147,7 @@ pub fn probe() -> ProbeReport {
     let cap_net_raw = detect_cap_net_raw();
     let libbpf_present = detect_libbpf();
 
-    // Selection mirror — must stay in lockstep with netforge auto_select.
+    // Selection mirror (must stay in lockstep with netforge auto_select).
     let xdp_runnable = xdp_compiled
         && cap_net_raw
         && libbpf_present

@@ -9,6 +9,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use std::net::IpAddr;
 use rustls::{ClientConfig, DigitallySignedStruct, Error, SignatureScheme};
 use tokio_rustls::TlsConnector;
 use x509_cert::der::Decode;
@@ -73,7 +74,7 @@ impl fmt::Display for TlsCertInfo {
     }
 }
 
-/// Accepts any server certificate — we're doing recon, not verification.
+/// Accepts any server certificate (we're doing recon, not verification).
 #[derive(Debug)]
 struct AcceptAll;
 
@@ -176,7 +177,7 @@ pub async fn probe_tls(
         .ok()?
         .ok()?;
 
-    let server_name = ServerName::try_from(addr.to_string()).ok()?;
+    let server_name = server_name_for_host(addr)?;
     let tls_stream = tokio::time::timeout(timeout, connector.connect(server_name, stream))
         .await
         .ok()?
@@ -200,6 +201,16 @@ pub async fn probe_tls(
     info.cipher_suite = cipher_suite;
     info.protocol_version = protocol_version;
     Some(info)
+}
+
+/// Build a rustls `ServerName` for a host string, handling IP literals
+/// the same way [`horizontal::server_name_for_host`] does.
+fn server_name_for_host(host: &str) -> Option<ServerName<'static>> {
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        Some(ServerName::IpAddress(ip.into()).to_owned())
+    } else {
+        ServerName::try_from(host.to_string()).ok()
+    }
 }
 
 fn parse_cert(der: &CertificateDer<'_>) -> Option<TlsCertInfo> {
@@ -440,7 +451,7 @@ async fn probe_raw_version(
     };
 
     // ServerHello: record type 0x16 (handshake), major 0x03
-    // Alert:       record type 0x15 — means rejected
+    // Alert:       record type 0x15, means rejected
     header[0] == 0x16 && header[1] == 0x03
 }
 
@@ -474,12 +485,25 @@ pub fn days_until_expiry(not_after_unix: i64) -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
-    (not_after_unix - now) / 86_400
+    not_after_unix.saturating_sub(now) / 86_400
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn server_name_for_host_handles_ip_and_hostname() {
+        assert!(
+            matches!(server_name_for_host("1.2.3.4"), Some(ServerName::IpAddress(_))),
+            "IP literal must produce ServerName::IpAddress"
+        );
+        assert!(
+            matches!(server_name_for_host("example.com"), Some(ServerName::DnsName(_))),
+            "hostname must produce ServerName::DnsName"
+        );
+        assert!(server_name_for_host("").is_none(), "empty host should fail");
+    }
 
     #[test]
     fn extract_cn_returns_common_name() {
@@ -521,5 +545,43 @@ mod tests {
         assert!(schemes.contains(&SignatureScheme::RSA_PSS_SHA256));
         assert!(schemes.contains(&SignatureScheme::ECDSA_NISTP256_SHA256));
         assert!(schemes.contains(&SignatureScheme::ED25519));
+    }
+
+    #[test]
+    fn days_until_expiry_extreme_values_do_not_panic() {
+        // Adversarial: i64::MIN and i64::MAX should not panic.
+        let _ = days_until_expiry(i64::MAX);
+        let _ = days_until_expiry(i64::MIN);
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn days_until_expiry_never_panics(not_after_unix in any::<i64>()) {
+            let _ = days_until_expiry(not_after_unix);
+        }
+
+        #[test]
+        fn extract_cn_never_panics(rdnseq in "[a-zA-Z0-9=, ]{0,100}") {
+            let _ = extract_cn(&rdnseq);
+        }
+
+        #[test]
+        fn days_until_expiry_monotonic(a in any::<i64>(), b in any::<i64>()) {
+            let da = days_until_expiry(a);
+            let db = days_until_expiry(b);
+            if a > b {
+                prop_assert!(da >= db, "monotonicity violated: {a} > {b} but {da} < {db}");
+            } else if a < b {
+                prop_assert!(da <= db, "monotonicity violated: {a} < {b} but {da} > {db}");
+            } else {
+                prop_assert_eq!(da, db);
+            }
+        }
     }
 }

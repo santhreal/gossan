@@ -52,7 +52,7 @@ next stage's input plus security findings.
 ```
 
 Each stage emits findings via `ScanInput::live_tx` and downstream
-targets via `ScanInput::target_tx`. There is no buffering pass — a
+targets via `ScanInput::target_tx`. There is no buffering pass, a
 finding emitted by `subdomain` is visible at the cli output sink
 within milliseconds of detection.
 
@@ -93,7 +93,7 @@ pub struct ScanInput {
   format).
 - `target_tx.send(t)` emits a downstream target. The next pipeline
   tier picks it up.
-- `resolver` is shared (Arc) — DNS lookups inside a stage reuse the
+- `resolver` is shared (Arc). DNS lookups inside a stage reuse the
   resolver's cache.
 
 Backpressure: all channels are unbounded by default. Throttling is
@@ -144,7 +144,7 @@ CLI receives `Vec<Finding>` and dispatches via
 
 ## Testing contract
 
-Per `GOSSAN_LEGENDARY.md`'s doctrine, every shipped feature carries:
+Per `GOSSAN_DEPTH.md`'s doctrine, every shipped feature carries:
 
 - Positive truth (exact location/metadata asserted)
 - Negative precision (sanitized variants must not fire)
@@ -159,4 +159,4 @@ Per `GOSSAN_LEGENDARY.md`'s doctrine, every shipped feature carries:
 
 The release-only perf gates in `crates/{engine,classify,subdomain,
 portscan,graph,intel}/tests/perf_gate*.rs` are the regression
-breakers — CI fails if any drops below its documented baseline.
+breakers: CI fails if any drops below its documented baseline.

@@ -24,22 +24,34 @@ impl SubdomainSource for Dnsrepo {
         
         let url = format!("https://dnsrepo.noc.org/api/v1/lookup/?q={}", domain);
         limiter.until_ready().await;
-        let resp = client.get(&url).send().await?;
+        let resp = client.get(&url).send().await?.error_for_status()?;
         let max_size = config.max_response_size;
         let text = String::from_utf8(gossan_core::read_response_limited(resp, max_size).await?)?;
         let mut seen = std::collections::HashSet::new();
         let domain_lower = domain.to_lowercase();
+        let mut ndjson_parse_errs = 0u32;
         for line in text.lines() {
             let line = line.trim();
             if line.is_empty() { continue; }
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
-                if let Some(v) = json.get("domain").and_then(|v| v.as_str()) {
-                    let candidate = v.trim().trim_end_matches('.').to_lowercase();
-                    if crate::is_subdomain_of(&candidate, &domain_lower) {
-                        seen.insert(candidate);
+            match serde_json::from_str::<serde_json::Value>(line) {
+                Ok(json) => {
+                    if let Some(v) = json.get("domain").and_then(|v| v.as_str()) {
+                        let candidate = v.trim().trim_end_matches('.').to_lowercase();
+                        if crate::is_subdomain_of(&candidate, &domain_lower) {
+                            seen.insert(candidate);
+                        }
+                    }
+                }
+                Err(e) => {
+                    ndjson_parse_errs += 1;
+                    if ndjson_parse_errs == 1 {
+                        tracing::warn!(error = %e, source = "dnsrepo", "NDJSON line parse failed (further errors suppressed)");
                     }
                 }
             }
+        }
+        if ndjson_parse_errs > 1 {
+            tracing::warn!(count = ndjson_parse_errs, source = "dnsrepo", "NDJSON line parse failures");
         }
         Ok(seen.into_iter().map(|d| Target::Domain(DomainTarget {
             domain: d,

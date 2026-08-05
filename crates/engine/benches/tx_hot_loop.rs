@@ -67,7 +67,7 @@ fn run_tx_hot_loop(num_targets: u64, num_ports: u64, batch_size: usize) -> u64 {
     let backend = CountingEngine::new();
     let schedule = ScanSchedule::new(num_targets, num_ports, 0);
 
-    // Pre-allocate batch with `batch_size` template clones — same shape
+    // Pre-allocate batch with `batch_size` template clones, same shape
     // as the production path.
     let mut batch: Vec<RawPacket> = (0..batch_size).map(|_| template.clone()).collect();
     let mut batch_len = 0usize;

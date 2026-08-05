@@ -1,4 +1,4 @@
-//! Per GOSSAN_LEGENDARY A3: feed two sources the same subdomain;
+//! Per GOSSAN_DEPTH_CONTRACT A3: feed two sources the same subdomain;
 //! assert it appears once in the deduped output.
 
 use gossan_subdomain::dedup::{dedup_domains, normalize_domain};

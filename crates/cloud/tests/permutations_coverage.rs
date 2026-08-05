@@ -1,6 +1,6 @@
 //! AWS S3 / GCS / Azure / DO bucket permutation coverage.
 //!
-//! Per GOSSAN_LEGENDARY A11: every common pattern produces a probe
+//! Per GOSSAN_DEPTH_CONTRACT A11: every common pattern produces a probe
 //! candidate from `permutations::generate`.
 
 use std::collections::HashSet;

@@ -1,4 +1,4 @@
-//! WAF fingerprinting — delegates to `wafrift-detect`.
+//! WAF fingerprinting (delegates to `wafrift-detect`).
 //!
 //! All signature logic, confidence scoring, and body analysis lives in the
 //! standalone `wafrift-detect` crate. This module adapts its output into
@@ -35,15 +35,16 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
         })
         .collect();
 
-    // Bound the response body — wafrift only needs a few KB of header
+    // Bound the response body, wafrift only needs a few KB of header
     // + body to fingerprint, so capping at MAX_BODY_BYTES protects
     // against a hostile origin streaming MB or GB to OOM the scanner.
-    let body = crate::soft404::read_limited(resp, crate::MAX_BODY_BYTES)
-        .await
-        .unwrap_or_default();
+    let body = match crate::soft404::read_limited(resp, crate::MAX_BODY_BYTES).await {
+        Some(b) => b,
+        None => return Ok(vec![]),
+    };
 
     // wafrift_detect::detect now returns a Vec<DetectedWaf> (it can match
-    // multiple WAFs simultaneously — e.g. a CloudFront-fronted Cloudflare
+    // multiple WAFs simultaneously, e.g. a CloudFront-fronted Cloudflare
     // origin returns both). Pick the highest-confidence hit; bail if empty.
     let detected_all = wafrift_detect::detect(status, &raw_headers, &body);
     let Some(detected) = detected_all.into_iter().max_by(|a, b| {
@@ -62,7 +63,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
 
     let detail = format!(
         "WAF detected: {} (confidence: {:.0}%). Indicators: {}. \
-         This changes the attack approach — WAF evasion research required before active exploitation.",
+         This changes the attack approach. WAF evasion research required before active exploitation.",
         detected.name,
         detected.confidence * 100.0,
         detected.indicators.join(", "),

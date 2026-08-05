@@ -16,7 +16,7 @@
     clippy::missing_errors_doc
 )]
 
-//! DNS security scanner — modular, feature-gated auditing engine.
+//! DNS security scanner (modular, feature-gated auditing engine).
 //!
 //! Four independent modules, each compilable in isolation via Cargo features:
 //!
@@ -48,7 +48,7 @@ pub mod posture;
 #[cfg(feature = "takeover")]
 pub mod takeover;
 
-mod resolver;
+pub mod resolver;
 
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -82,7 +82,9 @@ impl Scanner for DnsScanner {
         let owned: Vec<Target> = {
             let mut rx = input.target_rx.lock().await;
             let mut buf = Vec::new();
-            while let Ok(t) = rx.try_recv() {
+            // recv() until the pipeline closes the inbox — try_recv races the
+            // sender and drops asynchronously delivered targets.
+            while let Some(t) = rx.recv().await {
                 if self.accepts(&t) {
                     buf.push(t);
                 }
@@ -108,7 +110,7 @@ impl Scanner for DnsScanner {
 
         for batch in findings {
             for f in batch {
-                input.emit(f);
+                input.emit(f).await;
             }
         }
         Ok(())
@@ -117,7 +119,7 @@ impl Scanner for DnsScanner {
 
 /// Run all enabled modules against a single domain.
 async fn audit_domain(
-    dns: &hickory_resolver::TokioAsyncResolver,
+    dns: &hickory_resolver::TokioResolver,
     domain: &str,
     target: &Target,
     timeout: std::time::Duration,

@@ -1,8 +1,8 @@
 //! Per-flag CLI smoke tests.
 //!
-//! Per GOSSAN_LEGENDARY A2: every CLI flag exits cleanly on a valid
+//! Per GOSSAN_DEPTH_CONTRACT A2: every CLI flag exits cleanly on a valid
 //! value and exits non-zero (clap convention: 2) on an invalid value.
-//! These tests don't run a full scan — they pair every flag with
+//! These tests don't run a full scan, they pair every flag with
 //! `--help` so clap parses, then short-circuits.
 
 use std::process::Command;

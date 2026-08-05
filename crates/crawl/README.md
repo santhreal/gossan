@@ -2,7 +2,7 @@
 
 > Part of the [Santh](https://santh.dev) security research ecosystem.
 
-Authenticated web crawler — form extraction, parameter discovery, link following — part of the Santh security research ecosystem.
+Authenticated web crawler (form extraction, parameter discovery, link following (part of the Santh security research ecosystem)).
 
 Part of [gossan](https://github.com/santhreal/gossan).
 

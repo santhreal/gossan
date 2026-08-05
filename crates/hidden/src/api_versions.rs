@@ -61,17 +61,23 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
     let base = asset.url.as_str().trim_end_matches('/');
     let mut findings = Vec::new();
 
-    // First establish baseline: what does the root API return?
-    // We consider a path "active" if it returns 2xx, 401, or 403
-    // (400 might mean wrong method/content-type, but 404 = not found)
-    let baseline_404 = if let Ok(r) = client
+    // First establish baseline: what does a guaranteed-missing path return?
+    // Transport failure must abort enumeration — never silently assume 404
+    // (that would treat SPA catch-all 200s as "new" active versions).
+    let baseline_404 = match client
         .get(format!("{}/this-path-should-never-exist-9z3k2p", base))
         .send()
         .await
     {
-        r.status().as_u16()
-    } else {
-        404
+        Ok(r) => r.status().as_u16(),
+        Err(e) => {
+            tracing::warn!(
+                "api_versions baseline probe failed; aborting version/shadow enumeration: base={} error={}",
+                base,
+                e
+            );
+            return Ok(findings);
+        }
     };
 
     // Version endpoint enumeration
@@ -83,6 +89,16 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
             continue;
         };
         let status = resp.status().as_u16();
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        let www_authenticate = resp
+            .headers()
+            .get(reqwest::header::WWW_AUTHENTICATE)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
 
         // Skip if same as baseline (catchall 200 or consistent 404)
         if status == baseline_404 {
@@ -92,13 +108,17 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
             continue;
         }
 
-        let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
-            .await
-            .unwrap_or_default();
-        let body_excerpt: String = body.chars().take(200).collect::<String>().into();
+        let body = gossan_core::net::bounded_text(resp, crate::MAX_BODY_BYTES)
+            .await?;
+        let body_excerpt: String = body.chars().take(crate::MAX_BODY_EXCERPT_CHARS).collect::<String>().into();
 
         // Must look like an API response, not a generic error page
-        let looks_like_api = looks_like_api_response(&body_excerpt, status);
+        let looks_like_api = looks_like_api_response(
+            &body_excerpt,
+            status,
+            content_type.as_deref(),
+            www_authenticate.as_deref(),
+        );
 
         if looks_like_api {
             found_versions.push((path.to_string(), status, body_excerpt));
@@ -123,7 +143,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                 target,
                 Severity::High,
                 format!(
-                    "API version enumeration — {} old version{} active",
+                    "API version enumeration: {} old version{} active",
                     found_versions.len(),
                     if found_versions.len() == 1 { "" } else { "s" }
                 ),
@@ -165,10 +185,9 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
             continue;
         }
 
-        let body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
-            .await
-            .unwrap_or_default();
-        let excerpt: String = body.chars().take(200).collect::<String>().into();
+        let body = gossan_core::net::bounded_text(resp, crate::MAX_BODY_BYTES)
+            .await?;
+        let excerpt: String = body.chars().take(crate::MAX_BODY_EXCERPT_CHARS).collect::<String>().into();
 
         let is_interesting = is_interesting_shadow_response(&excerpt, status);
 
@@ -210,15 +229,53 @@ fn is_active_status(status: u16) -> bool {
     matches!(status, 200..=299 | 401 | 403)
 }
 
-fn looks_like_api_response(body_excerpt: &str, status: u16) -> bool {
-    body_excerpt.trim_start().starts_with('{')
-        || body_excerpt.trim_start().starts_with('[')
-        || body_excerpt.contains("\"message\"")
-        || body_excerpt.contains("\"error\"")
-        || body_excerpt.contains("\"version\"")
-        || body_excerpt.contains("\"api\"")
-        || status == 401
-        || status == 403
+fn json_shaped_body(body_excerpt: &str) -> bool {
+    let trimmed = body_excerpt.trim_start();
+    trimmed.starts_with('{') || trimmed.starts_with('[')
+}
+
+fn content_type_is_json(content_type: Option<&str>) -> bool {
+    content_type
+        .map(|ct| {
+            let lower = ct.to_ascii_lowercase();
+            lower.contains("application/json") || lower.contains("+json")
+        })
+        .unwrap_or(false)
+}
+
+/// API proof for version paths: JSON body/content-type for 2xx; auth walls
+/// need WWW-Authenticate or JSON — bare 401/403 alone is not enough.
+fn looks_like_api_response(
+    body_excerpt: &str,
+    status: u16,
+    content_type: Option<&str>,
+    www_authenticate: Option<&str>,
+) -> bool {
+    let jsonish = json_shaped_body(body_excerpt) || content_type_is_json(content_type);
+    if (200..=299).contains(&status) {
+        return jsonish;
+    }
+    if status == 401 || status == 403 {
+        let has_www_auth = www_authenticate
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false);
+        return has_www_auth || jsonish;
+    }
+    false
+}
+
+/// Unit-testable baseline gate: transport Err aborts (None), never defaults to 404.
+fn baseline_status_from_probe(result: Result<u16, String>) -> Option<u16> {
+    match result {
+        Ok(status) => Some(status),
+        Err(e) => {
+            tracing::warn!(
+                "api_versions baseline probe failed; aborting enumeration: error={}",
+                e
+            );
+            None
+        }
+    }
 }
 
 fn is_interesting_shadow_response(excerpt: &str, status: u16) -> bool {
@@ -249,19 +306,56 @@ mod tests {
 
     #[test]
     fn looks_like_api_response_accepts_json_bodies() {
-        assert!(looks_like_api_response("{\"message\":\"ok\"}", 200));
-        assert!(looks_like_api_response("[{\"id\":1}]", 200));
+        assert!(looks_like_api_response("{\"message\":\"ok\"}", 200, None, None));
+        assert!(looks_like_api_response("[{\"id\":1}]", 200, None, None));
     }
 
     #[test]
-    fn looks_like_api_response_accepts_auth_status_without_body() {
-        assert!(looks_like_api_response("", 401));
-        assert!(looks_like_api_response("", 403));
+    fn looks_like_api_response_rejects_bare_auth_status_without_evidence() {
+        assert!(!looks_like_api_response("", 401, None, None));
+        assert!(!looks_like_api_response("", 403, None, None));
+    }
+
+    #[test]
+    fn looks_like_api_response_accepts_auth_with_www_authenticate() {
+        assert!(looks_like_api_response("", 401, None, Some("Bearer realm=\"api\"")));
+        assert!(looks_like_api_response("", 403, None, Some("Basic realm=\"api\"")));
+    }
+
+    #[test]
+    fn looks_like_api_response_accepts_auth_with_json_body() {
+        assert!(looks_like_api_response("{\"error\":\"unauthorized\"}", 401, None, None));
+        assert!(looks_like_api_response("{\"error\":\"forbidden\"}", 403, Some("application/json"), None));
+    }
+
+    #[test]
+    fn looks_like_api_response_rejects_html_with_api_version_words() {
+        let html = "<html><body>Welcome to our API version portal</body></html>";
+        assert!(!looks_like_api_response(html, 200, Some("text/html"), None));
+        assert!(!looks_like_api_response(html, 200, None, None));
+    }
+
+    #[test]
+    fn looks_like_api_response_accepts_application_json_without_braces() {
+        // Content-Type alone can prove API for 2xx (e.g. empty 204 JSON endpoints)
+        assert!(looks_like_api_response("", 204, Some("application/json"), None));
+        assert!(looks_like_api_response("ok", 200, Some("application/vnd.api+json"), None));
+    }
+
+    #[test]
+    fn baseline_status_from_probe_aborts_on_err() {
+        assert_eq!(baseline_status_from_probe(Ok(404)), Some(404));
+        assert_eq!(baseline_status_from_probe(Ok(200)), Some(200));
+        assert_eq!(
+            baseline_status_from_probe(Err("connection reset".into())),
+            None,
+            "transport Err must abort, never default to 404"
+        );
     }
 
     #[test]
     fn looks_like_api_response_rejects_plain_html() {
-        assert!(!looks_like_api_response("<html>hello</html>", 200));
+        assert!(!looks_like_api_response("<html>hello</html>", 200, None, None));
     }
 
     #[test]
@@ -284,5 +378,197 @@ mod tests {
         assert!(SHADOW_PATHS
             .iter()
             .any(|(path, _, _)| *path == "/api-internal"));
+    }
+
+    #[test]
+    fn version_paths_cover_v0_and_api_v3() {
+        assert!(VERSION_PATHS.contains(&"/v0"));
+        assert!(VERSION_PATHS.contains(&"/api/v3"));
+    }
+
+    #[test]
+    fn shadow_paths_include_dev_and_staging() {
+        assert!(SHADOW_PATHS.iter().any(|(p, _, _)| *p == "/dev"));
+        assert!(SHADOW_PATHS.iter().any(|(p, _, _)| *p == "/staging"));
+    }
+
+    #[test]
+    fn looks_like_api_response_accepts_version_keyword() {
+        assert!(looks_like_api_response("{\"version\":\"1.0\"}", 200, None, None));
+    }
+
+    #[test]
+    fn looks_like_api_response_accepts_api_keyword() {
+        assert!(looks_like_api_response("{\"api\":\"v2\"}", 200, None, None));
+    }
+
+    #[test]
+    fn is_interesting_shadow_response_detects_error_json() {
+        assert!(is_interesting_shadow_response("{\"error\":\"not found\"}", 200));
+    }
+
+    #[test]
+    fn version_paths_include_v00() {
+        assert!(VERSION_PATHS.contains(&"/v00"));
+    }
+
+    #[test]
+    fn version_paths_include_api_v01() {
+        assert!(VERSION_PATHS.contains(&"/api/v0.1"));
+    }
+
+    #[test]
+    fn shadow_paths_include_beta() {
+        assert!(SHADOW_PATHS.iter().any(|(p, _, _)| *p == "/beta"));
+    }
+
+    #[test]
+    fn shadow_paths_include_alpha() {
+        assert!(SHADOW_PATHS.iter().any(|(p, _, _)| *p == "/alpha"));
+    }
+
+    #[test]
+    fn is_active_status_rejects_301() {
+        assert!(!is_active_status(301));
+    }
+
+    #[test]
+    fn is_active_status_accepts_all_2xx() {
+        for status in [200, 201, 202, 203, 204, 205, 206, 207, 208, 226] {
+            assert!(is_active_status(status), "status {status} should be active");
+        }
+    }
+
+    #[test]
+    fn is_active_status_rejects_3xx() {
+        for status in [300, 301, 302, 303, 304, 305, 307, 308] {
+            assert!(!is_active_status(status), "status {status} should not be active");
+        }
+    }
+
+    #[test]
+    fn is_active_status_rejects_4xx_except_401_403() {
+        for status in [400, 402, 404, 405, 406, 407, 408, 409, 410, 411, 412, 413, 414, 415, 416, 417, 418, 421, 422, 423, 424, 425, 426, 428, 429, 431, 451] {
+            assert!(!is_active_status(status), "status {status} should not be active");
+        }
+    }
+
+    #[test]
+    fn is_active_status_rejects_all_5xx() {
+        for status in [500, 501, 502, 503, 504, 505, 506, 507, 508, 510, 511] {
+            assert!(!is_active_status(status), "status {status} should not be active");
+        }
+    }
+
+    #[test]
+    fn is_active_status_rejects_nonstandard() {
+        assert!(!is_active_status(0));
+        assert!(!is_active_status(1));
+        assert!(!is_active_status(999));
+    }
+
+    #[test]
+    fn looks_like_api_response_plain_html_false() {
+        assert!(!looks_like_api_response("<html>hello</html>", 200, None, None));
+    }
+
+    #[test]
+    fn looks_like_api_response_xml_false() {
+        assert!(!looks_like_api_response("<?xml version='1.0'?><root></root>", 200, None, None));
+    }
+
+    #[test]
+    fn looks_like_api_response_text_false() {
+        assert!(!looks_like_api_response("just some text", 200, None, None));
+    }
+
+    #[test]
+    fn looks_like_api_response_empty_401_without_www_auth_false() {
+        assert!(!looks_like_api_response("", 401, None, None));
+    }
+
+    #[test]
+    fn looks_like_api_response_empty_403_without_www_auth_false() {
+        assert!(!looks_like_api_response("", 403, None, None));
+    }
+
+    #[test]
+    fn looks_like_api_response_json_array_true() {
+        assert!(looks_like_api_response("[{\"id\":1}]", 200, None, None));
+    }
+
+    #[test]
+    fn looks_like_api_response_json_with_message_true() {
+        assert!(looks_like_api_response("{\"message\":\"ok\"}", 200, None, None));
+    }
+
+    #[test]
+    fn looks_like_api_response_json_with_error_true() {
+        assert!(looks_like_api_response("{\"error\":\"nope\"}", 200, None, None));
+    }
+
+    #[test]
+    fn looks_like_api_response_json_with_version_true() {
+        assert!(looks_like_api_response("{\"version\":\"1.0\"}", 200, None, None));
+    }
+
+    #[test]
+    fn looks_like_api_response_json_with_api_true() {
+        assert!(looks_like_api_response("{\"api\":\"v2\"}", 200, None, None));
+    }
+
+    #[test]
+    fn is_interesting_shadow_response_debug_keyword() {
+        assert!(is_interesting_shadow_response("debug mode enabled", 200));
+    }
+
+    #[test]
+    fn is_interesting_shadow_response_stack_keyword() {
+        assert!(is_interesting_shadow_response("stack trace here", 200));
+    }
+
+    #[test]
+    fn is_interesting_shadow_response_error_json() {
+        assert!(is_interesting_shadow_response("{\"error\":\"not found\"}", 200));
+    }
+
+    #[test]
+    fn is_interesting_shadow_response_plain_text_false() {
+        assert!(!is_interesting_shadow_response("hello world", 200));
+    }
+
+    #[test]
+    fn is_interesting_shadow_response_401_empty_true() {
+        assert!(is_interesting_shadow_response("", 401));
+    }
+
+    #[test]
+    fn is_interesting_shadow_response_403_empty_true() {
+        assert!(is_interesting_shadow_response("", 403));
+    }
+
+    #[test]
+    fn version_paths_include_v1_1() {
+        assert!(VERSION_PATHS.contains(&"/v1.1"));
+    }
+
+    #[test]
+    fn version_paths_include_v2_0() {
+        assert!(VERSION_PATHS.contains(&"/v2.0"));
+    }
+
+    #[test]
+    fn shadow_paths_include_sandbox() {
+        assert!(SHADOW_PATHS.iter().any(|(p, _, _)| *p == "/sandbox"));
+    }
+
+    #[test]
+    fn shadow_paths_include_preview() {
+        assert!(SHADOW_PATHS.iter().any(|(p, _, _)| *p == "/preview"));
+    }
+
+    #[test]
+    fn shadow_paths_include_canary() {
+        assert!(SHADOW_PATHS.iter().any(|(p, _, _)| *p == "/canary"));
     }
 }

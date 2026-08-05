@@ -3,7 +3,7 @@ name = "gossan-js-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2021"
-repository = "https://github.com/santhsecurity/gossan"
+repository = "https://github.com/santhreal/gossan"
 
 [workspace]
 

@@ -39,6 +39,36 @@ const AUTH_PATHS: &[&str] = &[
 
 const BURST_COUNT: usize = 12;
 
+// Statuses that, if consistent across a *complete* burst, indicate no
+// HTTP-level rate limiting.  429/503 are treated as explicit throttling.
+const RATE_LIMIT_ACCEPTED_STATUSES: &[u16] = &[400, 401, 403, 422, 200];
+
+/// Returns true only when every request in the burst returned a response and all
+/// responses are identical non-throttling statuses.  Incomplete bursts (e.g.
+/// connection drops or timeouts, which are themselves common rate-limiting
+/// reactions) must not be reported as "no rate limiting".
+fn burst_suggests_no_rate_limit(statuses: &[u16]) -> bool {
+    if statuses.len() != BURST_COUNT {
+        return false;
+    }
+    let got_429 = statuses.contains(&429);
+    let got_503 = statuses.contains(&503);
+    let all_same = statuses.windows(2).all(|w| w[0] == w[1]);
+    let first_status = statuses[0];
+    !got_429 && !got_503 && all_same && RATE_LIMIT_ACCEPTED_STATUSES.contains(&first_status)
+}
+
+/// Detect a soft throttle by a late-request latency spike relative to the
+/// burst average.
+fn latency_increases(latencies: &[u128]) -> bool {
+    if latencies.is_empty() {
+        return false;
+    }
+    let avg = latencies.iter().sum::<u128>() / latencies.len() as u128;
+    let last = *latencies.last().unwrap();
+    last > avg * 3
+}
+
 // Dummy credentials that will never succeed but look realistic
 const DUMMY_JSON: &str =
     r#"{"username":"probe-rate-limit@invalid.test","password":"!RateLimitProbe99"}"#;
@@ -71,10 +101,14 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
             let s = resp.status().as_u16();
             if matches!(s, 400 | 401 | 403 | 422 | 429 | 200) {
                 // If it returns 200/etc., confirm it's not a soft-404 catch-all
-                let bytes = if let Ok(body_bytes) = resp.bytes().await {
-                    body_bytes.to_vec()
-                } else {
-                    Vec::new()
+                let Some(bytes) =
+                    crate::soft404::read_limited(resp, crate::MAX_BODY_BYTES).await
+                else {
+                    tracing::warn!(
+                        "auth-endpoint body read failed or exceeded cap at {}; skipping soft-404 check",
+                        url
+                    );
+                    continue;
                 };
                 if !crate::soft404::is_likely_404(s, &bytes, soft404_base.as_ref(), false) {
                     endpoint = Some((url, true));
@@ -93,10 +127,14 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
         {
             let s = resp.status().as_u16();
             if matches!(s, 400 | 401 | 403 | 422 | 200) {
-                let bytes = if let Ok(body_bytes) = resp.bytes().await {
-                    body_bytes.to_vec()
-                } else {
-                    Vec::new()
+                let Some(bytes) =
+                    crate::soft404::read_limited(resp, crate::MAX_BODY_BYTES).await
+                else {
+                    tracing::warn!(
+                        "auth-endpoint body read failed or exceeded cap at {}; skipping soft-404 check",
+                        url
+                    );
+                    continue;
                 };
                 if !crate::soft404::is_likely_404(s, &bytes, soft404_base.as_ref(), false) {
                     endpoint = Some((url, false));
@@ -116,7 +154,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
         .map(|u| u.path().to_string())
         .unwrap_or_else(|_| auth_url.clone());
 
-    // First request already hit a rate limit — good server
+    // First request already hit a rate limit, good server
     if let Ok(resp) = client
         .post(&auth_url)
         .header(
@@ -157,8 +195,15 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
             .send()
             .await;
         latencies.push(req_start.elapsed().as_millis());
-        if let Ok(r) = resp {
-            statuses.push(r.status().as_u16());
+        match resp {
+            Ok(r) => statuses.push(r.status().as_u16()),
+            Err(e) => {
+                tracing::warn!(
+                    url = %auth_url,
+                    error = %e,
+                    "rate-limit burst request failed; excluding from burst sample"
+                );
+            }
         }
     }
 
@@ -168,18 +213,15 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
         return Ok(findings);
     }
 
-    let got_429 = statuses.contains(&429);
-    let got_503 = statuses.contains(&503);
-    let all_same = statuses.windows(2).all(|w| w[0] == w[1]);
-    let first_status = statuses[0];
     let last_status = *statuses.last().unwrap_or(&0);
+    let first_status = statuses[0];
 
-    // No rate limiting detected if all responses are consistent non-429
-    if !got_429 && !got_503 && all_same && matches!(first_status, 400 | 401 | 403 | 422 | 200) {
-        // Latency increase could indicate soft rate limiting (queuing)
+    // No rate limiting detected only when the full burst completed and all
+    // responses are consistent non-throttling statuses.
+    if burst_suggests_no_rate_limit(&statuses) {
         let avg_lat: u128 = latencies.iter().sum::<u128>() / latencies.len() as u128;
         let last_lat = *latencies.last().unwrap_or(&0);
-        let lat_increase = last_lat > avg_lat * 3; // 3× slowdown = soft throttle
+        let lat_increase = latency_increases(&latencies); // 3× slowdown = soft throttle
 
         if lat_increase {
             gossan_core::try_push_finding(
@@ -213,7 +255,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                         "{} returned HTTP {} for all {} rapid login attempts with no \
                              throttling, 429, or increasing latency. An attacker can perform \
                              unlimited credential brute force or stuffing attacks at full network \
-                             speed — thousands of attempts per second from a single IP.",
+                             speed: thousands of attempts per second from a single IP.",
                         auth_url, first_status, BURST_COUNT
                     ),
                 )
@@ -243,4 +285,122 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
     }
 
     Ok(findings)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auth_paths_include_login() {
+        assert!(AUTH_PATHS.contains(&"/login"));
+        assert!(AUTH_PATHS.contains(&"/api/login"));
+    }
+
+    #[test]
+    fn auth_paths_include_oauth_token() {
+        assert!(AUTH_PATHS.contains(&"/oauth/token"));
+    }
+
+    #[test]
+    fn auth_paths_count_is_reasonable() {
+        assert!(
+            AUTH_PATHS.len() >= 10,
+            "expected >=10 auth paths, got {}",
+            AUTH_PATHS.len()
+        );
+    }
+
+    #[test]
+    fn dummy_json_contains_probe_username() {
+        assert!(DUMMY_JSON.contains("probe-rate-limit@invalid.test"));
+    }
+
+    #[test]
+    fn dummy_form_contains_probe_username() {
+        assert!(DUMMY_FORM.contains("probe-rate-limit%40invalid.test"));
+    }
+
+    #[test]
+    fn auth_paths_include_session() {
+        assert!(AUTH_PATHS.contains(&"/session"));
+        assert!(AUTH_PATHS.contains(&"/sessions"));
+    }
+
+    #[test]
+    fn auth_paths_include_token() {
+        assert!(AUTH_PATHS.contains(&"/token"));
+    }
+
+    #[test]
+    fn dummy_json_has_password() {
+        assert!(DUMMY_JSON.contains("!RateLimitProbe99"));
+    }
+
+    #[test]
+    fn dummy_form_has_password() {
+        assert!(DUMMY_FORM.contains("%21RateLimitProbe99"));
+    }
+
+    #[test]
+    fn auth_paths_count_exceeds_fifteen() {
+        assert!(AUTH_PATHS.len() > 15, "expected >15 auth paths, got {}", AUTH_PATHS.len());
+    }
+
+    #[test]
+    fn incomplete_burst_is_not_no_rate_limit() {
+        // Old behaviour: an 11-response burst of identical 401s would be
+        // reported as "no rate limiting".  Connection drops/timeouts are
+        // themselves a rate-limiting signal, so incomplete bursts are
+        // inconclusive.
+        let statuses = vec![401; BURST_COUNT - 1];
+        assert!(!burst_suggests_no_rate_limit(&statuses));
+    }
+
+    #[test]
+    fn complete_burst_all_401_suggests_no_rate_limit() {
+        let statuses = vec![401; BURST_COUNT];
+        assert!(burst_suggests_no_rate_limit(&statuses));
+    }
+
+    #[test]
+    fn complete_burst_with_429_is_not_unlimited() {
+        let mut statuses = vec![401; BURST_COUNT - 1];
+        statuses.push(429);
+        assert!(!burst_suggests_no_rate_limit(&statuses));
+    }
+
+    #[test]
+    fn complete_burst_all_200_suggests_no_rate_limit() {
+        let statuses = vec![200; BURST_COUNT];
+        assert!(burst_suggests_no_rate_limit(&statuses));
+    }
+
+    #[test]
+    fn mixed_statuses_are_not_unlimited() {
+        let statuses = vec![401, 401, 401, 401, 403, 401, 401, 401, 401, 401, 401, 401];
+        assert!(!burst_suggests_no_rate_limit(&statuses));
+    }
+
+    #[test]
+    fn empty_burst_is_not_unlimited() {
+        assert!(!burst_suggests_no_rate_limit(&[]));
+    }
+
+    #[test]
+    fn latency_increases_detects_late_spike() {
+        let latencies = vec![10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 500];
+        assert!(latency_increases(&latencies));
+    }
+
+    #[test]
+    fn latency_increases_false_when_flat() {
+        let latencies = vec![10; BURST_COUNT];
+        assert!(!latency_increases(&latencies));
+    }
+
+    #[test]
+    fn latency_increases_false_for_empty() {
+        assert!(!latency_increases(&[]));
+    }
 }

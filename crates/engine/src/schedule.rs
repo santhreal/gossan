@@ -156,7 +156,7 @@ impl Iterator for ScanSchedule {
     type Item = (u64, u64); // (ip_index, port_index)
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.current >= self.total {
+        if self.current >= self.total || self.num_ports == 0 {
             return None;
         }
 
@@ -169,7 +169,7 @@ impl Iterator for ScanSchedule {
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = (self.total - self.current) as usize;
+        let remaining = self.total.saturating_sub(self.current) as usize;
         (remaining, Some(remaining))
     }
 }
@@ -273,6 +273,23 @@ mod tests {
             "schedule should not be sequential: {first_ten:?}"
         );
     }
+
+    #[test]
+    fn schedule_zero_ports_yields_nothing() {
+        let mut schedule = ScanSchedule::new(10, 0, 42);
+        assert_eq!(schedule.next(), None);
+        assert_eq!(schedule.size_hint(), (0, Some(0)));
+    }
+
+    #[test]
+    fn schedule_size_hint_never_underflows() {
+        let mut schedule = ScanSchedule::new(5, 5, 42);
+        // Exhaust the iterator
+        let _: Vec<_> = schedule.by_ref().collect();
+        assert_eq!(schedule.size_hint(), (0, Some(0)));
+        // Calling again after exhaustion must not panic
+        assert_eq!(schedule.size_hint(), (0, Some(0)));
+    }
 }
 
 #[cfg(test)]
@@ -304,6 +321,29 @@ mod proptests {
             let shuffled = perm.shuffle(index);
             let back = perm.unshuffle(shuffled);
             prop_assert_eq!(back, index);
+        }
+
+        #[test]
+        fn schedule_zero_ports_is_empty(num_ips in 0u64..1000, seed in any::<u64>()) {
+            let schedule = ScanSchedule::new(num_ips, 0, seed);
+            prop_assert_eq!(schedule.len(), 0);
+            prop_assert_eq!(schedule.count(), 0);
+        }
+
+        #[test]
+        fn schedule_exact_size_matches_count(num_ips in 1u64..100, num_ports in 1u64..100, seed in any::<u64>()) {
+            let schedule = ScanSchedule::new(num_ips, num_ports, seed);
+            let expected = (num_ips * num_ports) as usize;
+            prop_assert_eq!(schedule.len(), expected);
+            prop_assert_eq!(schedule.count(), expected);
+        }
+
+        #[test]
+        fn permutation_shuffle_is_deterministic(range in 1u64..1000, seed in any::<u64>(), index in 0u64..1000) {
+            let index = index % range;
+            let perm1 = BlackrockPermutation::new(range, seed);
+            let perm2 = BlackrockPermutation::new(range, seed);
+            prop_assert_eq!(perm1.shuffle(index), perm2.shuffle(index));
         }
     }
 }

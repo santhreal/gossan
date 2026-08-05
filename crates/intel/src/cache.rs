@@ -68,7 +68,19 @@ impl IntelCache {
             return Ok(None);
         }
 
-        Ok(serde_json::from_str(&data).ok())
+        match serde_json::from_str(&data) {
+            Ok(v) => Ok(Some(v)),
+            Err(e) => {
+                tracing::warn!(
+                    source = %source,
+                    target_type = %target_type,
+                    target_value = %target_value,
+                    error = %e,
+                    "intel cache JSON corrupt; treating as miss"
+                );
+                Ok(None)
+            }
+        }
     }
 
     /// Store an enrichment in the cache.

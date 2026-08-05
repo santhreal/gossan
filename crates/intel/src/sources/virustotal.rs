@@ -1,4 +1,4 @@
-//! VirusTotal source — IP and domain reputation.
+//! VirusTotal source: IP and domain reputation.
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -32,17 +32,22 @@ impl IntelSource for VirusTotalSource {
             .api_key
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("VirusTotal requires an API key"))?;
-        let url = format!("{BASE_URL}/ip_addresses/{ip}");
+        let mut url = url::Url::parse(BASE_URL)?;
+        {
+            let mut segs = url.path_segments_mut().map_err(|_| anyhow::anyhow!("invalid base URL"))?;
+            segs.push("ip_addresses");
+            segs.push(ip);
+        }
         let resp = self
             .client
-            .get(&url)
+            .get(url)
             .header("x-apikey", key)
             .send()
             .await?
             .error_for_status()?;
         // VT IP/domain payloads can include hundreds of vendor verdict
         // entries plus historical analysis blobs; cap at 8 MiB.
-        let body: VtResp = gossan_core::net::bounded_json(resp, 8 * 1024 * 1024).await?;
+        let body: VtResp = gossan_core::net::bounded_json(resp, super::MAX_INTEL_JSON_BYTES).await?;
 
         let mut enrichment = IntelEnrichment::new("virustotal", "ip", ip);
         if let Some(stats) = body.data.attributes.last_analysis_stats {
@@ -88,17 +93,22 @@ impl IntelSource for VirusTotalSource {
             .api_key
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("VirusTotal requires an API key"))?;
-        let url = format!("{BASE_URL}/domains/{domain}");
+        let mut url = url::Url::parse(BASE_URL)?;
+        {
+            let mut segs = url.path_segments_mut().map_err(|_| anyhow::anyhow!("invalid base URL"))?;
+            segs.push("domains");
+            segs.push(domain);
+        }
         let resp = self
             .client
-            .get(&url)
+            .get(url)
             .header("x-apikey", key)
             .send()
             .await?
             .error_for_status()?;
         // VT IP/domain payloads can include hundreds of vendor verdict
         // entries plus historical analysis blobs; cap at 8 MiB.
-        let body: VtResp = gossan_core::net::bounded_json(resp, 8 * 1024 * 1024).await?;
+        let body: VtResp = gossan_core::net::bounded_json(resp, super::MAX_INTEL_JSON_BYTES).await?;
 
         let mut enrichment = IntelEnrichment::new("virustotal", "domain", domain);
         if let Some(stats) = body.data.attributes.last_analysis_stats {

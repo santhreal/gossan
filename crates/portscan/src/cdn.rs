@@ -32,11 +32,11 @@ pub fn is_cdn_ip(ip: IpAddr, ranges: &[ipnet::IpNet]) -> bool {
 /// Lightweight heuristic: query PTR for the IP and look for known
 /// CDN hostnames. Used when no explicit range file is configured.
 ///
-/// `resolver` is the standard `hickory_resolver::TokioAsyncResolver`
-/// — gossan-portscan already depends on hickory transitively via
+/// `resolver` is the standard `hickory_resolver::TokioResolver`
+///: gossan-portscan already depends on hickory transitively via
 /// gossan-core, so we take the resolver directly rather than
 /// re-exporting it.
-pub async fn ptr_heuristic(resolver: &hickory_resolver::TokioAsyncResolver, ip: IpAddr) -> bool {
+pub async fn ptr_heuristic(resolver: &hickory_resolver::TokioResolver, ip: IpAddr) -> bool {
     let Ok(name) = resolver.reverse_lookup(ip).await else {
         return false;
     };
@@ -93,5 +93,58 @@ mod tests {
     fn is_cdn_ip_empty_ranges_never_matches() {
         let ranges: Vec<ipnet::IpNet> = Vec::new();
         assert!(!is_cdn_ip("1.1.1.1".parse().unwrap(), &ranges));
+    }
+
+    #[test]
+    fn is_cdn_ip_extreme_cidrs() {
+        // Adversarial: /32 (single host), /0 (everything), /128 (single IPv6 host)
+        let ranges: Vec<ipnet::IpNet> = vec![
+            "1.1.1.1/32".parse().unwrap(),
+            "0.0.0.0/0".parse().unwrap(),
+            "::1/128".parse().unwrap(),
+        ];
+        assert!(is_cdn_ip("1.1.1.1".parse().unwrap(), &ranges));
+        assert!(is_cdn_ip("8.8.8.8".parse().unwrap(), &ranges));
+        assert!(is_cdn_ip("::1".parse().unwrap(), &ranges));
+        assert!(!is_cdn_ip("::2".parse().unwrap(), &ranges));
+    }
+
+    #[test]
+    fn load_ranges_extreme_lines_do_not_panic() {
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        writeln!(tmp, "0.0.0.0/0").unwrap();
+        writeln!(tmp, "::/0").unwrap();
+        writeln!(tmp, "255.255.255.255/32").unwrap();
+        writeln!(tmp, "garbage").unwrap();
+        writeln!(tmp, "").unwrap();
+        writeln!(tmp, "# comment").unwrap();
+        let ranges = load_ranges(tmp.path()).unwrap();
+        assert_eq!(ranges.len(), 3);
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn is_cdn_ip_never_panics(
+            octets in prop::array::uniform4(any::<u8>()),
+        ) {
+            let ip = IpAddr::V4(std::net::Ipv4Addr::from(octets));
+            let ranges: Vec<ipnet::IpNet> = vec!["10.0.0.0/8".parse().unwrap()];
+            let _ = is_cdn_ip(ip, &ranges);
+        }
+
+        #[test]
+        fn is_cdn_ip_empty_ranges_always_false(
+            octets in prop::array::uniform4(any::<u8>()),
+        ) {
+            let ip = IpAddr::V4(std::net::Ipv4Addr::from(octets));
+            let ranges: Vec<ipnet::IpNet> = Vec::new();
+            prop_assert!(!is_cdn_ip(ip, &ranges));
+        }
     }
 }

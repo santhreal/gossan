@@ -2,7 +2,7 @@
 //!
 //! The pre-existing `Slash24Backoff` in `scan.rs` reacts to RST bursts.
 //! This module is the parallel consumer for ICMP "destination
-//! unreachable" packets — a strong signal that a router or border
+//! unreachable" packets, a strong signal that a router or border
 //! firewall is shedding load and we should slow down on the entire
 //! `/24` rather than burn TX budget per port.
 //!
@@ -18,7 +18,7 @@
 //!    socket reader running alongside the TCP RX).
 //!
 //! When `netforge` lands ICMP surfacing this consumer plugs in
-//! without further changes — that is open work, not deferred.
+//! without further changes (that is open work, not deferred).
 
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
@@ -89,7 +89,7 @@ impl IcmpBackoff {
         self.feed_at(slash24, count, cfg, Instant::now())
     }
 
-    /// Test-friendly variant — explicit `now` so we can simulate time.
+    /// Test-friendly variant (explicit `now` so we can simulate time).
     pub fn feed_at(&self, slash24: u32, count: u32, cfg: IcmpBackoffConfig, now: Instant) -> bool {
         let Ok(mut g) = self.inner.write() else {
             return false;
@@ -128,7 +128,7 @@ impl IcmpBackoff {
         self.is_blocked_at(slash24, Instant::now())
     }
 
-    /// Test-friendly check — explicit `now`.
+    /// Test-friendly check (explicit `now`).
     #[must_use]
     pub fn is_blocked_at(&self, slash24: u32, now: Instant) -> bool {
         let Ok(g) = self.inner.read() else {
@@ -212,7 +212,7 @@ mod tests {
         let c = cfg();
         let s = IcmpBackoff::slash24_of(Ipv4Addr::new(10, 0, 0, 2));
         let t0 = Instant::now();
-        // 3 events at t0, then 3 events well after window — should NOT trip.
+        // 3 events at t0, then 3 events well after window (should NOT trip).
         b.feed_at(s, 3, c, t0);
         let after_window = t0 + c.window + Duration::from_millis(1);
         let tripped = b.feed_at(s, 3, c, after_window);
@@ -249,8 +249,69 @@ mod tests {
     fn burst_count_can_be_supplied_in_one_call() {
         let b = IcmpBackoff::new();
         let s = IcmpBackoff::slash24_of(Ipv4Addr::new(10, 0, 0, 1));
-        // Single feed of 100 unreachables — must trip on the spot.
+        // Single feed of 100 unreachables (must trip on the spot).
         assert!(b.feed(s, 100, cfg()));
         assert!(b.is_blocked(s));
+    }
+
+    #[test]
+    fn feed_with_u32_max_count_does_not_panic() {
+        // Adversarial: u32::MAX count should not panic.
+        let b = IcmpBackoff::new();
+        let s = IcmpBackoff::slash24_of(Ipv4Addr::new(10, 0, 0, 1));
+        let c = IcmpBackoffConfig {
+            window: Duration::from_secs(1),
+            burst_threshold: 5,
+            backoff: Duration::from_secs(10),
+        };
+        assert!(b.feed(s, u32::MAX, c));
+    }
+
+    #[test]
+    fn is_blocked_with_any_slash24_does_not_panic() {
+        // Adversarial: every possible u32 key should be accepted.
+        let b = IcmpBackoff::new();
+        for key in [0u32, 1, u32::MAX - 1, u32::MAX] {
+            let _ = b.is_blocked(key);
+        }
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn feed_never_panics(
+            slash24 in any::<u32>(),
+            count in any::<u32>(),
+            threshold in 1u32..1000u32,
+        ) {
+            let b = IcmpBackoff::new();
+            let c = IcmpBackoffConfig {
+                window: Duration::from_secs(1),
+                burst_threshold: threshold,
+                backoff: Duration::from_secs(10),
+            };
+            let _ = b.feed(slash24, count, c);
+        }
+
+        #[test]
+        fn is_blocked_after_feed_implies_blocked(
+            slash24 in any::<u32>(),
+            count in 1u32..1000u32,
+        ) {
+            let b = IcmpBackoff::new();
+            let c = IcmpBackoffConfig {
+                window: Duration::from_secs(1),
+                burst_threshold: 1,
+                backoff: Duration::from_secs(10),
+            };
+            let tripped = b.feed(slash24, count, c);
+            let blocked = b.is_blocked(slash24);
+            prop_assert!(blocked || !tripped, "if it tripped it must be blocked");
+        }
     }
 }

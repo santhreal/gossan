@@ -151,7 +151,7 @@ fn roundtrip_network() {
 #[test]
 fn roundtrip_repository() {
     let t = Target::Repository(RepositoryTarget {
-        url: Url::parse("https://github.com/santhsecurity/gossan").unwrap(),
+        url: Url::parse("https://github.com/santhreal/gossan").unwrap(),
         service: ScmService::GitHub,
         source: DiscoverySource::GitHub,
         branch: Some("main".into()),
@@ -160,7 +160,7 @@ fn roundtrip_repository() {
     let Target::Repository(repo) = r else {
         panic!("variant changed");
     };
-    assert_eq!(repo.url.as_str(), "https://github.com/santhsecurity/gossan");
+    assert_eq!(repo.url.as_str(), "https://github.com/santhreal/gossan");
     assert_eq!(repo.service, ScmService::GitHub);
     assert_eq!(repo.branch.as_deref(), Some("main"));
 }

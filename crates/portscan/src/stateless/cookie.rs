@@ -29,7 +29,7 @@ impl SynCookie {
     pub fn random() -> Self {
         use rand::RngCore;
         let mut key = [0u8; 16];
-        rand::thread_rng().fill_bytes(&mut key);
+        rand::rngs::OsRng.fill_bytes(&mut key);
         Self { key }
     }
 

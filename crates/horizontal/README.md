@@ -1,6 +1,6 @@
 # gossan-horizontal
 
-Horizontal discovery — ASN/BGP prefix mapping and sibling-domain
+Horizontal discovery: ASN/BGP prefix mapping and sibling-domain
 correlation.
 
 Expands the attack surface beyond the seed domain by mapping the

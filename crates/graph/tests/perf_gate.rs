@@ -1,6 +1,6 @@
 //! Graph-store insert perf gate.
 //!
-//! Per GOSSAN_LEGENDARY Section F: persisting 10k nodes must complete
+//! Per GOSSAN_DEPTH_CONTRACT Section F: persisting 10k nodes must complete
 //! in under 1 second on a release build. Catches regressions in the
 //! SQLite write path (missing transaction, accidental flushes,
 //! schema-migration cost creeping in).

@@ -9,7 +9,7 @@
 //! 2. **NS takeover**: Nameserver delegation points to a domain that doesn't
 //!    resolve or is available for registration.
 //!
-//! 3. **MX takeover**: MX records point to unclaimed mail servers — an attacker
+//! 3. **MX takeover**: MX records point to unclaimed mail servers, an attacker
 //!    can receive email for the domain.
 //!
 //! # Fingerprint database
@@ -18,14 +18,14 @@
 //! To add a service: append `service-cname-suffix:Service Name` to the file.
 
 use gossan_core::Target;
-use hickory_resolver::{proto::rr::RecordType, TokioAsyncResolver};
+use hickory_resolver::{proto::rr::RecordType, TokioResolver};
 use secfinding::{Evidence, Finding, FindingKind, Severity};
 
 /// CNAME takeover fingerprints loaded at compile time.
 static FINGERPRINTS: &str = include_str!("takeovers.txt");
 
 /// Run all takeover checks: CNAME, NS, and MX.
-pub async fn check(resolver: &TokioAsyncResolver, domain: &str, target: &Target) -> Vec<Finding> {
+pub async fn check(resolver: &TokioResolver, domain: &str, target: &Target) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     findings.extend(check_cname(resolver, domain, target).await);
@@ -35,7 +35,7 @@ pub async fn check(resolver: &TokioAsyncResolver, domain: &str, target: &Target)
 }
 
 /// Parse the fingerprint database into (suffix, service_name) pairs.
-fn fingerprints() -> Vec<(&'static str, &'static str)> {
+pub fn fingerprints() -> Vec<(&'static str, &'static str)> {
     FINGERPRINTS
         .lines()
         .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
@@ -49,7 +49,27 @@ fn fingerprints() -> Vec<(&'static str, &'static str)> {
 // ── CNAME takeover ──────────────────────────────────────────────────────────
 
 /// Detect dangling CNAMEs pointing at 60+ service fingerprints.
-async fn check_cname(resolver: &TokioAsyncResolver, domain: &str, target: &Target) -> Vec<Finding> {
+
+/// True when the name has no A records (NXDOMAIN / empty), not on transient DNS errors.
+async fn lookup_name_absent(resolver: &TokioResolver, name: &str) -> bool {
+    match resolver.lookup(name, RecordType::A).await {
+        Ok(lookup) => lookup.iter().next().is_none(),
+        Err(e) => {
+            if e.is_nx_domain() || e.is_no_records_found() {
+                true
+            } else {
+                tracing::warn!(
+                    name,
+                    error = %e,
+                    "dns takeover: A lookup failed (not treating as dangling)"
+                );
+                false
+            }
+        }
+    }
+}
+
+async fn check_cname(resolver: &TokioResolver, domain: &str, target: &Target) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     let cname = match resolver.lookup(domain, RecordType::CNAME).await {
@@ -80,8 +100,8 @@ async fn check_cname(resolver: &TokioAsyncResolver, domain: &str, target: &Targe
         None => return findings,
     };
 
-    // 1. Check if the CNAME target actually resolves
-    let dns_dangling = resolver.lookup(domain, RecordType::A).await.is_err();
+    // 1. Check if the CNAME target actually resolves (NXDOMAIN/empty only).
+    let dns_dangling = lookup_name_absent(resolver, domain).await;
 
     if dns_dangling {
         gossan_core::try_push_finding(Finding::builder("dns", target.domain().unwrap_or("?"), Severity::High)
@@ -109,8 +129,8 @@ async fn check_cname(resolver: &TokioAsyncResolver, domain: &str, target: &Targe
 ///
 /// If a domain's NS record points to a nameserver that doesn't resolve,
 /// an attacker who registers that nameserver domain controls all DNS for
-/// the victim domain — the most severe form of takeover.
-async fn check_ns(resolver: &TokioAsyncResolver, domain: &str, target: &Target) -> Vec<Finding> {
+/// the victim domain (the most severe form of takeover).
+async fn check_ns(resolver: &TokioResolver, domain: &str, target: &Target) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     let ns_records = match resolver.lookup(domain, RecordType::NS).await {
@@ -130,14 +150,14 @@ async fn check_ns(resolver: &TokioAsyncResolver, domain: &str, target: &Target) 
         .collect();
 
     for ns in &nameservers {
-        if resolver.lookup(ns.as_str(), RecordType::A).await.is_err() {
+        if lookup_name_absent(resolver, ns.as_str()).await {
             gossan_core::try_push_finding(
                 Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Critical)
                     .title(format!("NS takeover: dangling nameserver {ns}"))
                     .detail(format!(
                         "{domain} delegates DNS to {ns} which does not resolve. \
                          If an attacker registers {ns}, they control ALL DNS records \
-                         for {domain} — full domain hijack."
+                         for {domain} (full domain hijack)."
                     ))
                     .kind(FindingKind::Vulnerability)
                     .evidence(Evidence::DnsRecord {
@@ -157,7 +177,7 @@ async fn check_ns(resolver: &TokioAsyncResolver, domain: &str, target: &Target) 
         gossan_core::try_push_finding(
             Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Low)
                 .title(format!(
-                    "Only {} nameserver(s) — no redundancy",
+                    "Only {} nameserver(s), no redundancy",
                     nameservers.len()
                 ))
                 .detail(format!(
@@ -180,8 +200,8 @@ async fn check_ns(resolver: &TokioAsyncResolver, domain: &str, target: &Target) 
 /// Detect dangling MX records pointing to unresolvable mail servers.
 ///
 /// An attacker who controls the MX target can receive all email sent to
-/// the domain — password resets, MFA codes, confidential communications.
-async fn check_mx(resolver: &TokioAsyncResolver, domain: &str, target: &Target) -> Vec<Finding> {
+/// the domain (password resets, MFA codes, confidential communications).
+async fn check_mx(resolver: &TokioResolver, domain: &str, target: &Target) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     let mx_records = match resolver.mx_lookup(domain).await {
@@ -196,16 +216,16 @@ async fn check_mx(resolver: &TokioAsyncResolver, domain: &str, target: &Target) 
 
     for mx in &exchanges {
         if mx == "." {
-            continue; // null MX (RFC 7505) — intentional
+            continue; // null MX (RFC 7505), intentional
         }
-        if resolver.lookup(mx.as_str(), RecordType::A).await.is_err() {
+        if lookup_name_absent(resolver, mx.as_str()).await {
             gossan_core::try_push_finding(
                 Finding::builder("dns", target.domain().unwrap_or("?"), Severity::High)
                     .title(format!("MX takeover risk: dangling mail server {mx}"))
                     .detail(format!(
                         "{domain} MX record points to {mx} which does not resolve. \
                          If an attacker claims this hostname, they receive all email \
-                         for {domain} — password resets, MFA codes, confidential data."
+                         for {domain} (password resets, MFA codes, confidential data)."
                     ))
                     .kind(FindingKind::Vulnerability)
                     .evidence(Evidence::DnsRecord {

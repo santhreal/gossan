@@ -16,7 +16,7 @@ The numbers in this file are measured on:
 The counting-stub backend (`crates/engine/benches/tx_hot_loop.rs`
 and `crates/engine/tests/perf_gate.rs`) is what the perf gates use.
 That backend strips out the syscall ring and NIC driver so the
-measured number is gossan's own throughput ceiling — the part that
+measured number is gossan's own throughput ceiling, the part that
 catches regressions in the schedule + packet stamp + rate-limiter
 path.
 
@@ -26,8 +26,8 @@ for a head-to-head against masscan.
 
 ## Measured baselines
 
-These are the F-section regression gates from `GOSSAN_LEGENDARY.md`.
-Each is a release-only Rust integration test — CI fails when any
+These are the F-section regression gates from `GOSSAN_DEPTH.md`.
+Each is a release-only Rust integration test. CI fails when any
 drops below the documented gate.
 
 | Stage                          | Test                                                        | Gate          | Measured       |

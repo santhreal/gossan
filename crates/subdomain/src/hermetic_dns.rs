@@ -4,13 +4,19 @@ use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 
-use hickory_resolver::config::{NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
+use hickory_resolver::config::{NameServerConfig, ResolverConfig, ResolverOpts};
+use hickory_resolver::name_server::TokioConnectionProvider;
+use hickory_resolver::proto::xfer::Protocol;
 use tokio::net::UdpSocket;
 use tokio::sync::RwLock;
 
 const QTYPE_A: u16 = 1;
 const QTYPE_CNAME: u16 = 5;
 const QTYPE_AAAA: u16 = 28;
+
+/// Minimum byte length of a valid DNS message (RFC 1035 §4.1.1. 12-byte header).
+/// Any message shorter than this is malformed and must be rejected.
+const DNS_MIN_MSG_LEN: usize = 12;
 
 /// Per-FQDN records (keys are lowercase, no trailing dot).
 #[derive(Clone, Default)]
@@ -77,7 +83,7 @@ impl HermeticZone {
     }
 
     fn respond(&self, query: &[u8]) -> Option<Vec<u8>> {
-        if query.len() < 12 {
+        if query.len() < DNS_MIN_MSG_LEN {
             return None;
         }
         let qname = parse_qname(query)?;
@@ -194,21 +200,40 @@ impl HermeticZone {
     }
 }
 
-pub fn resolver_for(addr: SocketAddr) -> Arc<hickory_resolver::TokioAsyncResolver> {
+pub fn resolver_for(addr: SocketAddr) -> Arc<hickory_resolver::TokioResolver> {
     let mut config = ResolverConfig::new();
     config.add_name_server(NameServerConfig::new(addr, Protocol::Udp));
     let mut opts = ResolverOpts::default();
     opts.timeout = std::time::Duration::from_secs(2);
     opts.attempts = 1;
-    Arc::new(hickory_resolver::TokioAsyncResolver::tokio(config, opts))
+    Arc::new(
+        hickory_resolver::TokioResolver::builder_with_config(config, TokioConnectionProvider::default())
+            .with_options(opts)
+            .build(),
+    )
 }
 
 /// Build a resolver via `gossan_core::net::build_resolver` targeting this hermetic server.
-pub fn gossan_resolver_for(addr: SocketAddr) -> Arc<hickory_resolver::TokioAsyncResolver> {
+pub fn gossan_resolver_for(addr: SocketAddr) -> Arc<hickory_resolver::TokioResolver> {
     std::env::set_var("GOSSAN_RESOLVER_PORT", addr.port().to_string());
-    let mut cfg = gossan_core::Config::default();
-    cfg.resolvers = vec![addr.ip()];
-    Arc::new(gossan_core::net::build_resolver(&cfg).expect("hermetic resolver"))
+
+    let port = std::env::var("GOSSAN_RESOLVER_PORT")
+        .unwrap()
+        .parse::<u16>()
+        .unwrap();
+    let mut config = ResolverConfig::new();
+    config.add_name_server(NameServerConfig::new(
+        SocketAddr::new(addr.ip(), port),
+        Protocol::Udp,
+    ));
+    let mut opts = ResolverOpts::default();
+    opts.timeout = std::time::Duration::from_secs(2);
+    opts.attempts = 1;
+    Arc::new(
+        hickory_resolver::TokioResolver::builder_with_config(config, TokioConnectionProvider::default())
+            .with_options(opts)
+            .build(),
+    )
 }
 
 /// Serialize env-var mutation across parallel hermetic tests.

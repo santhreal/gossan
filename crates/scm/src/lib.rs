@@ -16,7 +16,7 @@
     clippy::missing_errors_doc
 )]
 
-//! Source code management discovery — GitHub/GitLab organization mapping.
+//! Source code management discovery: GitHub/GitLab organization mapping.
 //!
 //! Discovers repositories, scans for secrets, and identifies dependency
 //! manifests for supply-chain analysis.
@@ -27,7 +27,7 @@ use gossan_core::{Config, ScanInput, Scanner, Target};
 pub mod git_scanner;
 pub mod github;
 pub mod gitlab_api; // named to avoid conflict with crate name
-/// Source control mapping — discovers GitHub/GitLab organizations and repos.
+/// Source control mapping (discovers GitHub/GitLab organizations and repos).
 pub struct ScmScanner;
 
 #[async_trait]
@@ -44,7 +44,7 @@ impl Scanner for ScmScanner {
     }
 
     async fn run(&self, input: ScanInput, config: &Config) -> anyhow::Result<()> {
-        // Drain the inbound channel — `targets: Vec<Target>` has been
+        // Drain the inbound channel: `targets: Vec<Target>` has been
         // retired in favor of the streaming `target_rx`.
         let mut owned: Vec<Target> = Vec::new();
         {

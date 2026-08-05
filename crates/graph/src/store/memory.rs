@@ -5,6 +5,8 @@
 //! the simplest implementation against which the
 //! [`GraphBackend`] trait shape can be verified.
 
+use std::collections::HashMap;
+
 use crate::schema::{EdgeType, NodeType};
 use crate::{Edge, Node};
 
@@ -25,8 +27,8 @@ impl std::error::Error for MemoryError {}
 /// In-memory store of nodes and edges.
 #[derive(Debug, Default, Clone)]
 pub struct MemoryStore {
-    nodes: Vec<Node>,
-    edges: Vec<Edge>,
+    nodes: HashMap<String, Node>,
+    adjacency: HashMap<String, Vec<Edge>>,
 }
 
 impl MemoryStore {
@@ -45,27 +47,47 @@ impl GraphBackend for MemoryStore {
     }
 
     fn write_nodes(&mut self, nodes: &[Node]) -> Result<(), Self::Error> {
-        self.nodes.extend_from_slice(nodes);
+        for node in nodes {
+            if let Some(existing) = self.nodes.get_mut(&node.id) {
+                existing.kind = node.kind;
+                existing.label = node.label.clone();
+                existing.payload = node.payload.clone();
+                existing.last_seen_ms = node.last_seen_ms;
+            } else {
+                self.nodes.insert(node.id.clone(), node.clone());
+            }
+        }
         Ok(())
     }
 
     fn write_edges(&mut self, edges: &[Edge]) -> Result<(), Self::Error> {
-        self.edges.extend_from_slice(edges);
+        for edge in edges {
+            let out = self.adjacency.entry(edge.source_id.clone()).or_default();
+            if let Some(existing) = out
+                .iter_mut()
+                .find(|e| e.target_id == edge.target_id && e.kind == edge.kind)
+            {
+                existing.payload = edge.payload.clone();
+                existing.last_seen_ms = edge.last_seen_ms;
+            } else {
+                out.push(edge.clone());
+            }
+        }
         Ok(())
     }
 
     fn read_nodes(&self) -> Result<Vec<Node>, Self::Error> {
-        Ok(self.nodes.clone())
+        Ok(self.nodes.values().cloned().collect())
     }
 
     fn read_edges(&self) -> Result<Vec<Edge>, Self::Error> {
-        Ok(self.edges.clone())
+        Ok(self.adjacency.values().flatten().cloned().collect())
     }
 
     fn find_nodes_by_type(&self, kind: NodeType) -> Result<Vec<Node>, Self::Error> {
         Ok(self
             .nodes
-            .iter()
+            .values()
             .filter(|n| n.kind == kind)
             .cloned()
             .collect())
@@ -77,17 +99,19 @@ impl GraphBackend for MemoryStore {
         edge_type: Option<EdgeType>,
     ) -> Result<Vec<Edge>, Self::Error> {
         Ok(self
-            .edges
-            .iter()
-            .filter(|e| e.source_id == node_id)
-            .filter(|e| edge_type.map_or(true, |t| e.kind == t))
-            .cloned()
-            .collect())
+            .adjacency
+            .get(node_id)
+            .map_or_else(Vec::new, |out| {
+                out.iter()
+                    .filter(|e| edge_type.map_or(true, |t| e.kind == t))
+                    .cloned()
+                    .collect()
+            }))
     }
 
     fn clear(&mut self) -> Result<(), Self::Error> {
         self.nodes.clear();
-        self.edges.clear();
+        self.adjacency.clear();
         Ok(())
     }
 }
@@ -124,39 +148,67 @@ mod tests {
     }
 
     #[test]
-    fn memory_find_by_type_and_neighbors() {
+    fn deduplicates_nodes_by_id() {
         let mut s = MemoryStore::new();
-        s.init().unwrap();
-        s.write_nodes(&[
-            sample_node("d1", NodeType::Domain),
-            sample_node("d2", NodeType::Domain),
-            sample_node("h1", NodeType::Ip),
-        ])
-        .unwrap();
-        s.write_edges(&[
-            sample_edge("d1", "h1", EdgeType::ResolvesTo),
-            sample_edge("d2", "h1", EdgeType::ResolvesTo),
-        ])
-        .unwrap();
+        let mut first = sample_node("d1", NodeType::Domain);
+        first.label = "first".to_string();
+        s.write_nodes(&[first]).unwrap();
 
-        let domains = s.find_nodes_by_type(NodeType::Domain).unwrap();
-        assert_eq!(domains.len(), 2);
-        let hosts = s.find_nodes_by_type(NodeType::Ip).unwrap();
-        assert_eq!(hosts.len(), 1);
+        let mut second = sample_node("d1", NodeType::Ip);
+        second.label = "second".to_string();
+        s.write_nodes(&[second]).unwrap();
 
-        let from_d1 = s.neighbors("d1", None).unwrap();
-        assert_eq!(from_d1.len(), 1);
-        assert_eq!(from_d1[0].target_id, "h1");
+        let nodes = s.read_nodes().unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].label, "second");
+        assert_eq!(nodes[0].kind, NodeType::Ip);
     }
 
     #[test]
-    fn memory_clear_resets_state() {
+    fn deduplicates_edges_by_triple() {
         let mut s = MemoryStore::new();
-        s.init().unwrap();
-        s.write_nodes(&[sample_node("d1", NodeType::Domain)])
+        s.write_edges(&[sample_edge("d1", "h1", EdgeType::ResolvesTo)])
             .unwrap();
-        assert_eq!(s.read_nodes().unwrap().len(), 1);
-        s.clear().unwrap();
-        assert!(s.read_nodes().unwrap().is_empty());
+        s.write_edges(&[sample_edge("d1", "h1", EdgeType::ResolvesTo)])
+            .unwrap();
+        assert_eq!(s.read_edges().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn neighbors_uses_adjacency_map() {
+        let mut s = MemoryStore::new();
+        s.write_edges(&[
+            sample_edge("d1", "h1", EdgeType::ResolvesTo),
+            sample_edge("d1", "h2", EdgeType::ResolvesTo),
+            sample_edge("h1", "p1", EdgeType::Exposes),
+        ])
+        .unwrap();
+
+        let all = s.neighbors("d1", None).unwrap();
+        assert_eq!(all.len(), 2);
+
+        let typed = s.neighbors("d1", Some(EdgeType::ResolvesTo)).unwrap();
+        assert_eq!(typed.len(), 2);
+
+        let other = s.neighbors("h1", None).unwrap();
+        assert_eq!(other.len(), 1);
+    }
+
+    #[test]
+    fn first_seen_preserved_on_rewrite() {
+        let mut s = MemoryStore::new();
+        let mut first = sample_node("d1", NodeType::Domain);
+        first.first_seen_ms = 42;
+        first.last_seen_ms = 42;
+        s.write_nodes(&[first]).unwrap();
+
+        let mut second = sample_node("d1", NodeType::Domain);
+        second.first_seen_ms = 100;
+        second.last_seen_ms = 100;
+        s.write_nodes(&[second]).unwrap();
+
+        let nodes = s.read_nodes().unwrap();
+        assert_eq!(nodes[0].first_seen_ms, 42);
+        assert_eq!(nodes[0].last_seen_ms, 100);
     }
 }

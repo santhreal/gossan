@@ -7,9 +7,9 @@ worker nodes via gRPC, collects findings, and emits the merged result.
 
 ## Components
 
-- `master::run_master` — listens on a configurable address, accepts
+- `master::run_master`: listens on a configurable address, accepts
   worker registrations, distributes work, aggregates findings.
-- `worker::run_worker` — connects to a master, pulls work, runs the
+- `worker::run_worker`: connects to a master, pulls work, runs the
   configured scanner pipeline, streams findings/updates back.
 
 ## Usage

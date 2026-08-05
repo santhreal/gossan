@@ -52,7 +52,7 @@ jobs:
           curl --proto '=https' --tlsv1.2 --retry 5 --retry-connrefused \
                --location --silent --show-error --fail \
                -o "$HOME/.local/bin/keyhog" \
-               "https://github.com/santhsecurity/keyhog/releases/download/${KEYHOG_VERSION}/keyhog-linux-x86_64"
+               "https://github.com/santhreal/keyhog/releases/download/${KEYHOG_VERSION}/keyhog-linux-x86_64"
           chmod +x "$HOME/.local/bin/keyhog"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/keyhog" --version
@@ -91,7 +91,7 @@ jobs:
           echo "keyhog scan exited with ${{ steps.scan.outputs.scan_exit }}"
           echo "  exit 1 = findings present (see SARIF + Code Scanning)"
           echo "  exit 2 = runtime error (check logs)"
-          # Runtime errors (exit 2+) always fail CI — they indicate the
+          # Runtime errors (exit 2+) always fail CI, they indicate the
           # scanner itself broke, not a finding. Only exit 1 (findings)
           # is gated on the repo opt-in marker.
           if [ "${{ steps.scan.outputs.scan_exit }}" != "1" ]; then

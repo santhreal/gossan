@@ -20,6 +20,17 @@ pub struct IntelRecord {
     pub last_seen: Option<String>,
 }
 
+
+fn parse_tech_stack_json(tech_json: &str) -> Result<Vec<String>, rusqlite::Error> {
+    serde_json::from_str(tech_json).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(
+            5,
+            rusqlite::types::Type::Text,
+            Box::new(e),
+        )
+    })
+}
+
 /// SQLite-backed passive intelligence database for bulk dataset queries.
 pub struct IntelDb {
     // Wrap connection in a Mutex to allow sharing across threads safely
@@ -31,7 +42,7 @@ impl IntelDb {
     ///
     /// Used by integration tests in `tests/intel_tests.rs` to insert
     /// deliberately-corrupt rows that exercise the `query_*`
-    /// error-handling paths. NOT intended for production use — open
+    /// error-handling paths. NOT intended for production use, open
     /// a fresh `Connection` if you need direct SQL access elsewhere.
     #[doc(hidden)]
     pub fn _test_conn(&self) -> &Mutex<Connection> {
@@ -123,7 +134,7 @@ impl IntelDb {
 
         let rows = stmt.query_map(params![ip], |row| {
             let tech_json: String = row.get(5)?;
-            let tech_stack: Vec<String> = serde_json::from_str(&tech_json).unwrap_or_default();
+            let tech_stack: Vec<String> = parse_tech_stack_json(&tech_json)?;
             let port_i32: i32 = row.get(2)?;
             let port = u16::try_from(port_i32)
                 .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(2, port_i32.into()))?;
@@ -154,7 +165,7 @@ impl IntelDb {
 
         let rows = stmt.query_map(params![host], |row| {
             let tech_json: String = row.get(5)?;
-            let tech_stack: Vec<String> = serde_json::from_str(&tech_json).unwrap_or_default();
+            let tech_stack: Vec<String> = parse_tech_stack_json(&tech_json)?;
             let port_i32: i32 = row.get(2)?;
             let port = u16::try_from(port_i32)
                 .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(2, port_i32.into()))?;

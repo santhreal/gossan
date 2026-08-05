@@ -12,17 +12,27 @@ use secfinding::{Finding, FindingKind, Severity};
 
 use crate::utils::normalize_host;
 
-const DEBUG_SIGNALS: &[&str] = &[
-    "actuator",
-    "debug",
-    "phpinfo",
-    "profiler",
-    "diagnostics",
-    "swagger",
-    "graphql introspection",
-    "stack trace",
-    "verbose error",
-];
+/// Endpoints that can plausibly lead to code execution or live
+/// credential/heap extraction, the only class for which a Critical
+/// "Potential RCE" claim is factually defensible:
+///
+/// * `actuator`: Spring Boot /actuator/{env,heapdump,restart,jolokia}:
+///   live secrets, heap dumps, and in some configs restart/exec.
+/// * `phpinfo`: full server environment incl. secrets and paths;
+///   a strong RCE-enabler for chained attacks.
+/// * `profiler`: Symfony/Whoops profilers: token/credential leak
+///   and request replay.
+/// * `debug`: framework debug consoles (Werkzeug/Django debug
+///   shell, Rails web-console): direct code execution.
+///
+/// Pure information-disclosure exposures (`swagger`, `graphql
+/// introspection`, `stack trace`, `verbose error`, `diagnostics`) were
+/// previously in this list, which meant a lone "Swagger UI exposed"
+/// (High) was relabeled as a Critical "Potential RCE", a factual
+/// mislabel and a severity inflation. Those exposures are real but are
+/// reported at their true severity by their own scanners; they do not
+/// constitute RCE and must not drive this chain.
+const DEBUG_SIGNALS: &[&str] = &["actuator", "phpinfo", "profiler", "debug"];
 
 pub struct DebugRceRule;
 
@@ -33,7 +43,7 @@ impl super::super::CorrelationRule for DebugRceRule {
 
     fn check(&self, findings: &[Finding], _targets: &[Target]) -> Vec<Finding> {
         // Group debug-titled findings by normalized host. Each host
-        // gets its own chain — emitting a single chain that lists
+        // gets its own chain, emitting a single chain that lists
         // endpoints from MULTIPLE hosts under one target field is
         // misleading (the report shows e.g. example.com but lists
         // /actuator from app.example.com and /phpinfo from
@@ -143,5 +153,52 @@ mod tests {
             Severity::Low,
         )];
         assert!(rule.check(&findings, &[]).is_empty());
+    }
+
+    /// ADVERSARIAL: pure information-disclosure exposures are NOT RCE.
+    /// A lone Swagger / GraphQL-introspection / stack-trace / verbose-
+    /// error / diagnostics finding (even at High) must NOT be relabeled
+    /// as a Critical "Potential RCE" chain. Pre-fix every one of these
+    /// produced exactly that false Critical.
+    #[test]
+    fn debug_rce_does_not_relabel_info_disclosure_as_rce() {
+        let rule = DebugRceRule;
+        for title in [
+            "Swagger UI exposed at /swagger-ui.html",
+            "GraphQL introspection enabled",
+            "Stack trace leaked in HTTP 500 response",
+            "Verbose error message reveals framework version",
+            "Application diagnostics page reachable",
+        ] {
+            let findings = vec![finding("web", "app.example.com", title, Severity::High)];
+            assert!(
+                rule.check(&findings, &[]).is_empty(),
+                "info-disclosure finding {title:?} was falsely relabeled as RCE"
+            );
+        }
+    }
+
+    /// PROVING: genuinely RCE/credential-dump-capable endpoints must
+    /// still raise the Critical chain (the fix must not weaken real
+    /// detection (anti-rigging)).
+    #[test]
+    fn debug_rce_still_fires_for_rce_capable_endpoints() {
+        let rule = DebugRceRule;
+        for title in [
+            "Spring Boot actuator/heapdump exposed",
+            "actuator/env exposed without authentication",
+            "phpinfo() page exposed",
+            "Werkzeug debug console enabled (debug=True)",
+            "Symfony profiler exposed",
+        ] {
+            let findings = vec![finding("hidden", "app.example.com", title, Severity::High)];
+            let chains = rule.check(&findings, &[]);
+            assert_eq!(
+                chains.len(),
+                1,
+                "RCE-capable endpoint {title:?} must still chain"
+            );
+            assert!(chains[0].title().contains("Potential RCE"));
+        }
     }
 }

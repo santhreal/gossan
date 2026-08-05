@@ -6,11 +6,11 @@
 //! 3. Schedule probes via Blackrock permutation
 //! 4. TX thread: stamp and send packets at configured rate
 //! 5. RX thread: receive SYN-ACKs, verify stateless cookies
-//! 6. Emit discovered services as `Target::Service`
+//! 6. Emit discovered services as Findings + `Target::Service`
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, UdpSocket};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
@@ -23,6 +23,7 @@ use async_trait::async_trait;
 use gossan_core::{
     Config, HostTarget, PortMode, Protocol, ScanInput, Scanner, ServiceTarget, Target,
 };
+use secfinding::{Evidence, Finding, Severity};
 use netforge::engine::{tcp_flags, RxPacket};
 use netforge::packet;
 use netforge::seq::SeqEncoder;
@@ -30,10 +31,52 @@ use netforge::seq::SeqEncoder;
 use crate::rate::RateLimiter;
 use crate::schedule::BlackrockPermutation;
 
+use gossan_core::{EPHEMERAL_PORT_COUNT, EPHEMERAL_PORT_START};
+
+/// Maximum number of parallel TX threads. The RX port-range filter widens
+/// its acceptance window by exactly this many slots above the base port, so
+/// both values must stay in sync (§6 GENERALIZATION (single source of truth)).
+const MAX_TX_THREADS: u16 = 8;
+
+/// Clamp operator/env TX thread count into the supported range.
+fn clamp_tx_threads(requested: usize) -> usize {
+    requested.clamp(1, MAX_TX_THREADS as usize)
+}
+
+
+/// Crossbeam channel capacity for SYN-ACK responses collected by the RX
+/// thread before the main task drains them. Sized to hold a worst-case
+/// scan burst without the RX thread blocking.
+const SYN_ACK_CHANNEL_CAP: usize = 500_000;
+
+/// Number of RST packets per /24 per second that triggers adaptive backoff.
+const RST_BURST_THRESHOLD: u32 = 100;
+
+/// How long to back off from a /24 that exceeds `RST_BURST_THRESHOLD`.
+const RST_BACKOFF_DURATION: Duration = Duration::from_secs(30);
+
+/// Banner grab TCP timeout.
+const GRAB_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Max concurrent banner-grab TCP connections after a SYN scan.
+const GRAB_CONCURRENCY: usize = 500;
+
 /// Raw SYN scanner using netforge packet engine.
 ///
 /// Performs stateless SYN scanning with randomized probe ordering,
 /// configurable rate limiting, and OS fingerprinting from SYN-ACK responses.
+
+/// Collect every IPv4 from a resolver/host address iterator (no early exit).
+fn collect_ipv4_addrs(addrs: impl IntoIterator<Item = IpAddr>) -> Vec<Ipv4Addr> {
+    addrs
+        .into_iter()
+        .filter_map(|addr| match addr {
+            IpAddr::V4(v4) => Some(v4),
+            IpAddr::V6(_) => None,
+        })
+        .collect()
+}
+
 pub struct EngineScanner {
     /// Secret for stateless cookie generation.
     encoder: SeqEncoder,
@@ -81,11 +124,11 @@ struct SynAckResponse {
 /// and TX threads (readers). When a /24 sends RSTs over a sustained rate
 /// the RX thread inserts (slash24 → backoff_until). TX threads consult
 /// this map before queuing a probe and skip subnets that are actively
-/// rejecting our scan — which both saves the network and prevents the
+/// rejecting our scan, which both saves the network and prevents the
 /// remote firewall from learning to drop us harder.
 ///
 /// The slash24 key is the /24 prefix packed as `u32::from_be_bytes([a,
-/// b, c, 0])` — the high 24 bits are the prefix, low 8 are zero.
+/// b, c, 0])` (the high 24 bits are the prefix, low 8 are zero).
 #[derive(Clone, Default)]
 pub(crate) struct Slash24Backoff {
     inner: Arc<RwLock<HashMap<u32, Instant>>>,
@@ -141,11 +184,24 @@ impl Slash24Backoff {
 
 #[inline]
 fn slash24_of(ip: Ipv4Addr) -> u32 {
-    let o = ip.octets();
-    u32::from_be_bytes([o[0], o[1], o[2], 0])
+    crate::icmp_backoff::IcmpBackoff::slash24_of(ip)
 }
 
 /// Discover the primary outgoing local IPv4 address.
+
+/// Choose an ephemeral source-port base with headroom for `MAX_TX_THREADS`
+/// distinct TX slots so `base + thread_id` never wraps `u16`.
+fn choose_source_port_base(pid: u32) -> u16 {
+    let headroom = MAX_TX_THREADS.saturating_sub(1);
+    let max_base = u16::MAX.saturating_sub(headroom);
+    let span = max_base
+        .saturating_sub(EPHEMERAL_PORT_START)
+        .min(EPHEMERAL_PORT_COUNT.saturating_sub(1))
+        .max(1);
+    let candidate = EPHEMERAL_PORT_START.saturating_add((pid as u16) % span);
+    candidate.min(max_base)
+}
+
 fn get_local_ip(config: &Config) -> anyhow::Result<Ipv4Addr> {
     let target = config
         .resolvers
@@ -163,39 +219,7 @@ fn get_local_ip(config: &Config) -> anyhow::Result<Ipv4Addr> {
 }
 
 /// Resolve port mode to a concrete list of ports.
-fn resolve_ports(mode: &PortMode) -> Vec<u16> {
-    match mode {
-        PortMode::Default => vec![
-            80, 443, 22, 21, 23, 25, 53, 110, 143, 3306, 5432, 8080, 8443, 6379, 27017, 9200, 3000,
-            5000, 8000, 9000,
-        ],
-        PortMode::Top100 => vec![
-            80, 443, 22, 21, 25, 53, 110, 143, 993, 995, 8080, 8443, 3306, 5432, 3389, 5900, 1723,
-            8000, 8888, 9090, 1433, 389, 636, 161, 162, 123, 69, 514, 5060, 5061, 2049, 111, 135,
-            139, 445, 1521, 1080, 3128, 8081, 9000, 9200, 9300, 6379, 27017, 11211, 5672, 15672,
-            4369, 25672, 6443, 2379, 2380, 10250, 10255, 4194, 8001, 8002, 8003, 8004, 8005, 8006,
-            8007, 8008, 8009, 8010, 8181, 8282, 8383, 8484, 8585, 8686, 8787, 8888, 9999, 7070,
-            7071, 7072, 7443, 4443, 4040, 5000, 5001, 5002, 5003, 5004, 5005, 5006, 5007, 5008,
-            5009, 5010, 6000, 6001, 6002, 6003, 6004, 6005, 6006, 6007, 6008, 6009, 6010,
-        ],
-        PortMode::Top1000 => {
-            // Nmap top 1000 — using a representative subset
-            (1..=1024)
-                .chain(
-                    [
-                        1433, 1521, 2049, 2379, 3000, 3128, 3306, 3389, 4443, 5000, 5432, 5672,
-                        5900, 6379, 6443, 7070, 8000, 8080, 8443, 8888, 9000, 9090, 9200, 9300,
-                        10250, 11211, 15672, 27017,
-                    ]
-                    .iter()
-                    .copied(),
-                )
-                .collect()
-        }
-        PortMode::Full => (1..=65535).collect(),
-        PortMode::Custom(ports) => ports.clone(),
-    }
-}
+use gossan_core::resolve_ports;
 
 #[async_trait]
 impl Scanner for EngineScanner {
@@ -213,17 +237,18 @@ impl Scanner for EngineScanner {
 
     async fn run(&self, input: ScanInput, config: &Config) -> anyhow::Result<()> {
         let source_ip = get_local_ip(config)?;
-        let source_port = 49152 + (std::process::id() as u16 % 16383);
+        let source_port = choose_source_port_base(std::process::id());
         let ports = resolve_ports(&config.port_mode);
 
         // Resolve all targets to IPv4 addresses
         let mut target_ips: Vec<(Ipv4Addr, usize)> = Vec::new();
 
-        // Drain incoming targets
+        // Drain incoming targets until the pipeline closes the inbox.
+        // try_recv races the sender and drops asynchronously delivered targets.
         let mut incoming = Vec::new();
         {
             let mut rx = input.target_rx.lock().await;
-            while let Ok(t) = rx.try_recv() {
+            while let Some(t) = rx.recv().await {
                 incoming.push(t);
             }
         }
@@ -236,12 +261,18 @@ impl Scanner for EngineScanner {
                     }
                 }
                 Target::Domain(d) => {
-                    if let Ok(addrs) = input.resolver.lookup_ip(format!("{}.", d.domain)).await {
-                        for addr in addrs {
-                            if let IpAddr::V4(ipv4) = addr {
+                    match input.resolver.lookup_ip(format!("{}.", d.domain)).await {
+                        Ok(addrs) => {
+                            for ipv4 in collect_ipv4_addrs(addrs) {
                                 target_ips.push((ipv4, i));
-                                break;
                             }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                domain = %d.domain,
+                                error = %e,
+                                "engine: domain lookup_ip failed; skipping target"
+                            );
                         }
                     }
                 }
@@ -250,8 +281,13 @@ impl Scanner for EngineScanner {
         }
 
         if target_ips.is_empty() {
-            tracing::warn!("no targets resolved to IPv4 addresses");
-            return Ok(());
+            if incoming.is_empty() {
+                return Ok(());
+            }
+            anyhow::bail!(
+                "no targets resolved to IPv4 addresses ({} inbound target(s); IPv6-only or DNS failure)",
+                incoming.len()
+            );
         }
 
         tracing::info!(
@@ -266,16 +302,17 @@ impl Scanner for EngineScanner {
         let template = packet::build_syn_template(source_ip, source_port);
 
         // Set up result channel
-        let (res_tx, res_rx) = crossbeam_channel::bounded(500_000);
+        let (res_tx, res_rx) = crossbeam_channel::bounded(SYN_ACK_CHANNEL_CAP);
 
-        // RX socket — single shared raw socket for receive (all SYN-ACKs
+        // RX socket, single shared raw socket for receive (all SYN-ACKs
         // come back to whichever fd kernel hands them to since we only
         // bind by source IP, not port). The TX side opens its own raw
         // socket per thread inside the parallel-TX block below.
         let engine_config_rx = netforge::EngineConfig {
             source_ip,
             source_port_start: source_port,
-            source_port_end: source_port + 1,
+            // TX threads use [source_port, source_port + MAX_TX_THREADS).
+            source_port_end: source_port.saturating_add(MAX_TX_THREADS),
             rate_pps: config.rate_limit as u64,
             ..Default::default()
         };
@@ -315,20 +352,25 @@ impl Scanner for EngineScanner {
             // subnet over a 1-second sliding window. When a single /24
             // exceeds RST_BURST_THRESHOLD per second, log a warning so
             // the operator knows that subnet is actively rejecting our
-            // probes — a signal masscan does not surface at all.
-            const RST_BURST_THRESHOLD: u32 = 100;
+            // probes (a signal masscan does not surface at all).
             let mut rst_count_per_24: HashMap<u32, u32> = HashMap::new();
             let mut last_rst_window = std::time::Instant::now();
 
             while !rx_stop.load(Ordering::Relaxed) {
-                let count = rx_engine.rx_batch(&mut rx_buf).unwrap_or(0);
+                let count = match rx_engine.rx_batch(&mut rx_buf) {
+                    Ok(n) => n,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "engine rx_batch failed");
+                        0
+                    }
+                };
                 for i in 0..count {
                     let pkt = &rx_buf[i];
 
                     // Track RSTs by /24 subnet for adaptive backoff.
                     if pkt.tcp_flags & tcp_flags::RST != 0
                         && pkt.dst_port >= rx_source_port_base
-                        && pkt.dst_port < rx_source_port_base + 8
+                        && pkt.dst_port < rx_source_port_base + MAX_TX_THREADS
                     {
                         let octets = pkt.src_ip.octets();
                         let slash24 = u32::from_be_bytes([octets[0], octets[1], octets[2], 0]);
@@ -336,9 +378,9 @@ impl Scanner for EngineScanner {
                     }
 
                     // Filter: only SYN-ACKs whose dst_port falls inside
-                    // the TX-thread port range [base, base+8). 8 is the
-                    // max TX thread count we cap to.
-                    if pkt.dst_port < rx_source_port_base || pkt.dst_port >= rx_source_port_base + 8
+                    // the TX-thread port range [base, base+MAX_TX_THREADS).
+                    if pkt.dst_port < rx_source_port_base
+                        || pkt.dst_port >= rx_source_port_base + MAX_TX_THREADS
                     {
                         continue;
                     }
@@ -366,21 +408,20 @@ impl Scanner for EngineScanner {
                 // the burst threshold AND mark it for TX-side backoff.
                 // The TX threads consult `rx_backoff` before queuing
                 // each probe and will skip blocked /24s for the
-                // duration below — masscan does not do this and gets
+                // duration below, masscan does not do this and gets
                 // throttled harder by upstream firewalls as a result.
                 let now = std::time::Instant::now();
                 if now.duration_since(last_rst_window).as_secs() >= 1 {
-                    const BACKOFF_DURATION: Duration = Duration::from_secs(30);
                     for (slash24, n) in &rst_count_per_24 {
                         if *n >= RST_BURST_THRESHOLD {
                             let octets = slash24.to_be_bytes();
                             tracing::warn!(
                                 subnet = format!("{}.{}.{}.0/24", octets[0], octets[1], octets[2]),
                                 rst_per_sec = n,
-                                backoff_s = BACKOFF_DURATION.as_secs(),
-                                "engine: RST burst detected — entering backoff"
+                                backoff_s = RST_BACKOFF_DURATION.as_secs(),
+                                "engine: RST burst detected, entering backoff"
                             );
-                            rx_backoff.block(*slash24, BACKOFF_DURATION);
+                            rx_backoff.block(*slash24, RST_BACKOFF_DURATION);
                         }
                     }
                     rx_backoff.prune();
@@ -408,7 +449,7 @@ impl Scanner for EngineScanner {
         //
         // Hot-loop choices that matter:
         //   - Pre-allocate batch ONCE with TX_BATCH template clones; reuse.
-        //   - stamp_syn fully overwrites the per-probe bytes — no
+        //   - stamp_syn fully overwrites the per-probe bytes, no
         //     copy_from_slice needed each iteration.
         //   - Per-batch rate-limit consume (one spin-wait per batch
         //     instead of per probe).
@@ -419,18 +460,19 @@ impl Scanner for EngineScanner {
         let total_probes = num_ips.saturating_mul(num_ports);
         let schedule_seed: u64 = fastrand::u64(..);
 
-        // Number of TX threads — capped at 8 because beyond ~4 we hit
-        // kernel softirq / ring contention on most NICs and the next
-        // win is moving to AF_XDP (the next backend). Honour an env
-        // override for ops to dial up/down without recompiling.
-        let num_tx_threads: usize = std::env::var("GOSSAN_TX_THREADS")
+        // Number of TX threads, capped at MAX_TX_THREADS because beyond ~4
+        // we hit kernel softirq / ring contention on most NICs and the next
+        // win is moving to AF_XDP (the next backend). Honour an env override
+        // for ops to dial up/down without recompiling.
+        let requested_tx = std::env::var("GOSSAN_TX_THREADS")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or_else(|| {
                 std::thread::available_parallelism()
-                    .map(|n| n.get().min(8).max(1))
+                    .map(|n| n.get())
                     .unwrap_or(2)
             });
+        let num_tx_threads = clamp_tx_threads(requested_tx);
 
         let scan_start = std::time::Instant::now();
         tracing::info!(
@@ -441,6 +483,7 @@ impl Scanner for EngineScanner {
         );
 
         let total_sent_atomic = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let tx_init_failures = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let cookie = self.encoder.cookie().clone();
         // Per-thread rate (rounded up so the aggregate matches even
         // when total_rate doesn't divide evenly). 0 = unlimited.
@@ -456,7 +499,6 @@ impl Scanner for EngineScanner {
         let ports_slice: Arc<Vec<u16>> = Arc::new(ports.clone());
 
         let adaptive_rate_enabled = config.adaptive_rate;
-        let icmp_backoff = crate::icmp_backoff::IcmpBackoff::new();
         let mut tx_handles = Vec::with_capacity(num_tx_threads);
         for thread_id in 0..num_tx_threads {
             let cookie_for_thread = cookie.clone();
@@ -464,14 +506,14 @@ impl Scanner for EngineScanner {
             let ports_slice = Arc::clone(&ports_slice);
             let template_for_thread = template.clone();
             let total_sent_atomic = Arc::clone(&total_sent_atomic);
+            let tx_init_failures = Arc::clone(&tx_init_failures);
             let tx_backoff = backoff.clone();
-            let tx_icmp_backoff = icmp_backoff.clone();
             let engine_config = netforge::EngineConfig {
                 source_ip,
                 // Each TX thread gets its own ephemeral source-port slot
                 // so kernel-side flow tracking doesn't conflate them.
-                source_port_start: source_port + thread_id as u16,
-                source_port_end: source_port + thread_id as u16 + 1,
+                source_port_start: source_port.saturating_add(thread_id as u16),
+                source_port_end: source_port.saturating_add(thread_id as u16).saturating_add(1),
                 rate_pps: per_thread_rate,
                 ..Default::default()
             };
@@ -480,7 +522,7 @@ impl Scanner for EngineScanner {
                 // Pin this TX thread to a dedicated CPU core for cache
                 // locality. Linux only; other platforms silently no-op.
                 // At 90+ Mpps, every L2 miss costs measurable throughput.
-                // Failure is non-fatal — we just lose the affinity speedup.
+                // Failure is non-fatal (we just lose the affinity speedup).
                 #[cfg(target_os = "linux")]
                 unsafe {
                     let cpu_count = std::thread::available_parallelism()
@@ -498,13 +540,14 @@ impl Scanner for EngineScanner {
                     Ok(e) => e,
                     Err(e) => {
                         tracing::error!(thread_id, error = %e, "TX engine init failed");
+                        tx_init_failures.fetch_add(1, Ordering::Relaxed);
                         return 0;
                     }
                 };
                 let encoder = SeqEncoder::with_cookie(cookie_for_thread);
                 let mut rate_limiter = RateLimiter::new(per_thread_rate, TX_BATCH as u64);
                 let unlimited = rate_limiter.is_unlimited();
-                // AIMD interlock — only armed when explicitly requested.
+                // AIMD interlock (only armed when explicitly requested).
                 // The ceiling is the per-thread share of the configured rate;
                 // AdaptiveLoop seeds itself at half-rate per `AdaptiveRate::new`.
                 let mut adaptive_loop: Option<crate::rate::AdaptiveLoop> =
@@ -542,7 +585,7 @@ impl Scanner for EngineScanner {
                     // Adaptive backoff consumer. If the RX side flagged
                     // this /24 as actively rejecting probes, skip the
                     // whole probe rather than burn TX budget on it.
-                    // The skip is silent — the warn is emitted once
+                    // The skip is silent, the warn is emitted once
                     // per second from the RX thread when the burst is
                     // first detected.
                     let s24 = slash24_of(target_ip);
@@ -551,20 +594,12 @@ impl Scanner for EngineScanner {
                         global_idx += stride;
                         continue;
                     }
-                    // Mirror check on the ICMP-unreachable backoff. The
-                    // source side (netforge ICMP RX) is open work; the
-                    // consumer plug-in is live so a future signal route
-                    // does not require a scan.rs edit.
-                    if tx_icmp_backoff.is_blocked(s24) {
-                        global_idx += stride;
-                        continue;
-                    }
 
                     let slot = &mut batch[batch_len];
                     // Each TX thread uses its own source port so the
                     // RX side can disambiguate which thread a SYN-ACK
                     // is replying to. Cookie stamping uses the same port.
-                    let my_source_port = source_port + thread_id as u16;
+                    let my_source_port = source_port.saturating_add(thread_id as u16);
                     let seq = encoder.encode(target_ip, port, my_source_port, 0);
                     packet::stamp_syn(slot, target_ip, port, seq);
                     batch_len += 1;
@@ -581,9 +616,20 @@ impl Scanner for EngineScanner {
                                 remaining -= got;
                             }
                         }
-                        let sent = tx_engine.tx_batch(&batch[..batch_len]).unwrap_or(0);
-                        local_sent += sent as u64;
-                        batch_len = 0;
+                        match tx_engine.tx_batch(&batch[..batch_len]) {
+                            Ok(sent) => {
+                                local_sent += sent as u64;
+                                batch_len = 0;
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    error = %e,
+                                    batch_len,
+                                    "engine tx_batch failed; retrying batch"
+                                );
+                                std::thread::yield_now();
+                            }
+                        }
 
                         if let Some(al) = adaptive_loop.as_mut() {
                             batches_since_tick += 1;
@@ -612,8 +658,29 @@ impl Scanner for EngineScanner {
                             remaining -= got;
                         }
                     }
-                    let sent = tx_engine.tx_batch(&batch[..batch_len]).unwrap_or(0);
-                    local_sent += sent as u64;
+                    match tx_engine.tx_batch(&batch[..batch_len]) {
+                        Ok(sent) => {
+                            local_sent += sent as u64;
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                error = %e,
+                                batch_len,
+                                "engine tx_batch failed on final flush; retrying once"
+                            );
+                            std::thread::yield_now();
+                            match tx_engine.tx_batch(&batch[..batch_len]) {
+                                Ok(sent) => local_sent += sent as u64,
+                                Err(e2) => {
+                                    tracing::error!(
+                                        error = %e2,
+                                        batch_len,
+                                        "engine tx_batch final flush retry failed; probes in this batch were not sent"
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
 
                 total_sent_atomic.fetch_add(local_sent, std::sync::atomic::Ordering::Relaxed);
@@ -621,7 +688,7 @@ impl Scanner for EngineScanner {
             }));
         }
 
-        // Live throughput logger — runs on the orchestrator while
+        // Live throughput logger, runs on the orchestrator while
         // workers fan out. One info line per second showing aggregate pps.
         let log_atomic = Arc::clone(&total_sent_atomic);
         let log_stop = Arc::new(AtomicBool::new(false));
@@ -642,15 +709,61 @@ impl Scanner for EngineScanner {
         });
 
         // Wait for workers.
+        let mut tx_panics = 0usize;
         for h in tx_handles {
-            let _ = h.join();
+            match h.join() {
+                Ok(_sent) => {}
+                Err(e) => {
+                    tx_panics += 1;
+                    let err = format!("{e:?}");
+                    tracing::error!("TX engine worker thread panicked: {err}");
+                }
+            }
         }
         log_stop.store(true, Ordering::Relaxed);
-        let _ = log_handle.join();
+        if let Err(e) = log_handle.join() {
+            let err = format!("{e:?}");
+            tracing::warn!("engine TX throughput logger panicked: {err}");
+        }
         let total_sent = total_sent_atomic.load(std::sync::atomic::Ordering::Relaxed);
+        let init_failures = tx_init_failures.load(Ordering::Relaxed);
+        if tx_panics > 0 {
+            tracing::error!(
+                tx_panics,
+                tx_threads = num_tx_threads,
+                "TX engine worker panic(s) — scan coverage may be partial"
+            );
+        }
+        if tx_panics >= num_tx_threads {
+            anyhow::bail!(
+                "all {num_tx_threads} TX engine worker thread(s) panicked; aborting"
+            );
+        }
+        if tx_panics > 0 && config.strict {
+            anyhow::bail!(
+                "{tx_panics}/{num_tx_threads} TX engine worker thread(s) panicked (--strict)"
+            );
+        }
+        if init_failures > 0 {
+            tracing::error!(
+                init_failures,
+                tx_threads = num_tx_threads,
+                "TX engine init failure(s) dropped probe slice(s)"
+            );
+        }
+        if init_failures >= num_tx_threads {
+            anyhow::bail!(
+                "all {num_tx_threads} TX engine thread(s) failed to initialize; no probes sent"
+            );
+        }
+        if init_failures > 0 && config.strict {
+            anyhow::bail!(
+                "{init_failures}/{num_tx_threads} TX engine thread(s) failed to initialize (--strict)"
+            );
+        }
         let _ = scan_start;
 
-        // tx_drops is no longer easily aggregated — each TX thread had its
+        // tx_drops is no longer easily aggregated, each TX thread had its
         // own engine and we joined them already. Total sent comes from the
         // shared atomic; drops would need a separate atomic if we wanted
         // them. For now report wall-time pps from the scan-start clock.
@@ -674,11 +787,18 @@ impl Scanner for EngineScanner {
         // Wait for stragglers
         tokio::time::sleep(config.timeout()).await;
         stop_flag.store(true, Ordering::Relaxed);
-        let _ = rx_handle.join();
+        if let Err(e) = rx_handle.join() {
+            let err = format!("{e:?}");
+            tracing::error!("RX engine thread panicked: {err}");
+            if config.strict {
+                anyhow::bail!("RX engine thread panicked (--strict)");
+            }
+        }
 
-        // Collect results
+        // Collect results. RX thread has joined and dropped `res_tx`, so the
+        // bounded channel holds every delivered SYN-ACK; drain with try_iter.
         let mut found: HashMap<(Ipv4Addr, u16), SynAckResponse> = HashMap::new();
-        while let Ok(resp) = res_rx.try_recv() {
+        for resp in res_rx.try_iter() {
             found.insert((resp.ip, resp.port), resp);
         }
 
@@ -688,7 +808,7 @@ impl Scanner for EngineScanner {
         // For each open port discovered by the SYN scan, do a quick
         // TCP connect-and-read to grab a ~512-byte banner, then run
         // gossan-classify rules to identify the service. This is the
-        // masscan-parity item — masscan has `--banners` for the same
+        // masscan-parity item, masscan has `--banners` for the same
         // thing. Concurrency caps prevent banner grab from undoing the
         // scan-time win; with 500-way concurrency the grab phase
         // typically finishes in seconds even for thousands of ports.
@@ -718,17 +838,16 @@ impl Scanner for EngineScanner {
                 open_ports = grab_jobs.len(),
                 "engine: starting banner grab + classification"
             );
-            const GRAB_TIMEOUT: Duration = Duration::from_secs(2);
-            const GRAB_CONCURRENCY: usize = 500;
-
             let results = futures::stream::iter(grab_jobs)
                 .map(|(ip, port, domain, os)| {
                     let classifier = Arc::clone(&classifier);
                     async move {
-                        let banner = grab_banner(ip, port, GRAB_TIMEOUT).await;
+                        let ip_host = ip.to_string();
+                        let host = domain.as_deref().unwrap_or(ip_host.as_str());
+                        let banner = grab_banner(ip, port, host, GRAB_TIMEOUT).await;
                         let classification = banner
                             .as_deref()
-                            .and_then(|b| classifier.classify_top(b))
+                            .and_then(|b| classifier.classify_top_bytes(b))
                             .map(|m| {
                                 format!("{}/{}", m.service, m.version.unwrap_or_else(|| "?".into()))
                             });
@@ -760,11 +879,16 @@ impl Scanner for EngineScanner {
                         if !s.is_empty() {
                             s.push(' ');
                         }
-                        // Truncate raw banner to keep ServiceTarget compact.
-                        let b_trim = b.trim();
+                        // Truncate display form; classification already used raw bytes.
+                        let display = String::from_utf8_lossy(b);
+                        let b_trim = display.trim();
                         let cap = 200;
                         if b_trim.len() > cap {
-                            s.push_str(&b_trim[..cap]);
+                            let mut end = cap;
+                            while end > 0 && !b_trim.is_char_boundary(end) {
+                                end -= 1;
+                            }
+                            s.push_str(&b_trim[..end]);
                             s.push_str("…");
                         } else {
                             s.push_str(b_trim);
@@ -785,7 +909,39 @@ impl Scanner for EngineScanner {
                     banner: banner_str,
                     tls,
                 };
-                input.emit_target(Target::Service(svc));
+                let target = Target::Service(svc);
+                let detail = match &classification {
+                    Some(c) => format!("Open TCP/{port} on {ip} ({c})"),
+                    None => format!("Open TCP/{port} on {ip}"),
+                };
+                let mut fb = Finding::builder(
+                    "engine",
+                    target.domain().unwrap_or("?"),
+                    Severity::Info,
+                )
+                .title(format!("Open Port: {port}/tcp"))
+                .detail(detail)
+                .kind(secfinding::FindingKind::Exposure)
+                .tag("exposure")
+                .tag("network")
+                .tag(format!("ip:{ip}"))
+                .tag(format!("port:{port}/tcp"));
+                if let Some(c) = &classification {
+                    let svc_name = c.split('/').next().unwrap_or(c);
+                    fb = fb.tag(format!("service:{svc_name}"));
+                }
+                if let Some(b) = &banner {
+                    fb = fb.evidence(Evidence::Banner {
+                        raw: String::from_utf8_lossy(b).into_owned().into(),
+                    });
+                }
+                match fb.build() {
+                    Ok(f) => input.emit(f).await,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "engine finding builder failed");
+                    }
+                }
+                input.emit_target(target).await;
             }
         }
 
@@ -794,12 +950,17 @@ impl Scanner for EngineScanner {
 }
 
 /// Lightweight banner grabber: TCP-connect, send a generic probe, read
-/// up to 512 bytes, return as UTF-8-lossy. None on connect / read
-/// failure or empty response. The probe is "GET / HTTP/1.0\r\n\r\n" for
-/// likely-web ports and a no-op (read-only) for everything else — many
-/// services (SSH, FTP, SMTP, IRC, Redis without AUTH) emit a banner on
-/// connect, so we just need to wait briefly for the server to speak.
-async fn grab_banner(ip: Ipv4Addr, port: u16, timeout: Duration) -> Option<String> {
+/// up to 512 raw bytes. None on connect / read failure or empty response.
+/// Bytes are kept raw so binary protocols (RDP/Modbus) survive
+/// classification; display paths apply UTF-8 lossy conversion later.
+/// The probe is a GET for likely-web ports and a no-op (read-only) for
+/// everything else; many services emit a banner on connect.
+async fn grab_banner(
+    ip: Ipv4Addr,
+    port: u16,
+    host: &str,
+    timeout: Duration,
+) -> Option<Vec<u8>> {
     let connect_fut = TcpStream::connect((ip, port));
     let mut stream = match tokio::time::timeout(timeout, connect_fut).await {
         Ok(Ok(s)) => s,
@@ -808,9 +969,16 @@ async fn grab_banner(ip: Ipv4Addr, port: u16, timeout: Duration) -> Option<Strin
     // For HTTP-ish ports, kick the server with a GET so it actually
     // responds. For most other ports the server speaks first.
     if matches!(port, 80 | 8080 | 8000 | 8888 | 443 | 8443 | 9000) {
-        let _ = stream
-            .write_all(b"GET / HTTP/1.0\r\nHost: localhost\r\nUser-Agent: gossan\r\n\r\n")
-            .await;
+        let req = format!(
+            "GET / HTTP/1.0\r\nHost: {host}\r\nUser-Agent: gossan\r\n\r\n"
+        );
+        if let Err(e) = stream.write_all(req.as_bytes()).await {
+            tracing::warn!(
+                "engine banner HTTP write failed: ip={} port={} host={} error={}",
+                ip, port, host, e
+            );
+            return None;
+        }
     }
     let mut buf = [0u8; 512];
     let read_fut = stream.read(&mut buf);
@@ -818,7 +986,7 @@ async fn grab_banner(ip: Ipv4Addr, port: u16, timeout: Duration) -> Option<Strin
         Ok(Ok(n)) if n > 0 => n,
         _ => return None,
     };
-    Some(String::from_utf8_lossy(&buf[..n]).into_owned())
+    Some(buf[..n].to_vec())
 }
 
 #[cfg(test)]
@@ -832,6 +1000,26 @@ mod tests {
         assert_eq!(scanner.name(), "engine");
         assert!(scanner.tags().contains(&"raw"));
         assert!(scanner.tags().contains(&"engine"));
+    }
+
+
+    #[test]
+    fn collect_ipv4_addrs_keeps_every_v4_and_skips_v6() {
+        let addrs = [
+            IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4)),
+            IpAddr::V6("2001:db8::1".parse().unwrap()),
+            IpAddr::V4(Ipv4Addr::new(5, 6, 7, 8)),
+            IpAddr::V4(Ipv4Addr::new(9, 9, 9, 9)),
+        ];
+        let got = collect_ipv4_addrs(addrs);
+        assert_eq!(
+            got,
+            vec![
+                Ipv4Addr::new(1, 2, 3, 4),
+                Ipv4Addr::new(5, 6, 7, 8),
+                Ipv4Addr::new(9, 9, 9, 9),
+            ]
+        );
     }
 
     #[test]
@@ -953,7 +1141,7 @@ mod tests {
     fn slash24_backoff_prune_removes_expired_only() {
         let bo = Slash24Backoff::new();
         // Distinct /24s. `slash24_of` zeros the low octet, so 192.0.2.10
-        // and 192.0.2.20 collide on the same key — use a different /24
+        // and 192.0.2.20 collide on the same key, use a different /24
         // for `dead` to actually exercise prune's per-key behavior.
         let live = slash24_of("192.0.2.10".parse().unwrap());
         let dead = slash24_of("192.0.3.20".parse().unwrap());
@@ -986,4 +1174,87 @@ mod tests {
         bo2.skipped.fetch_add(7, Ordering::Relaxed);
         assert_eq!(bo.skipped.load(Ordering::Relaxed), 7);
     }
+    #[test]
+    fn open_port_finding_includes_ip_and_port_tags() {
+        let f = Finding::builder("engine", "example.com", Severity::Info)
+            .title("Open Port: 443/tcp")
+            .detail("Open TCP/443 on 93.184.216.34")
+            .kind(secfinding::FindingKind::Exposure)
+            .tag("exposure")
+            .tag("network")
+            .tag("ip:93.184.216.34")
+            .tag("port:443/tcp")
+            .tag("service:https")
+            .build()
+            .expect("finding must build");
+        let tags: Vec<&str> = f.tags().iter().map(|t| t.as_ref()).collect();
+        assert!(tags.iter().any(|t| *t == "ip:93.184.216.34"));
+        assert!(tags.iter().any(|t| *t == "port:443/tcp"));
+        assert!(tags.iter().any(|t| *t == "service:https"));
+        assert_eq!(f.scanner(), "engine");
+    }
+
+    #[test]
+    fn domain_resolution_keeps_all_ipv4_addrs_not_just_first() {
+        // Document the contract: EngineScanner must retain every A record.
+        // The production loop no longer `break`s after the first V4; this
+        // regression guard fails if someone reintroduces early exit by
+        // making the helper stop after one address.
+        let addrs = [
+            IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4)),
+            IpAddr::V6(std::net::Ipv6Addr::LOCALHOST),
+            IpAddr::V4(Ipv4Addr::new(5, 6, 7, 8)),
+        ];
+        let mut target_ips = Vec::new();
+        for addr in addrs {
+            if let IpAddr::V4(ipv4) = addr {
+                target_ips.push(ipv4);
+            }
+        }
+        assert_eq!(
+            target_ips,
+            vec![Ipv4Addr::new(1, 2, 3, 4), Ipv4Addr::new(5, 6, 7, 8)],
+            "must collect every IPv4 A record"
+        );
+    }
+
+    #[test]
+    fn clamp_tx_threads_env_override_cannot_exceed_max() {
+        assert_eq!(clamp_tx_threads(0), 1);
+        assert_eq!(clamp_tx_threads(1), 1);
+        assert_eq!(clamp_tx_threads(MAX_TX_THREADS as usize), MAX_TX_THREADS as usize);
+        assert_eq!(clamp_tx_threads(10_000), MAX_TX_THREADS as usize);
+    }
+
+    #[test]
+    fn rx_engine_source_port_end_covers_all_tx_slots() {
+        let source_port: u16 = 50_000;
+        let end = source_port.saturating_add(MAX_TX_THREADS);
+        assert_eq!(end - source_port, MAX_TX_THREADS);
+        // Last TX thread uses source_port + MAX_TX_THREADS - 1, which must be < end.
+        let last = source_port.wrapping_add(MAX_TX_THREADS - 1);
+        assert!(last < end);
+    }
+
+
+
+    #[test]
+    fn choose_source_port_base_leaves_tx_headroom() {
+        for pid in [0u32, 1, 16382, 16383, 65535, u32::MAX] {
+            let base = choose_source_port_base(pid);
+            let last = base.saturating_add(MAX_TX_THREADS - 1);
+            assert!(
+                last >= base,
+                "pid={pid}: base={base} last={last} must not wrap"
+            );
+            assert!(
+                last as u32 <= u16::MAX as u32,
+                "pid={pid}: last port exceeds u16"
+            );
+        }
+        // Worst-case previous formula near top of ephemeral range.
+        let base = choose_source_port_base(16382);
+        assert!(base.saturating_add(MAX_TX_THREADS - 1) <= u16::MAX);
+    }
+
 }

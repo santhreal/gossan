@@ -48,21 +48,20 @@ pub async fn scan(
     match client.execute(req).await {
         Ok(resp) => {
             if resp.status().is_success() {
-                let limit = config.max_response_size.min(10 * 1024 * 1024);
-                if let Ok(arr) = bounded_json::<Vec<serde_json::Value>>(resp, limit).await {
-                    for entry in arr {
-                        // CIRCL PDNS v2b returns objects with `rrtype` and `rdata`.
-                        if let Some(rdata) = entry.get("rdata").and_then(|v| v.as_str()) {
-                            if entry
-                                .get("rrtype")
-                                .and_then(|v| v.as_str())
-                                .map(|t| t == "A" || t == "AAAA")
-                                .unwrap_or(false)
-                            {
-                                if let Ok(ip) = IpAddr::from_str(rdata) {
-                                    if is_routable_ip(ip) && seen.insert(ip) {
-                                        candidates.push(OriginCandidate::new(ip, "circl_pdns", 85));
-                                    }
+                let limit = config.max_response_size.min(crate::MAX_ORIGIN_JSON_BYTES);
+                let arr = bounded_json::<Vec<serde_json::Value>>(resp, limit).await?;
+                for entry in arr {
+                    // CIRCL PDNS v2b returns objects with `rrtype` and `rdata`.
+                    if let Some(rdata) = entry.get("rdata").and_then(|v| v.as_str()) {
+                        if entry
+                            .get("rrtype")
+                            .and_then(|v| v.as_str())
+                            .map(|t| t == "A" || t == "AAAA")
+                            .unwrap_or(false)
+                        {
+                            if let Ok(ip) = IpAddr::from_str(rdata) {
+                                if is_routable_ip(ip) && seen.insert(ip) {
+                                    candidates.push(OriginCandidate::new(ip, "circl_pdns", 85));
                                 }
                             }
                         }

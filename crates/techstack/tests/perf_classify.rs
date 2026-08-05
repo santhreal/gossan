@@ -1,4 +1,4 @@
-//! Per GOSSAN_LEGENDARY A7: classify a 1 MB HTML in <50 ms.
+//! Per GOSSAN_DEPTH_CONTRACT A7: classify a 1 MB HTML in <50 ms.
 //!
 //! Drives `truestack::fingerprints::detect` against a synthetic
 //! 1 MiB HTML body and asserts the run completes under 50 ms.

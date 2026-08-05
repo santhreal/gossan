@@ -1,5 +1,5 @@
 
-//! DNSdumpster subdomain source — CSRF-scraped HTML table.
+//! DNSdumpster subdomain source: CSRF-scraped HTML table.
 use gossan_core::{Config, DiscoverySource, DomainTarget, Target};
 use crate::sources::{SubdomainSource, SourceRate};
 use async_trait::async_trait;
@@ -24,7 +24,7 @@ impl SubdomainSource for DnsDumpster {
     ) -> anyhow::Result<Vec<Target>> {
         let csrf_url = "https://dnsdumpster.com";
         limiter.until_ready().await;
-        let csrf_resp = client.get(csrf_url).send().await?;
+        let csrf_resp = client.get(csrf_url).send().await?.error_for_status()?;
         let max_size = config.max_response_size;
         let csrf_text = String::from_utf8(
             gossan_core::read_response_limited(csrf_resp, max_size).await?

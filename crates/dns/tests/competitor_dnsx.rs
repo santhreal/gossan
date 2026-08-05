@@ -1,4 +1,4 @@
-//! Competitor benchmark — gossan-dns vs projectdiscovery/dnsx and
+//! Competitor benchmark, gossan-dns vs projectdiscovery/dnsx and
 //! blechschmidt/massdns.
 //!
 //! Both peers do bulk DNS resolution (massdns is the speed leader,

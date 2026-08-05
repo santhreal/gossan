@@ -2,7 +2,7 @@
 //!
 //! Asserts that the canonical `--format json` output matches the
 //! shape committed in `docs/schema/v1.json`. We don't run a full
-//! JSON-Schema validator (would pull in jsonschema as a dep) — we
+//! JSON-Schema validator (would pull in jsonschema as a dep), we
 //! parse the output as `serde_json::Value` and check the contract
 //! the schema documents: top-level object with `tool: "gossan"`,
 //! `findings: [...]`, and each finding having `kind`, `target`,

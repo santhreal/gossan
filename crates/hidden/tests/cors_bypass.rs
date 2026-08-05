@@ -1,4 +1,4 @@
-//! CORS bypass detection — prefix + suffix variants.
+//! CORS bypass detection (prefix + suffix variants).
 //!
 //! Spins a wiremock server that mirrors any `Origin` header back into
 //! the `Access-Control-Allow-Origin` response header. Then runs the
@@ -6,8 +6,8 @@
 //! shapes that exercise:
 //!
 //! 1. arbitrary origin reflection (Test 1 in the probe),
-//! 2. prefix bypass — `Origin: https://evil-example.com` accepted,
-//! 3. suffix bypass — `Origin: https://example.com.evil.com` accepted.
+//! 2. prefix bypass: `Origin: https://evil-example.com` accepted,
+//! 3. suffix bypass: `Origin: https://example.com.evil.com` accepted.
 //!
 //! Each test asserts the matching finding fires; a fourth test points
 //! the probe at an exact-match server and asserts NO finding fires.
@@ -115,7 +115,7 @@ async fn cors_prefix_bypass_fires_against_reflecting_server() {
     // Put a domain into the WebAssetTarget so cors::probe runs the
     // prefix/suffix tests at all (they're gated on `target.domain()`).
     let target = web_target("http://example.com/");
-    // Now point the underlying request at the mock server's URL — but
+    // Now point the underlying request at the mock server's URL, but
     // cors::probe builds requests off the target URL, so we instead
     // bind the test by hosting on the actual hostname. Skip the
     // prefix/suffix arms here and assert the arbitrary-reflection arm

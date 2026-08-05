@@ -7,10 +7,10 @@ it privately. **Do not** open a public GitHub issue for vulnerabilities.
 
 ### How to report
 
-1. Email **security@santhsecurity.com** with subject
+1. Email **security@santhreal.com** with subject
    `gossan: <one-line description>`.
 2. Or open a private GitHub Security Advisory at
-   https://github.com/santhsecurity/gossan/security/advisories/new.
+   https://github.com/santhreal/gossan/security/advisories/new.
 
 Please include:
 
@@ -39,10 +39,10 @@ status update within 14 days.
 
 ## What we consider out-of-scope
 
-- Findings against the **target** of a scan — gossan is the tool;
+- Findings against the **target** of a scan, gossan is the tool;
   vulnerabilities the tool finds in scanned hosts belong to those
   hosts' security teams, not gossan's.
-- "It scans noisy / it triggers WAF / it gets blocked" — gossan is
+- "It scans noisy / it triggers WAF / it gets blocked", gossan is
   an authorized-target scanner. Throttling / blocking is the
   defender's job.
 - Paths the user supplies via `--out` / `--checkpoint` / `--wordlist`:

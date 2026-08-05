@@ -2,7 +2,7 @@
 //! resolved by the SCM discovery functions.
 //!
 //! We can't easily intercept the actual reqwest call to assert the
-//! token reached the wire — instead we exercise the resolution path:
+//! token reached the wire, instead we exercise the resolution path:
 //! when the env var is set, the discovery call still completes
 //! cleanly (mockito catches the request whether the token is sent
 //! or not), and when it's unset there's no panic.
@@ -12,19 +12,16 @@
 
 use gossan_core::{Config, ScanInput, Target};
 use hickory_resolver::config::{ResolverConfig, ResolverOpts};
-use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::TokioResolver;
 use mockito::Server;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
-fn fresh_input() -> (ScanInput, mpsc::UnboundedReceiver<Target>) {
-    let (tx, rx) = mpsc::unbounded_channel();
-    let (live_tx, _live_rx) = mpsc::unbounded_channel();
-    let (_t_in, t_in_rx) = mpsc::unbounded_channel();
-    let resolver = Arc::new(TokioAsyncResolver::tokio(
-        ResolverConfig::default(),
-        ResolverOpts::default(),
-    ));
+fn fresh_input() -> (ScanInput, mpsc::Receiver<Target>) {
+    let (tx, rx) = mpsc::channel(1024);
+    let (live_tx, _live_rx) = mpsc::channel(1024);
+    let (_t_in, t_in_rx) = mpsc::channel(1024);
+    let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build());
     let input = ScanInput {
         seed: "acme.test".into(),
         target_rx: tokio::sync::Mutex::new(t_in_rx),

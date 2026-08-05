@@ -1,9 +1,9 @@
 //! AWS S3 bucket probe.
 //!
 //! Three-stage test per candidate:
-//!   1. GET `/`  — 200 + XML listing = public (Critical)
-//!   2. PUT canary object — succeeds = unauthenticated write (Critical)
-//!   3. GET `/` + 403 — bucket confirmed, listing denied (Low)
+//!   1. GET `/`: 200 + XML listing = public (Critical)
+//!   2. PUT canary object, succeeds = unauthenticated write (Critical)
+//!   3. GET `/` + 403, bucket confirmed, listing denied (Low)
 //!
 //! Both vhost-style (`{name}.s3.amazonaws.com`) and path-style
 //! (`s3.amazonaws.com/{name}`) URLs are tried; some older regions only
@@ -16,7 +16,30 @@ use secfinding::{Evidence, Finding, Severity};
 use crate::common::is_xml_listing;
 use crate::provider::CloudProvider;
 /// AWS S3 bucket discovery and permission enumeration.
-pub struct S3Provider;
+pub struct S3Provider {
+    /// Optional endpoint override for testing.
+    pub(crate) endpoint_override: Option<String>,
+}
+
+impl S3Provider {
+    /// Create a new S3 provider with the default AWS endpoint.
+    #[must_use]
+    pub fn new() -> Self {
+        Self { endpoint_override: None }
+    }
+
+    /// Create an S3 provider with a custom endpoint (for tests).
+    #[must_use]
+    pub fn with_endpoint(url: impl Into<String>) -> Self {
+        Self { endpoint_override: Some(url.into()) }
+    }
+}
+
+impl Default for S3Provider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[async_trait]
 impl CloudProvider for S3Provider {
@@ -25,6 +48,9 @@ impl CloudProvider for S3Provider {
     }
 
     fn endpoint(&self, name: &str) -> String {
+        if let Some(ref url) = self.endpoint_override {
+            return url.clone();
+        }
         let encoded_name = urlencoding::encode(name);
         format!("https://{}.s3.amazonaws.com/", encoded_name)
     }
@@ -45,21 +71,69 @@ impl CloudProvider for S3Provider {
             let mut status = 0u16;
             let mut body = String::new();
             let mut eff = vhost.clone();
+            let mut transport_failed = false;
 
-            if let Ok(resp) = client.get(&vhost).send().await {
-                status = resp.status().as_u16();
-                body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
-                    .await
-                    .unwrap_or_default();
+            match client.get(&vhost).send().await {
+                Ok(resp) => {
+                    status = resp.status().as_u16();
+                    match gossan_core::net::bounded_text(resp, crate::MAX_CLOUD_RESPONSE_BYTES)
+                        .await
+                    {
+                        Ok(b) => body = b,
+                        Err(e) => {
+                            tracing::warn!(
+                                bucket = %name,
+                                url = %vhost,
+                                error = %e,
+                                "S3 vhost body read failed; not treating as empty/nonexistent bucket"
+                            );
+                            body.clear();
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        bucket = %name,
+                        url = %vhost,
+                        error = %e,
+                        "S3 vhost probe send failed"
+                    );
+                    transport_failed = true;
+                }
             }
             // Retry path-style ONLY if we are using the real AWS endpoint
-            if (status == 0 || status == 301) && vhost.contains("amazonaws.com") {
-                if let Ok(resp) = client.get(&path).send().await {
-                    status = resp.status().as_u16();
-                    body = gossan_core::net::bounded_text(resp, 4 * 1024 * 1024)
+            if (transport_failed || status == 0 || status == 301) && vhost.contains("amazonaws.com")
+            {
+                match client.get(&path).send().await {
+                    Ok(resp) => {
+                        status = resp.status().as_u16();
+                        match gossan_core::net::bounded_text(
+                            resp,
+                            crate::MAX_CLOUD_RESPONSE_BYTES,
+                        )
                         .await
-                        .unwrap_or_default();
-                    eff = path.clone();
+                        {
+                            Ok(b) => body = b,
+                            Err(e) => {
+                                tracing::warn!(
+                                    bucket = %name,
+                                    url = %path,
+                                    error = %e,
+                                    "S3 path-style body read failed; not treating as empty/nonexistent bucket"
+                                );
+                                body.clear();
+                            }
+                        }
+                        eff = path.clone();
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            bucket = %name,
+                            url = %path,
+                            error = %e,
+                            "S3 path-style probe send failed"
+                        );
+                    }
                 }
             }
             (status, body, eff)
@@ -79,7 +153,7 @@ impl CloudProvider for S3Provider {
                         status,
                         headers: vec![("url".into(), effective_url.clone().into())],
                         body_excerpt: if is_xml_listing(&body) {
-                            Some(body.chars().take(400).collect::<String>().into())
+                            Some(body.chars().take(crate::MAX_BODY_EXCERPT_CHARS).collect::<String>().into())
                         } else {
                             None
                         },
@@ -94,27 +168,7 @@ impl CloudProvider for S3Provider {
                 try_write(client, name, &effective_url, target, &mut findings).await;
             }
             403 => {
-                gossan_core::try_push_finding(
-                    crate::finding_builder(
-                        target,
-                        Severity::Low,
-                        format!("S3 bucket exists (access denied): {}", name),
-                        format!(
-                            "s3://{} exists but public listing is blocked (HTTP 403). \
-                             Probe for write access and per-object ACL misconfigurations.",
-                            name
-                        ),
-                    )
-                    .evidence(Evidence::HttpResponse {
-                        status,
-                        headers: vec![("url".into(), effective_url.clone().into())],
-                        body_excerpt: None,
-                    })
-                    .tag("s3")
-                    .tag("cloud"),
-                    &mut findings,
-                );
-                // A 403 on GET / doesn't mean PUT is blocked — common misconfiguration
+                // A 403 on GET / doesn't mean PUT is blocked, common misconfiguration
                 try_write(client, name, &effective_url, target, &mut findings).await;
             }
             _ => {} // 404 = doesn't exist; skip
@@ -134,7 +188,10 @@ async fn try_write(
 ) {
     const PROBE_KEY: &str = "gossan-write-probe-delete-me.txt";
     let encoded_bucket = urlencoding::encode(bucket);
-    let put_url = if base_url.contains(".s3.amazonaws.com") {
+    let put_url = if !base_url.contains("amazonaws.com") {
+        // Custom endpoint (e.g. test mock) (append probe key directly).
+        format!("{}/{}", base_url.trim_end_matches('/'), PROBE_KEY)
+    } else if base_url.contains(".s3.amazonaws.com") {
         format!("https://{}.s3.amazonaws.com/{}", encoded_bucket, PROBE_KEY)
     } else {
         format!("https://s3.amazonaws.com/{}/{}", encoded_bucket, PROBE_KEY)
@@ -143,7 +200,7 @@ async fn try_write(
     let Ok(resp) = client
         .put(&put_url)
         .header("content-type", "text/plain")
-        .body("gossan-security-probe — safe to delete")
+        .body("gossan-security-probe, safe to delete")
         .send()
         .await
     else {

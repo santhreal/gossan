@@ -22,19 +22,27 @@ impl SubdomainSource for Censys {
         limiter: &DefaultDirectRateLimiter,
     ) -> anyhow::Result<Vec<Target>> {
         
-        let Some(_key) = crate::sources::get_api_key(config, "censys", "CENSYS_API_KEY") else {
+        let Some(credentials) = crate::sources::get_api_key(config, "censys", "CENSYS_API_KEY") else {
             return Ok(vec![]);
+        };
+        let Some((api_id, api_secret)) = credentials.split_once(':') else {
+            return Err(anyhow::anyhow!("CENSYS_API_KEY must be in format api_id:api_secret"));
         };
 
         let url = format!("https://search.censys.io/api/v2/certificates/search?q=names:%20{}&per_page=100", domain);
         limiter.until_ready().await;
-        let resp = client.get(&url).send().await?;
+        let resp = client
+            .get(&url)
+            .basic_auth(api_id, Some(api_secret))
+            .send()
+            .await?
+            .error_for_status()?;
         let max_size = config.max_response_size;
         let bytes = gossan_core::read_response_limited(resp, max_size).await?;
         let mut seen = std::collections::HashSet::new();
         let domain_lower = domain.to_lowercase();
         
-        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
+        let json: serde_json::Value = serde_json::from_slice(&bytes)?;
         if let Some(arr) = json.get("result").and_then(|v| v.get("hits")).and_then(|v| v.as_array()) {
             for item in arr {
                 if let Some(v) = item.get("names").and_then(|v| v.as_str()) {

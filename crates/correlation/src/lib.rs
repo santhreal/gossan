@@ -19,8 +19,8 @@
 //! Cross-module finding correlation engine.
 //!
 //! Runs after all scanner stages complete. Applies a set of [`CorrelationRule`]s
-//! that look for patterns spanning multiple scanners — e.g., SSRF + Redis, or
-//! source-code exposure + hardcoded secrets — and emits new **chain findings**.
+//! that look for patterns spanning multiple scanners, e.g., SSRF + Redis, or
+//! source-code exposure + hardcoded secrets (and emits new **chain findings**).
 //!
 //! # Adding a new rule
 //! 1. Create `src/rules/{rule}.rs` and implement [`CorrelationRule`].

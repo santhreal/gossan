@@ -5,3 +5,13 @@
 .DS_Store
 clippy.log
 .audits/
+
+# Unified backlog (STANDARD.md)
+/BACKLOG.md
+
+# Local harness / debug dumps
+/TODO_HARNESS_FAILURE_VERBATIM.txt
+
+# SQLite test leftovers
+*.db-shm
+*.db-wal

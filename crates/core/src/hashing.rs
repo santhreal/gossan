@@ -60,7 +60,10 @@ pub fn mmh3_x86_32(data: &[u8], seed: u32) -> u32 {
 /// module has no external base64 dependency (it is `core`).
 fn base64_std(data: &[u8]) -> String {
     const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    // Safe capacity: base64 expansion is at most 4/3 * len + 4.
+    // Use saturating arithmetic so huge inputs never panic on overflow.
+    let cap = data.len().saturating_mul(2).saturating_add(4);
+    let mut out = String::with_capacity(cap);
     for chunk in data.chunks(3) {
         let b0 = chunk[0] as u32;
         let b1 = *chunk.get(1).unwrap_or(&0) as u32;
@@ -177,5 +180,18 @@ mod tests {
         let h = shodan_favicon_hash(icon);
         assert_eq!(h, shodan_favicon_hash(icon));
         assert_ne!(h, 0);
+    }
+
+    /// ADVERSARIAL: `base64_std` used `data.len().div_ceil(3) * 4` for
+    /// `String::with_capacity`, which can overflow on pathologically
+    /// large inputs (debug-mode panic on 32-bit or with huge slices).
+    /// The fix uses saturating arithmetic so the capacity never wraps.
+    #[test]
+    fn shodan_favicon_hash_large_input_does_not_panic() {
+        // 10 MB icon, large enough to stress the capacity calculation
+        // without OOMing on any reasonable CI runner.
+        let big = vec![0xABu8; 10_000_000];
+        let _h = shodan_favicon_hash(&big);
+        // If we reach here, the overflow guard worked.
     }
 }

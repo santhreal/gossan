@@ -5,7 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 homepage.workspace = true
-repository = "https://github.com/santhsecurity/gossan"
+repository = "https://github.com/santhreal/gossan"
 description = "Horizontal discovery engine for gossan (ASN pivoting, BGP prefix mapping, WHOIS correlation)"
 readme.workspace = true
 keywords.workspace = true
@@ -40,6 +40,10 @@ hex.workspace = true
 [[test]]
 name = "adversarial"
 path = "tests/adversarial/conservative.rs"
+
+[dev-dependencies]
+wiremock = { workspace = true }
+proptest = "1.11.0"
 
 [lints]
 workspace = true

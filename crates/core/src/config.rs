@@ -1,4 +1,4 @@
-//! Scanner configuration — rate limits, proxy, modules, API keys, output.
+//! Scanner configuration (rate limits, proxy, modules, API keys, output).
 //!
 //! [`Config`] is the single source of truth for all scanner behaviour.
 //! CLI flags merge into it via struct update syntax.
@@ -15,8 +15,21 @@ use crate::Severity;
 /// All fields also read from environment variables or `gossan.toml`.
 pub type ApiKeys = std::collections::HashMap<String, String>;
 
+/// Default maximum HTTP response body size: 10 MiB.
+///
+/// This cap applies to all scanner fetches and is the 'Response Bomb Shield'
+/// against memory exhaustion from malicious servers sending unbounded payloads.
+/// Configurable via `Config::max_response_size` / `--max-response-size`.
+pub const DEFAULT_MAX_RESPONSE_SIZE: usize = 10 * 1024 * 1024;
+
+/// Default maximum number of HTTP redirects to follow per request.
+///
+/// Caps chains to prevent open-redirect loops that burn CPU and leak scan
+/// intent across domains. Follows reqwest's recommended safe maximum.
+pub const MAX_HTTP_REDIRECTS: usize = 10;
+
 /// Which ports to scan. Determined at scan startup and passed through `Config`.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum PortMode {
     /// Built-in list of 52 high-risk service ports.
@@ -33,7 +46,7 @@ pub enum PortMode {
 }
 
 /// Crawl scanner configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CrawlConfig {
     /// Maximum pages to crawl per web asset.
     pub max_pages: usize,
@@ -50,10 +63,11 @@ impl Default for CrawlConfig {
     }
 }
 
-/// Global scan configuration — timeouts, concurrency, resolvers, and module toggles.
+/// Global scan configuration (timeouts, concurrency, resolvers, and module toggles).
 ///
 /// Load from `gossan.toml` via [`Config::load_or_default`] or construct programmatically.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
 pub struct Config {
     /// Global requests-per-second cap across all scanners. When
     /// `adaptive_rate` is enabled this becomes the *ceiling*; the
@@ -66,6 +80,8 @@ pub struct Config {
     pub adaptive_rate: bool,
     /// Per-request timeout in seconds.
     pub timeout_secs: u64,
+    /// Global scan timeout in seconds (0 = disabled).
+    pub scan_timeout_secs: u64,
     /// Max concurrent tasks per scanner.
     pub concurrency: usize,
     /// DNS resolvers (defaults to Cloudflare + Google).
@@ -119,17 +135,30 @@ pub struct Config {
     /// Exclude findings matching these kinds.
     #[serde(default)]
     pub exclude_kind: Vec<String>,
+    /// Node+edge count above which [`gossan_graph::JsonBackend`] flushes
+    /// to streaming JSONL instead of a monolithic JSON document.
+    #[serde(default = "default_graph_json_streaming_threshold")]
+    pub graph_json_streaming_threshold: usize,
 }
 
 fn default_max_response_size() -> usize {
-    10 * 1024 * 1024 // 10MB
+    DEFAULT_MAX_RESPONSE_SIZE
 }
 
 fn default_host_delay_ms() -> u64 {
     100
 }
 
+fn default_graph_json_streaming_threshold() -> usize {
+    10_000
+}
+
 impl Config {
+    /// Global scan timeout as a [`Duration`] (zero means disabled).
+    pub fn scan_timeout(&self) -> Duration {
+        Duration::from_secs(self.scan_timeout_secs)
+    }
+
     /// Per-request timeout as a [`Duration`].
     #[must_use]
     pub fn timeout(&self) -> Duration {
@@ -173,6 +202,7 @@ impl Default for Config {
             rate_limit: 300,
             adaptive_rate: false,
             timeout_secs: 10,
+            scan_timeout_secs: 600,
             concurrency: 200,
             resolvers: vec![
                 IpAddr::V4(std::net::Ipv4Addr::new(1, 1, 1, 1)),
@@ -202,6 +232,7 @@ impl Default for Config {
             conservative: false,
             include_kind: Vec::new(),
             exclude_kind: Vec::new(),
+            graph_json_streaming_threshold: default_graph_json_streaming_threshold(),
         }
     }
 }
@@ -209,7 +240,7 @@ impl Default for Config {
 /// Per-module enablement flags keyed by scanner module name.
 pub type ModuleConfig = std::collections::HashMap<String, bool>;
 /// Output format for scan results.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum OutputFormat {
     /// Pretty-printed JSON object.
@@ -225,7 +256,7 @@ pub enum OutputFormat {
     /// Masscan-grepable (`-oG` style):
     /// `Host: <ip> ()\tPorts: <port>/open/<proto>//<service>//`
     /// Lines are emitted only for findings that carry an
-    /// `Evidence::Banner` payload tagged `port:N` — i.e. open ports
+    /// `Evidence::Banner` payload tagged `port:N`: i.e. open ports
     /// discovered by `gossan-portscan` / `gossan-engine`.
     MasscanGrep,
     /// nmap-compatible XML (`-oX` style). Subset that covers the
@@ -240,7 +271,7 @@ pub enum OutputFormat {
 }
 
 /// Where and how to write scan output.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OutputConfig {
     /// Output format.
     pub format: OutputFormat,

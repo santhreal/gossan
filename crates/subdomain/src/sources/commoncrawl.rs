@@ -27,20 +27,27 @@ impl SubdomainSource for CommonCrawl {
         // Try to discover latest index
         limiter.until_ready().await;
         let collinfo = client.get("https://index.commoncrawl.org/collinfo.json").send().await;
-        if let Ok(resp) = collinfo {
-            let max_size = config.max_response_size;
-            if let Ok(bytes) = gossan_core::read_response_limited(resp, max_size).await {
-                if let Ok(arr) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-                    if let Some(list) = arr.as_array() {
-                        indices.clear();
-                        for item in list.iter().take(3) {
-                            if let Some(id) = item.get("id").and_then(|v| v.as_str()) {
-                                indices.push(id.to_string());
+        match collinfo {
+            Ok(resp) => {
+                let max_size = config.max_response_size;
+                match gossan_core::read_response_limited(resp, max_size).await {
+                    Ok(bytes) => match serde_json::from_slice::<serde_json::Value>(&bytes) {
+                        Ok(arr) => {
+                            if let Some(list) = arr.as_array() {
+                                indices.clear();
+                                for item in list.iter().take(3) {
+                                    if let Some(id) = item.get("id").and_then(|v| v.as_str()) {
+                                        indices.push(id.to_string());
+                                    }
+                                }
                             }
                         }
-                    }
+                        Err(e) => tracing::warn!(error = %e, "commoncrawl collinfo JSON parse failed; using fallback indices"),
+                    },
+                    Err(e) => tracing::warn!(error = %e, "commoncrawl collinfo body read failed; using fallback indices"),
                 }
             }
+            Err(e) => tracing::warn!(error = %e, "commoncrawl collinfo fetch failed; using fallback indices"),
         }
 
         let mut seen = std::collections::HashSet::new();
@@ -53,11 +60,12 @@ impl SubdomainSource for CommonCrawl {
                 domain
             );
             limiter.until_ready().await;
-            let resp = client.get(&url).send().await?;
+            let resp = client.get(&url).send().await?.error_for_status()?;
             let text = String::from_utf8(gossan_core::read_response_limited(resp, max_size).await?)?;
             for line in text.lines() {
                 if line.is_empty() { continue; }
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
+                match serde_json::from_str::<serde_json::Value>(line) {
+                    Ok(json) => {
                     if let Some(u) = json.get("url").and_then(|v| v.as_str()) {
                         if let Ok(parsed) = url::Url::parse(u) {
                             if let Some(host) = parsed.host_str() {
@@ -67,6 +75,10 @@ impl SubdomainSource for CommonCrawl {
                                 }
                             }
                         }
+                    }
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, line = %line.chars().take(80).collect::<String>(), "commoncrawl index line JSON parse failed; skipping line");
                     }
                 }
             }

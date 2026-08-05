@@ -1,5 +1,5 @@
 //! SPF parser tests for `gossan_dns::email::parse_spf_includes` +
-//! `identify_email_services`. Per GOSSAN_LEGENDARY A8: handles every
+//! `identify_email_services`. Per GOSSAN_DEPTH_CONTRACT A8: handles every
 //! mechanism + qualifier combination.
 
 use gossan_dns::email::{identify_email_services, parse_spf_includes};

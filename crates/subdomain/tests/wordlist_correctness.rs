@@ -1,6 +1,6 @@
 //! Bruteforce wordlist correctness contract.
 //!
-//! Per GOSSAN_LEGENDARY A3: every entry must:
+//! Per GOSSAN_DEPTH_CONTRACT A3: every entry must:
 //!  - have no leading `/` (it's a DNS label, not a path),
 //!  - have no comment lines (they belong in a sibling README),
 //!  - be a valid DNS label fragment (alphanumerics + `-`, length ≤63).
@@ -37,7 +37,7 @@ fn wordlist_has_no_leading_slashes_or_comments() {
             label_is_valid(trimmed),
             "line {n}: not a valid DNS label fragment: `{trimmed}`"
         );
-        // Duplicate detection — the bruteforce loader already
+        // Duplicate detection, the bruteforce loader already
         // deduplicates with HashSet, but a duplicate in the source
         // file is dead weight.
         if !seen.insert(trimmed.to_string()) {

@@ -1,4 +1,4 @@
-//! URLScan source — URL and domain scanning intelligence.
+//! URLScan source: URL and domain scanning intelligence.
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -29,15 +29,16 @@ impl IntelSource for UrlScanSource {
 
     async fn query_ip(&self, ip: &str) -> anyhow::Result<IntelEnrichment> {
         // URLScan search by IP
-        let url = format!("{BASE_URL}/search/?q=ip:{ip}");
-        let mut req = self.client.get(&url);
+        let mut url = url::Url::parse(&format!("{BASE_URL}/search/"))?;
+        url.query_pairs_mut().append_pair("q", &format!("ip:{ip}"));
+        let mut req = self.client.get(url);
         if let Some(ref key) = self.api_key {
             req = req.header("API-Key", key);
         }
         let resp = req.send().await?.error_for_status()?;
         // URLScan search responses can include hundreds of historical
         // crawls per query; cap at 8 MiB.
-        let body: UrlScanSearchResp = gossan_core::net::bounded_json(resp, 8 * 1024 * 1024).await?;
+        let body: UrlScanSearchResp = gossan_core::net::bounded_json(resp, super::MAX_INTEL_JSON_BYTES).await?;
 
         let mut enrichment = IntelEnrichment::new("urlscan", "ip", ip);
         enrichment.classification = body
@@ -60,15 +61,16 @@ impl IntelSource for UrlScanSource {
     }
 
     async fn query_domain(&self, domain: &str) -> anyhow::Result<IntelEnrichment> {
-        let url = format!("{BASE_URL}/search/?q=domain:{domain}");
-        let mut req = self.client.get(&url);
+        let mut url = url::Url::parse(&format!("{BASE_URL}/search/"))?;
+        url.query_pairs_mut().append_pair("q", &format!("domain:{domain}"));
+        let mut req = self.client.get(url);
         if let Some(ref key) = self.api_key {
             req = req.header("API-Key", key);
         }
         let resp = req.send().await?.error_for_status()?;
         // URLScan search responses can include hundreds of historical
         // crawls per query; cap at 8 MiB.
-        let body: UrlScanSearchResp = gossan_core::net::bounded_json(resp, 8 * 1024 * 1024).await?;
+        let body: UrlScanSearchResp = gossan_core::net::bounded_json(resp, super::MAX_INTEL_JSON_BYTES).await?;
 
         let mut enrichment = IntelEnrichment::new("urlscan", "domain", domain);
         for result in body.results.into_iter().take(10) {

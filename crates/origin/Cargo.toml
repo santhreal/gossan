@@ -5,8 +5,8 @@ edition.workspace = true
 authors = ["Santh Project <security@santh.dev>"]
 license.workspace = true
 homepage = "https://santh.dev"
-repository = "https://github.com/santhsecurity/gossan"
-description = "Discovers the true origin IP of web assets behind CDNs/WAFs — part of the security research ecosystem"
+repository = "https://github.com/santhreal/gossan"
+description = "Discovers the true origin IP of web assets behind CDNs/WAFs, part of the security research ecosystem"
 readme.workspace = true
 keywords = [ "security", "origin-ip", "cdn-bypass", "waf" ]
 categories = ["network-programming", "command-line-utilities"]
@@ -16,6 +16,13 @@ categories = ["network-programming", "command-line-utilities"]
 status = "alpha"
 [dependencies]
 gossan-core = { version = "0.3", path = "../core" }
+# Canonical crt.sh CT-log parser (ssl_cert scanner) and canonical bogon /
+# non-public IP classifier (util::is_routable_ip layers its stricter
+# origin-reachability checks on top of bogon instead of re-deriving the
+# RFC1918/CGNAT/TEST-NET/benchmark ranges).
+ctlog = { workspace = true }
+bogon = { workspace = true }
+secfinding = { workspace = true }
 reqwest = { workspace = true }
 tracing = { workspace = true }
 anyhow = { workspace = true }

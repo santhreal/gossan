@@ -5,7 +5,7 @@ edition.workspace = true
 authors = ["Santh Project <security@santh.dev>"]
 license.workspace = true
 homepage = "https://santh.dev"
-repository = "https://github.com/santhsecurity/gossan"
+repository = "https://github.com/santhreal/gossan"
 description = "JavaScript analysis scanner for gossan (secret detection, endpoint extraction, source maps, WASM inspection)"
 readme.workspace = true
 keywords.workspace = true
@@ -59,6 +59,7 @@ nonzero_ext = { workspace = true }
 [dev-dependencies]
 wiremock = { workspace = true }
 tokio = { workspace = true }
+proptest = { workspace = true }
 
 [lints]
 workspace = true

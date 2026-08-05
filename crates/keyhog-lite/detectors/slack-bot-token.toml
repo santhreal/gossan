@@ -46,5 +46,5 @@ json_path = "team_id"
 
 
 # NOTE: positive/negative test fixtures intentionally omitted from the
-# published corpus — github push protection rejects realistic-looking
+# published corpus, github push protection rejects realistic-looking
 # secret strings. Run upstream keyhog-detectors test suite for coverage.

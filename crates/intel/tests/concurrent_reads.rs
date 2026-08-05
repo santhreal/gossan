@@ -1,7 +1,7 @@
-//! Concurrent read tests — prove `IntelDb` is safe under parallel
+//! Concurrent read tests, prove `IntelDb` is safe under parallel
 //! query load.
 //!
-//! Per GOSSAN_LEGENDARY A20: 32 threads × 1000 queries each, no
+//! Per GOSSAN_DEPTH_CONTRACT A20: 32 threads × 1000 queries each, no
 //! deadlock, all return correct results.
 
 use gossan_intel::db::{IntelDb, IntelRecord};

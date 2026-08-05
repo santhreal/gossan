@@ -23,24 +23,29 @@ impl SubdomainSource for Pastebin {
     ) -> anyhow::Result<Vec<Target>> {
         let url = format!("https://psbdmp.ws/api/v3/dumpsearch/{}", domain);
         limiter.until_ready().await;
-        let resp = client.get(&url).send().await?;
+        let resp = client.get(&url).send().await?.error_for_status()?;
         let max_size = config.max_response_size;
         let bytes = gossan_core::read_response_limited(resp, max_size).await?;
         let mut seen = std::collections::HashSet::new();
         let domain_lower = domain.to_lowercase();
 
-        if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-            if let Some(data) = json.get("data").and_then(|v| v.as_array()) {
-                for item in data {
-                    if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
-                        for word in text.split_whitespace() {
-                            let word = word.trim().trim_end_matches('.').to_lowercase();
-                            if crate::is_subdomain_of(&word, &domain_lower) {
-                                seen.insert(word);
+        match serde_json::from_slice::<serde_json::Value>(&bytes) {
+            Ok(json) => {
+                if let Some(data) = json.get("data").and_then(|v| v.as_array()) {
+                    for item in data {
+                        if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
+                            for word in text.split_whitespace() {
+                                let word = word.trim().trim_end_matches('.').to_lowercase();
+                                if crate::is_subdomain_of(&word, &domain_lower) {
+                                    seen.insert(word);
+                                }
                             }
                         }
                     }
                 }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "pastebin JSON parse failed; returning no subdomains");
             }
         }
 

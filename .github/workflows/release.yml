@@ -1,0 +1,151 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to attach binaries to (leave empty for workflow-only build)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            archive: tar.gz
+            cross: true
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            archive: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install protoc
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Install protoc (macOS)
+        if: runner.os == 'macOS'
+        run: brew install protobuf
+
+      - name: Install protoc (Windows)
+        if: runner.os == 'Windows'
+        run: choco install protoc -y
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install cross (linux/aarch64 only)
+        if: matrix.cross == true
+        run: cargo install cross --git https://github.com/cross-rs/cross --locked
+
+      - name: Build (cross)
+        if: matrix.cross == true
+        run: cross build --release --locked --target ${{ matrix.target }} -p gossan
+
+      - name: Build (cargo)
+        if: matrix.cross != true
+        run: cargo build --release --locked --target ${{ matrix.target }} -p gossan
+
+      - name: Stage release artefacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Stable asset names (no version) so /releases/latest/download/... works.
+          stage="gossan-${{ matrix.target }}"
+          mkdir -p "$stage"
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            cp "target/${{ matrix.target }}/release/gossan.exe" "$stage/"
+          else
+            cp "target/${{ matrix.target }}/release/gossan" "$stage/"
+          fi
+          cp README.md LICENSE-MIT LICENSE-APACHE CHANGELOG.md "$stage/" 2>/dev/null || true
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            7z a -tzip "${stage}.zip" "$stage"
+            echo "ASSET=${stage}.zip" >> "$GITHUB_ENV"
+          else
+            tar czf "${stage}.tar.gz" "$stage"
+            echo "ASSET=${stage}.tar.gz" >> "$GITHUB_ENV"
+          fi
+
+      - name: SHA-256 checksum
+        shell: bash
+        run: |
+          if command -v sha256sum >/dev/null; then
+            sha256sum "$ASSET" > "${ASSET}.sha256"
+          else
+            shasum -a 256 "$ASSET" > "${ASSET}.sha256"
+          fi
+          cat "${ASSET}.sha256"
+
+      - name: Upload as workflow artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ASSET }}
+          path: |
+            ${{ env.ASSET }}
+            ${{ env.ASSET }}.sha256
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ env.ASSET }}
+            ${{ env.ASSET }}.sha256
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+
+  publish-crates:
+    name: publish crates.io
+    # Independent of the binary matrix so a single target flake cannot block crates.io.
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: crates-io-publish
+
+      - name: Publish all workspace crates
+        run: bash scripts/publish.sh
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

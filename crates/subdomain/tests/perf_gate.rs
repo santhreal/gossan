@@ -1,6 +1,6 @@
 //! Subdomain dedup throughput gate.
 //!
-//! Per GOSSAN_LEGENDARY Section F: subdomain enumeration must sustain
+//! Per GOSSAN_DEPTH_CONTRACT Section F: subdomain enumeration must sustain
 //! ≥ 10k domains/min via wordlist. The wordlist arm is bounded by DNS
 //! resolution which we can't measure without live network; instead
 //! we hold the pre-resolution dedup path (normalize → punycode →
@@ -16,7 +16,7 @@ const MIN_RATE: f64 = 1_000_000.0; // domains/sec post-dedup
 #[test]
 #[cfg(not(debug_assertions))]
 fn subdomain_dedup_100k_under_1s() {
-    // Mix of duplicates, punycode, mixed case, trailing dots — the
+    // Mix of duplicates, punycode, mixed case, trailing dots, the
     // shapes the live sources actually emit.
     let mut domains: Vec<String> = Vec::with_capacity(CANDIDATE_COUNT);
     for i in 0..CANDIDATE_COUNT {

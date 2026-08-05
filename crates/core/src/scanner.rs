@@ -1,16 +1,16 @@
-//! The [`Scanner`] trait — every gossan module implements this.
+//! The [`Scanner`] trait (every gossan module implements this).
 //!
 //! Defines `run()`, `accepts()`, and metadata (`name`, `tags`) that the
 //! pipeline uses to compose scanner stages.
 
 use async_trait::async_trait;
-use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::TokioResolver;
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use crate::{Config, Finding, Target};
 
-/// Input to a scanner stage — seed, targets, and live streaming channels.
+/// Input to a scanner stage (seed, targets, and live streaming channels).
 /// ALL operations must be stream-oriented. No memory buffering.
 pub struct ScanInput {
     /// Original seed supplied by the scan request.
@@ -22,21 +22,27 @@ pub struct ScanInput {
     /// Downstream target stream for newly discovered assets.
     pub target_tx: Sender<Target>,
     /// Shared DNS resolver configured for this scan.
-    pub resolver: Arc<TokioAsyncResolver>,
+    pub resolver: Arc<TokioResolver>,
 }
 
 impl ScanInput {
     /// Emit a finding to the live channel.
-    pub fn emit(&self, f: Finding) {
-        if let Err(e) = self.live_tx.try_send(f) {
-            tracing::warn!(err = %e, "failed to emit finding");
+    ///
+    /// Applies backpressure via [`Sender::send`] (await) instead of silently
+    /// dropping under a full channel. A closed channel is logged as an error.
+    pub async fn emit(&self, f: Finding) {
+        if let Err(e) = self.live_tx.send(f).await {
+            tracing::error!(err = %e, "failed to emit finding: live channel closed");
         }
     }
 
     /// Emit a discovered target downstream.
-    pub fn emit_target(&self, t: Target) {
-        if let Err(e) = self.target_tx.try_send(t) {
-            tracing::warn!(err = %e, "failed to emit target");
+    ///
+    /// Applies backpressure via [`Sender::send`] (await) instead of silently
+    /// dropping under a full channel. A closed channel is logged as an error.
+    pub async fn emit_target(&self, t: Target) {
+        if let Err(e) = self.target_tx.send(t).await {
+            tracing::error!(err = %e, "failed to emit target: target channel closed");
         }
     }
 }

@@ -16,7 +16,7 @@
     clippy::missing_errors_doc
 )]
 
-//! Panoram tech stack scanner — thin integration layer.
+//! Panoram tech stack scanner (thin integration layer).
 //!
 //! All fingerprinting, security header auditing, and favicon hashing logic
 //! lives in the standalone [`truestack`] crate. This module adapts
@@ -24,12 +24,20 @@
 
 pub mod bridge;
 
+/// Maximum bytes to read from an HTTP response body for tech-stack fingerprinting.
+/// 2 MiB is large enough for any realistic HTML page while keeping memory bounded.
+pub(crate) const MAX_TECHSTACK_BODY_BYTES: usize = 2 * 1024 * 1024;
+
+/// Maximum bytes to read from a favicon response.
+/// Favicons are typically <100 KB; 5 MiB is a generous ceiling.
+pub(crate) const MAX_TECHSTACK_FAVICON_BYTES: usize = 5 * 1024 * 1024;
+
 use async_trait::async_trait;
 use futures::StreamExt;
 use gossan_core::{Config, ScanClient, ScanInput, Scanner, ServiceTarget, Target, WebAssetTarget};
 use secfinding::Finding;
 use std::sync::Arc;
-/// Technology fingerprinting scanner — HTTP headers, HTML patterns, and JS frameworks.
+/// Technology fingerprinting scanner: HTTP headers, HTML patterns, and JS frameworks.
 pub struct TechStackScanner;
 
 #[async_trait]
@@ -54,7 +62,9 @@ impl Scanner for TechStackScanner {
         let web_targets: Vec<ServiceTarget> = {
             let mut rx = input.target_rx.lock().await;
             let mut buf = Vec::new();
-            while let Ok(t) = rx.try_recv() {
+            // recv() until the pipeline closes the inbox — try_recv races the
+            // sender and drops asynchronously delivered targets.
+            while let Some(t) = rx.recv().await {
                 if let Target::Service(s) = t {
                     if s.is_web() {
                         buf.push(s);
@@ -64,27 +74,33 @@ impl Scanner for TechStackScanner {
             buf
         };
 
-        let results: Vec<Option<(WebAssetTarget, Vec<Finding>)>> =
+        let results: Vec<Result<(WebAssetTarget, Vec<Finding>), anyhow::Error>> =
             futures::stream::iter(web_targets)
                 .map(|svc| {
                     let client = client.clone();
-                    async move { bridge::probe(&client, svc).await.ok() }
+                    async move { bridge::probe(&client, svc).await }
                 })
-                .buffer_unordered(config.concurrency)
+                .buffer_unordered(config.concurrency.max(1))
                 .collect()
                 .await;
 
-        for item in results.into_iter().flatten() {
-            let (asset, header_findings) = item;
+        for item in results {
+            let (asset, header_findings) = match item {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!(error = %e, "techstack probe failed");
+                    continue;
+                }
+            };
             tracing::debug!(
                 url = %asset.url,
                 tech = ?asset.tech.iter().map(|t| &t.name).collect::<Vec<_>>(),
                 "web asset"
             );
             for f in header_findings {
-                input.emit(f);
+                input.emit(f).await;
             }
-            input.emit_target(Target::Web(Box::new(asset)));
+            input.emit_target(Target::Web(Box::new(asset))).await;
         }
 
         Ok(())

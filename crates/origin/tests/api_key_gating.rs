@@ -1,6 +1,6 @@
 //! API-key gating contract: every paid-API origin scanner must
 //! return Ok(empty) without making a network call when its API key
-//! is absent. Per GOSSAN_LEGENDARY A16 negative-path requirements.
+//! is absent. Per GOSSAN_DEPTH_CONTRACT A16 negative-path requirements.
 //!
 //! The point: a CI run with no API keys should still complete, just
 //! with reduced source coverage. We assert each source's scan()
@@ -17,12 +17,16 @@ fn empty_config() -> Config {
 
 fn test_client(cfg: &Config) -> gossan_core::ScanClient {
     use hickory_resolver::config::{ResolverConfig, ResolverOpts};
-    use hickory_resolver::TokioAsyncResolver;
+    use hickory_resolver::TokioResolver;
     use std::sync::Arc;
-    let resolver = Arc::new(TokioAsyncResolver::tokio(
-        ResolverConfig::default(),
-        ResolverOpts::default(),
-    ));
+    let resolver = Arc::new(
+        TokioResolver::builder_with_config(
+            ResolverConfig::default(),
+            hickory_resolver::name_server::TokioConnectionProvider::default(),
+        )
+        .with_options(ResolverOpts::default())
+        .build(),
+    );
     gossan_core::ScanClient::from_config(cfg, resolver).expect("client")
 }
 

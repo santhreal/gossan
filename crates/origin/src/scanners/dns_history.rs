@@ -61,6 +61,23 @@ async fn query_securitytrails(
     Ok(results)
 }
 
+/// Strip simple HTML tags from a fragment so that text nested inside
+/// elements (e.g. `<td><a>1.2.3.4</a></td>`) can be parsed cleanly.
+fn strip_tags(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut in_tag = false;
+    for ch in input.chars() {
+        if ch == '<' {
+            in_tag = true;
+        } else if ch == '>' {
+            in_tag = false;
+        } else if !in_tag {
+            out.push(ch);
+        }
+    }
+    out
+}
+
 /// Query ViewDNS.info for historical DNS records (free, no API key for basic usage).
 async fn query_viewdns(
     domain: &str,
@@ -81,10 +98,27 @@ async fn query_viewdns(
     };
 
     if !response.status().is_success() {
+        tracing::warn!(
+            scanner = "dns_history",
+            source = "viewdns",
+            status = %response.status(),
+            "ViewDNS query failed"
+        );
         return Ok(Vec::new());
     }
 
-    let body = bounded_text(response, limit).await.unwrap_or_default();
+    let body = match bounded_text(response, limit).await {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(
+                scanner = "dns_history",
+                source = "viewdns",
+                error = %e,
+                "ViewDNS body read failed after HTTP success"
+            );
+            return Err(e);
+        }
+    };
     let mut results = Vec::new();
 
     // Parse IP addresses from the HTML table.
@@ -96,8 +130,8 @@ async fn query_viewdns(
             let end = trimmed.find("</td>");
             if let (Some(s), Some(e)) = (start, end) {
                 if e > s {
-                    let clean = trimmed[s..e].trim();
-                    if let Ok(ip) = IpAddr::from_str(clean) {
+                    let clean = strip_tags(&trimmed[s..e]).trim().to_string();
+                    if let Ok(ip) = IpAddr::from_str(&clean) {
                         results.push((ip, "viewdns_ip_history".to_string()));
                     }
                 }
@@ -117,7 +151,7 @@ pub async fn scan(
     let mut candidates = Vec::new();
     let mut seen_ips = HashSet::new();
 
-    let limit = config.max_response_size.min(10 * 1024 * 1024).max(1024);
+    let limit = config.max_response_size.min(crate::MAX_ORIGIN_JSON_BYTES).max(1024);
 
     // Query SecurityTrails if API key is available.
     if let Some(api_key) = config.api_keys.get("securitytrails") {
@@ -158,4 +192,24 @@ pub async fn scan(
     }
 
     Ok(candidates)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_tags_removes_anchor_wrapping() {
+        assert_eq!(strip_tags(r#"<td><a href=\"/tools/portscan.htm?host=1.2.3.4\">1.2.3.4</a></td>"#), "1.2.3.4");
+    }
+
+    #[test]
+    fn strip_tags_handles_plain_text() {
+        assert_eq!(strip_tags("1.2.3.4"), "1.2.3.4");
+    }
+
+    #[test]
+    fn strip_tags_handles_nested_tags() {
+        assert_eq!(strip_tags("  <b>1.2.3.4</b>  "), "  1.2.3.4  ");
+    }
 }

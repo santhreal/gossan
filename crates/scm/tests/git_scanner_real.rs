@@ -16,7 +16,7 @@ use std::sync::Arc;
 use gossan_core::target::{DiscoverySource, RepositoryTarget, ScmService};
 use gossan_core::{Config, Finding, ScanInput, Target};
 use gossan_scm::git_scanner::scan_repo;
-use tokio::sync::mpsc::unbounded_channel;
+use tokio::sync::mpsc::channel;
 
 // Real-shaped, NON-placeholder AWS key (the canonical AWS docs key
 // `AKIAIOSFODNN7EXAMPLE` is deliberately filtered by keyhog; this one
@@ -57,10 +57,10 @@ fn make_repo(dir: &std::path::Path, files: &[(&str, &str)]) -> String {
     format!("file://{}", dir.display())
 }
 
-fn scan_input(seed: &str) -> (ScanInput, tokio::sync::mpsc::UnboundedReceiver<Finding>) {
-    let (live_tx, live_rx) = unbounded_channel::<Finding>();
-    let (target_tx, _t_rx) = unbounded_channel::<Target>();
-    let (_in_tx, in_rx) = unbounded_channel::<Target>();
+fn scan_input(seed: &str) -> (ScanInput, tokio::sync::mpsc::Receiver<Finding>) {
+    let (live_tx, live_rx) = channel::<Finding>(128);
+    let (target_tx, _t_rx) = channel::<Target>(128);
+    let (_in_tx, in_rx) = channel::<Target>(128);
     let resolver = Arc::new(
         gossan_core::net::build_resolver(&Config::default()).expect("resolver"),
     );

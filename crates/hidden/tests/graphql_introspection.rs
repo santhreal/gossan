@@ -1,4 +1,4 @@
-//! GraphQL introspection probe — fires when introspection is on,
+//! GraphQL introspection probe, fires when introspection is on,
 //! stays silent when it's off.
 
 use gossan_core::{Target, WebAssetTarget};
@@ -38,7 +38,7 @@ async fn graphql_introspection_enabled_fires() {
     let server = MockServer::start().await;
     // The probe first sends a `__typename` validator query and only
     // proceeds with introspection if it finds a real GraphQL endpoint
-    // — so the validator response must come first.
+    //: so the validator response must come first.
     Mock::given(method("POST"))
         .and(path("/graphql"))
         .respond_with(ResponseTemplate::new(200).set_body_string(TYPENAME_REPLY))
@@ -112,7 +112,7 @@ async fn graphql_no_endpoint_no_finding() {
 #[tokio::test]
 async fn graphql_endpoint_detected_via_typename_probe() {
     let server = MockServer::start().await;
-    // First request — the __typename validator — succeeds.
+    // First request (the __typename validator (succeeds)).
     Mock::given(method("POST"))
         .and(path("/graphql"))
         .respond_with(ResponseTemplate::new(200).set_body_string(TYPENAME_REPLY))

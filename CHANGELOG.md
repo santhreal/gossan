@@ -2,9 +2,85 @@
 
 All notable changes to gossan are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.3.3] - 2026-08-02
+
+Maintenance release. The headline change is the hickory-resolver 0.24
+to 0.25 migration, which renames the resolver type you interact with
+across the public API. The release also folds in the scanner, graph,
+and checkpoint work that accumulated on the main branch since 0.3.2.
+
+### Changed (breaking)
+
+- **hickory-resolver 0.24 to 0.25.** Every crate now builds against
+  hickory-resolver 0.25 with the `tokio` and `system-config` features.
+  This aligns gossan with reqwest's `hickory-dns` 0.25 support, where
+  the 0.24 constructor you may have relied on was removed.
+- `hickory_resolver::TokioAsyncResolver` is gone. Everywhere you used
+  it, you now use `hickory_resolver::TokioResolver`:
+  - `gossan_core::net::build_resolver` returns `TokioResolver`, built
+    through `TokioResolver::builder_with_config` with
+    `TokioConnectionProvider`.
+  - `gossan_core::scanner::ScanInput::resolver` is
+    `Arc<TokioResolver>`.
+  - `gossan_dns::resolver::build_resolver` and
+    `gossan_dns::resolver::{lookup_txt, lookup_txt_classified}` take
+    and return `TokioResolver`.
+  - All `gossan-dns` check modules (`axfr`, `dnssec`, `email`,
+    `posture`, `takeover`) accept `&TokioResolver`.
+  - HTTP client construction in `gossan-core` (`transport`,
+    `ratelimit`, `scanclient_bridge`) threads `Arc<TokioResolver>`.
+- If you pin custom resolvers through `Config::resolvers`, nothing
+  changes for you: the same config path feeds the new builder.
+
+### Fixed
+
+- **Standalone modules no longer panic inside Tokio.** `gossan tech`,
+  `js`, `hidden`, `crawl`, and `headless` preloaded synthetic targets
+  with `blocking_send` on the async runtime thread, which panicked
+  with "Cannot block the current thread from within a runtime" before
+  any probe ran. Preload now uses `try_send` (channel capacity ==
+  target count).
+- **`gossan origin` is wired again.** Dispatch was missing the
+  `origin` arm, so the subcommand exited with
+  "unknown or uncompiled module: origin".
+- **`DNS_TCP_VERSION` probe payload is valid hex.** The odd-length
+  `0x…` string was skipped at runtime; the version.bind query bytes
+  are corrected.
+- **Standalone GitHub / crates.io builds no longer require the Santh
+  monorepo.** Workspace `[patch.crates-io]` and monorepo `path`
+  dependencies (`bogon`, `ctlog`, `hashkit`, `scanclient`,
+  `guise-pacing`, `proxywire`, `runtime-headless`) resolve from
+  crates.io so `cargo build` and the release workflow work from a
+  clean clone.
+- `gossan-crawl` compiles against the current `runtime-headless`
+  `NavigationResult`, whose `status` is now `Option<u16>`. An unknown
+  navigation status (timeout or missing response) fails closed instead
+  of being scraped.
+- `gossan-cloud` no longer awaits a `tracing::error!` call inside the
+  AWS inside-out discovery error path.
+- Test suites brought back in line with current APIs:
+  `gossan-keyhog-lite` imports `DetectorError` in the adversarial
+  suite, `gossan-cli` port-mode tests match the `Result`-returning
+  `parse_port_mode`, and `gossan-checkpoint` tests pass owned strings
+  to the secfinding `Finding` builder.
+- Internal path dependencies (`hashkit`, `scanclient`, `guise-pacing`,
+  `proxywire`, `runtime-headless`) carry explicit registry version
+  requirements so every published crate resolves from crates.io alone.
+
+### Added
+
+- GitHub Releases multi-OS binaries via `.github/workflows/release.yml`
+  (`linux/macOS/Windows` × `x86_64`/`aarch64` where applicable) with
+  stable asset names under `/releases/latest/download/`.
+- `scripts/install.sh` and `scripts/install.ps1` one-liner installers
+  that download, checksum-verify, copy into a durable PATH location,
+  and print shell PATH copy-paste when needed.
+- README install section with per-OS copy-paste download + PATH setup.
+- Tag-triggered crates.io publish for **all** workspace crates via `scripts/publish.sh` (release workflow `publish-crates` job; requires `CARGO_REGISTRY_TOKEN`).
+
 ## [0.3.0] - 2026-05-14
 
-Ship-ready release. Every chunk in the GOSSAN_LEGENDARY contract is
+Ship-ready release. Every chunk in the GOSSAN_DEPTH_CONTRACT contract is
 closed (310 / 310). All 22 crates compile clean (`cargo check
 --workspace --all-features` exits 0). `cargo clippy --workspace
 --all-targets -- -D warnings` exits 0. **973 tests pass across 146
@@ -18,44 +94,44 @@ suites.
 
 ### Added
 
-- `gossan-scm::gitlab_api` — real GitLab v4 API client (group lookup +
+- `gossan-scm::gitlab_api`: real GitLab v4 API client (group lookup +
   paginated project enumeration). Honours `GITLAB_TOKEN` env, the
   `Config::api_keys["gitlab"]` slot, and self-managed instances via
   `api_keys["gitlab_url"]`. Wired into `ScmScanner::run` parallel with
   github via `tokio::join!`. 3 mockito integration tests + 3 unit tests.
-- `gossan-classify::rules::extended_rules()` — 87 new built-in service
+- `gossan-classify::rules::extended_rules()`: 87 new built-in service
   classification rules taking total coverage to 100+ services
   (HTTP servers, container/CI/CD, observability, brokers, mail, DNS,
   remote management, ICS, vector DBs). 22 per-banner integration tests.
-- `gossan-classify::rules::{load_from_toml, builtin_plus}` — community
+- `gossan-classify::rules::{load_from_toml, builtin_plus}`: community
   TOML rule loader so operators can extend without a Rust rebuild.
   5 integration tests over `tests/fixtures/custom_rules.toml`.
-- `gossan-engine::probe::{Backend, ProbeReport, probe}` — runtime probe
+- `gossan-engine::probe::{Backend, ProbeReport, probe}`: runtime probe
   for AF_XDP / sendmmsg / pnet selection (kernel version, CAP_NET_RAW,
   libbpf presence). Surfaced as the `gossan probe-engine` CLI command.
   6 unit tests.
-- `gossan-engine::rate::AdaptiveLoop` + `RateLimiter::set_rate_pps` —
+- `gossan-engine::rate::AdaptiveLoop` + `RateLimiter::set_rate_pps` 
   closed-loop AIMD rate control wired into the TX hot path. CLI flag
   `--adaptive-rate` plus `Config::adaptive_rate`. Re-targets the live
   limiter every 8 batches based on netforge `tx_packets`/`tx_drops`
   deltas. 5 new + 7 prior tests.
-- `gossan-engine::icmp_backoff::IcmpBackoff` — per-/24 ICMP-unreachable
+- `gossan-engine::icmp_backoff::IcmpBackoff`: per-/24 ICMP-unreachable
   backoff consumer with rolling-window threshold and lock-light read
   path. Wired alongside the existing RST `Slash24Backoff` in scan.rs.
   Source side (netforge ICMP RX surfacing) is open work in netforge.
   8 unit tests.
-- `gossan-engine` Cargo feature `xdp` — enables netforge/xdp-backend
+- `gossan-engine` Cargo feature `xdp`: enables netforge/xdp-backend
   for AF_XDP-capable hosts (Linux 5.10+, CAP_BPF, libbpf installed).
-- `gossan-dns::email::{parse_dmarc, DmarcRecord}` — full RFC 7489
+- `gossan-dns::email::{parse_dmarc, DmarcRecord}`: full RFC 7489
   DMARC TXT parser (v/p/sp/pct/rua/ruf/adkim/aspf/fo/rf/ri).
   7 unit tests.
-- `gossan-dns::posture::{parse_caa, CaaEntry, CaaRrset}` — RFC 8659
+- `gossan-dns::posture::{parse_caa, CaaEntry, CaaRrset}`: RFC 8659
   CAA record parser with critical-bit handling, tag bucketing, and
   authorized-CAs / issuance-disabled helpers. 8 unit tests.
 - `gossan-graph` concurrent-write integration test
-  (`tests/concurrent_writes.rs`) — 8 threads × 1000 nodes against a
+  (`tests/concurrent_writes.rs`): 8 threads × 1000 nodes against a
   shared SQLite file land intact under WAL + busy_timeout=5000.
-- `Config::adaptive_rate: bool` — wired through CLI builder + serde.
+- `Config::adaptive_rate: bool`: wired through CLI builder + serde.
 - DMARC RFC 7489 parser at `gossan_dns::email::parse_dmarc(&str) -> Option<DmarcRecord>` (full v/p/sp/pct/rua/ruf/adkim/aspf/fo/rf/ri tag coverage; 7 unit tests).
 - CAA RFC 8659 parser at `gossan_dns::posture::{parse_caa, CaaEntry, CaaRrset}` (critical-bit handling, tag bucketing, authorized-CAs / issuance-disabled helpers; 8 unit tests).
 - Graph concurrent-write integration test (8 threads × 1000 nodes against shared SQLite WAL).
@@ -80,7 +156,7 @@ suites.
   the test caught a real escape vulnerability that was fixed in
   the same commit. Override via `GOSSAN_ALLOW_UNSAFE_PATHS=1`.
 
-### Audit Findings (resolved — all 4 rotted modules rewritten + wired)
+### Audit Findings (resolved, all 4 rotted modules rewritten + wired)
 
 - **`gossan_correlation::confidence`** wired. Cross-source confidence
   fusion (`fuse_confidence(N) -> 1 - (1-p)^N`) + severity boost
@@ -88,7 +164,7 @@ suites.
   Fixed `Severity` non-exhaustive-match drift. 4 unit tests green.
 - **`gossan_correlation::dedup`** wired. Host normalization
   (scheme/port/userinfo strip + IDNA decode + case-fold + trailing-
-  dot strip), wildcard coverage (RFC 4592 §4.2 — wildcards cover
+  dot strip), wildcard coverage (RFC 4592 §4.2, wildcards cover
   subdomains, NOT the apex), and finding dedup that collapses
   wildcard-covered concretes onto their wildcard with a
   `wildcard-origin` tag. Fixed `idna::domain_to_unicode` API drift
@@ -113,14 +189,14 @@ suites.
 
 ### Removed (audit cleanup)
 
-- **`crates/correlation/src/test_utils.rs`** — redundant test-only
+- **`crates/correlation/src/test_utils.rs`**, redundant test-only
   module (never declared in `lib.rs`) duplicating the
   `normalize_host` coverage now provided by the wired `dedup`
   module's own tests. Removed during audit cleanup.
 
 ### Removed (audit cleanup, user-approved)
 
-- **33 dead `.rs` files at `crates/subdomain/src/`** — earlier-
+- **33 dead `.rs` files at `crates/subdomain/src/`**: earlier-
   iteration source modules (alienvault, anubis, asn, bevigil,
   binaryedge, bufferover, c99, censys, certspotter, chaos,
   commoncrawl, ct, dnsdumpster, dnsrepo, fofa, fullhunt, github,
@@ -138,7 +214,7 @@ suites.
 
 ### Fixed
 
-- **`crates/crawl/src/seeds.rs` was dead code** — the file existed
+- **`crates/crawl/src/seeds.rs` was dead code**, the file existed
   with full robots.txt + sitemap.xml parsers (`parse_robots_txt`,
   `parse_sitemap`, `RobotsTxtResult`) but was never declared as a
   module in `lib.rs`. The compiler ignored the file entirely. Fix:
@@ -149,7 +225,7 @@ suites.
   `CorsSecretChainRule` had full `impl CorrelationRule` blocks but
   `CorrelationEngine::new()` only registered 6 of the 9 rules. Three
   additional cross-finding correlation paths were dead. Fix in
-  `crates/correlation/src/lib.rs::CorrelationEngine::new()` — engine
+  `crates/correlation/src/lib.rs::CorrelationEngine::new()`: engine
   now registers all 9 rules.
 - **20+ HTTP response readers were unbounded.** Many cloud + hidden
   modules called `resp.text().await.unwrap_or_default()` without
@@ -168,18 +244,18 @@ suites.
   CLI's `execute_pipeline` collected findings from each scanner
   without ever passing them to the engine. Findings that should
   have synthesised cross-rule correlations were silently dropped on
-  the floor. Fix in `crates/cli/src/pipeline/registry.rs` — engine
+  the floor. Fix in `crates/cli/src/pipeline/registry.rs`: engine
   runs after collection and extends the finding set.
 
 
-- `--format nmap-xml` (aliases: `nmap`, `xml`, `-oX`) — emits an
+- `--format nmap-xml` (aliases: `nmap`, `xml`, `-oX`), emits an
   `<nmaprun>` document with one `<host>` per discovered IP and a
   `<port>` element per open port. Drop-in for tools that already
   consume `nmap -oX`.
-- `--format graphml` — every finding becomes a `<node>` keyed by
+- `--format graphml`: every finding becomes a `<node>` keyed by
   target; findings sharing a target are connected with an undirected
   `<edge>`. Loads directly into Gephi / Cytoscape / yEd.
-- `gossan-hidden::backup_files` probe — 36 path checks (archive,
+- `gossan-hidden::backup_files` probe: 36 path checks (archive,
   SQL dump, editor swap, IDE metadata, log archive families). Magic-
   byte verified for binary paths (zip / gzip / tar / vim swap /
   DS_Store) and content-probe verified for text paths. Wired into the
@@ -203,11 +279,11 @@ suites.
   Harbor, OpenVAS, Nessus, Burp, ZAP, IPFS, Kafka REST,
   Schema Registry, Zookeeper, RabbitMQ, ActiveMQ, NATS, Pulsar,
   MikroTik, UniFi).
-- `docs/schema/v1.json` — JSON Schema for the canonical `--format
+- `docs/schema/v1.json`: JSON Schema for the canonical `--format
   json` output.
 - Property-test scaffold for `gossan-classify`: 10k arbitrary ASCII
   banners, asserts no panic and `confidence ∈ [0,100]`.
-- `gossan-graph::store::memory::MemoryStore` — full
+- `gossan-graph::store::memory::MemoryStore`: full
   `GraphBackend`-trait implementation. Closes "all 4 backends
   round-trip" alongside sqlite / json / graphml.
 - Cross-backend round-trip integration test
@@ -225,10 +301,10 @@ suites.
   and gates each at <50 ms. Plus probe_names_are_unique +
   fallback_probe_names_resolve sanity checks.
 - Engine TX-loop perf gates extended to 2 / 8 / 16 threads (was just
-  1 / 4) — regression-blocked at 8 / 30 / 50 Mpps respectively.
+  1 / 4): regression-blocked at 8 / 30 / 50 Mpps respectively.
 - Correlation-engine perf gate (100 000 findings → chains in <500 ms)
   + adversarial-target tests (RTL marks, CJK, emoji, path traversal,
-  null bytes — all no-panic).
+  null bytes (all no-panic)).
 - Intel-DB bulk import gate (100 000 records in <10 s release-only) +
   query-by-IP + query-by-host smoke tests + 32-thread × 1000-query
   concurrent-read deadlock test.
@@ -249,7 +325,7 @@ suites.
 - Wordlist-integrity tests for the new
   `crates/hidden/wordlists/{top-100,top-1k}.txt` files.
 - Graph 100k-edges-in-<5s perf gate.
-- `docs/schema/v1.json` — JSON Schema for the canonical `--format
+- `docs/schema/v1.json`: JSON Schema for the canonical `--format
   json` array-of-Finding output (matches the actual santh-output
   contract; the older `{tool, findings}` wrapper sketch is gone).
 
@@ -257,19 +333,19 @@ suites.
 
 - Initial workspace structure with modular crate architecture.
 
-## [0.1.0] — Initial release
+## [0.1.0]. Initial release
 
-- **Attack surface discovery** — Subdomains, ports, tech stack, hidden paths, cloud assets, DNS security, origin IP in one scan.
-- **Subdomain enumeration** — CT logs, Wayback Machine, DNS brute forcing (`gossan-subdomain`).
-- **TCP port scanning** — With TLS inspection and banner grabbing (`gossan-portscan`).
-- **Technology fingerprinting** — Headers, cookies, HTML patterns (`gossan-techstack`).
-- **DNS security auditing** — SPF, DMARC, DKIM, CAA, zone transfer checks (`gossan-dns`).
-- **Hidden endpoint discovery** — Dirbusting, sitemap, robots.txt, swagger parsing (`gossan-hidden`).
-- **Cloud asset discovery** — S3, GCS, Azure blob detection (`gossan-cloud`).
-- **JavaScript analysis** — Secret detection, API endpoint extraction, WASM analysis (`gossan-js`).
-- **Origin IP discovery** — CDN/WAF bypass techniques (`gossan-origin`).
-- **Authenticated web crawler** — Form and parameter extraction (`gossan-crawl`).
-- **Cross-module finding correlation** — Unified findings view (`gossan-correlation`).
-- **Scan checkpoint and resume** — For long-running scans (`gossan-checkpoint`).
-- **Stateless masscan-class SYN engine** — netforge-powered, multi-threaded, requires root (`gossan-engine`).
-- **Headless browser integration** — For JavaScript-heavy targets (`gossan-headless`).
+- **Attack surface discovery**: Subdomains, ports, tech stack, hidden paths, cloud assets, DNS security, origin IP in one scan.
+- **Subdomain enumeration**: CT logs, Wayback Machine, DNS brute forcing (`gossan-subdomain`).
+- **TCP port scanning**: With TLS inspection and banner grabbing (`gossan-portscan`).
+- **Technology fingerprinting**: Headers, cookies, HTML patterns (`gossan-techstack`).
+- **DNS security auditing**: SPF, DMARC, DKIM, CAA, zone transfer checks (`gossan-dns`).
+- **Hidden endpoint discovery**: Dirbusting, sitemap, robots.txt, swagger parsing (`gossan-hidden`).
+- **Cloud asset discovery**: S3, GCS, Azure blob detection (`gossan-cloud`).
+- **JavaScript analysis**: Secret detection, API endpoint extraction, WASM analysis (`gossan-js`).
+- **Origin IP discovery**: CDN/WAF bypass techniques (`gossan-origin`).
+- **Authenticated web crawler**: Form and parameter extraction (`gossan-crawl`).
+- **Cross-module finding correlation**: Unified findings view (`gossan-correlation`).
+- **Scan checkpoint and resume**: For long-running scans (`gossan-checkpoint`).
+- **Stateless masscan-class SYN engine** (netforge-powered, multi-threaded, requires root (`gossan-engine`)).
+- **Headless browser integration**: For JavaScript-heavy targets (`gossan-headless`).
