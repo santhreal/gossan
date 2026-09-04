@@ -64,7 +64,7 @@ impl IntelCache {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs() as i64;
-        if now - fetched_at > ttl_secs as i64 {
+        if now.saturating_sub(fetched_at) > ttl_secs as i64 {
             return Ok(None);
         }
 
