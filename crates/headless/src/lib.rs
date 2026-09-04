@@ -287,7 +287,9 @@ async fn analyze_target(
             }
         
             }
-}
+        } else {
+            tracing::warn!("headless: auth login-probe evaluate timed out; continuing remaining probes");
+        }
     }
 
     // ── 2. Stateful Spidering (Clicking all a/button) ─────────────────────
@@ -388,7 +390,9 @@ async fn analyze_target(
         }
     
         }
-}
+        } else {
+            tracing::warn!("headless: request-hook collection evaluate timed out; continuing remaining probes");
+        }
 
     // Drain all trapped network requests from the CDP listener too
     while let Ok(Some(req)) =
@@ -477,7 +481,9 @@ async fn analyze_target(
         }
     
         }
-}
+        } else {
+            tracing::warn!("headless: js-global probe evaluate timed out; continuing remaining probes");
+        }
 
     // ── Form Extraction ─────────────────────────────────────────────────────
     let form_probe = r#"
@@ -557,7 +563,9 @@ async fn analyze_target(
         }
     
         }
-}
+        } else {
+            tracing::warn!("headless: form-extraction probe evaluate timed out; continuing");
+        }
 
     if let Err(e) = tokio::time::timeout(std::time::Duration::from_secs(10), page.close()).await {
         tracing::debug!(error = %e, "headless page.close timed out or failed");
