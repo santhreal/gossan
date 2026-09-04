@@ -50,15 +50,28 @@ pub fn load_wordlist_tiered(custom_path: Option<&str>, tier: &WordlistTier) -> V
 
     // Try custom path first
     if let Some(path) = custom_path {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            words.extend(parse_wordlist(&content));
-            if !words.is_empty() {
-                tracing::info!(
-                    count = words.len(),
+        match std::fs::read_to_string(path) {
+            Ok(content) => {
+                words.extend(parse_wordlist(&content));
+                if !words.is_empty() {
+                    tracing::info!(
+                        count = words.len(),
+                        path = path,
+                        "loaded custom directory wordlist"
+                    );
+                    return words;
+                }
+                tracing::warn!(
                     path = path,
-                    "loaded custom directory wordlist"
+                    "custom directory wordlist is empty; falling back to tier"
                 );
-                return words;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    path = path,
+                    error = %e,
+                    "failed to read custom directory wordlist; falling back to tier"
+                );
             }
         }
     }

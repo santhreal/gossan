@@ -201,4 +201,129 @@ mod fuzzy_hash_tests {
         let dist = (ha ^ hb).count_ones();
         assert!(dist <= 8, "small edit should keep hamming distance low, got {dist}");
     }
+
+    #[test]
+    fn fuzzy_hash_empty_input_is_deterministic() {
+        let h1 = calculate_fuzzy_hash("");
+        let h2 = calculate_fuzzy_hash("");
+        assert_eq!(h1, h2, "empty input must produce a stable hash");
+    }
+
+    #[test]
+    fn fuzzy_hash_whitespace_only_is_deterministic() {
+        let h1 = calculate_fuzzy_hash("   \t\n  ");
+        let h2 = calculate_fuzzy_hash("   \t\n  ");
+        assert_eq!(h1, h2, "whitespace-only input must produce a stable hash");
+    }
+}
+
+#[cfg(test)]
+mod dom_fingerprint_tests {
+    use super::*;
+
+    #[test]
+    fn extracts_tag_names_in_order() {
+        let html = "<html><head><title>Test</title></head><body><div><p>Hello</p></div></body></html>";
+        let fp = generate_dom_fingerprint(html);
+        assert_eq!(fp, "html,head,title,body,div,p");
+    }
+
+    #[test]
+    fn ignores_closing_tags() {
+        let html = "<div><span>text</span></div>";
+        let fp = generate_dom_fingerprint(html);
+        assert_eq!(fp, "div,span");
+    }
+
+    #[test]
+    fn handles_self_closing_tags() {
+        let html = "<div><br/><img src=\"x\"/></div>";
+        let fp = generate_dom_fingerprint(html);
+        assert_eq!(fp, "div,br,img");
+    }
+
+    #[test]
+    fn ignores_tag_content_in_script() {
+        let html = "<div><script>var x = '<div>fake</div>';</script><span>real</span></div>";
+        let fp = generate_dom_fingerprint(html);
+        assert_eq!(fp, "div,script,span");
+    }
+
+    #[test]
+    fn ignores_tag_content_in_style() {
+        let html = "<div><style>.div { color: red; }</style></div>";
+        let fp = generate_dom_fingerprint(html);
+        assert_eq!(fp, "div,style");
+    }
+
+    #[test]
+    fn handles_attributes_with_quoted_values() {
+        let html = "<div class=\"foo bar\" id='baz'>text</div>";
+        let fp = generate_dom_fingerprint(html);
+        assert_eq!(fp, "div");
+    }
+
+    #[test]
+    fn empty_html_produces_empty_fingerprint() {
+        assert_eq!(generate_dom_fingerprint(""), "");
+    }
+
+    #[test]
+    fn plain_text_produces_empty_fingerprint() {
+        assert_eq!(generate_dom_fingerprint("just text, no tags"), "");
+    }
+
+    #[test]
+    fn case_insensitive_tag_names() {
+        let html = "<DIV><SPAN>text</SPAN></DIV>";
+        let fp = generate_dom_fingerprint(html);
+        assert_eq!(fp, "div,span");
+    }
+}
+
+#[cfg(test)]
+mod response_baseline_tests {
+    use super::*;
+
+    #[test]
+    fn identical_response_is_mirror() {
+        let baseline = ResponseBaseline {
+            avg_length: 100,
+            headers: [("Server".to_string(), "nginx".to_string())].into(),
+            fuzzy_hash: 42,
+            dom_fingerprint: "html,head,body".to_string(),
+        };
+        assert!(
+            baseline.is_mirror(100, &baseline.headers.clone(), 42, "html,head,body"),
+            "identical response must be classified as mirror"
+        );
+    }
+
+    #[test]
+    fn completely_different_response_is_not_mirror() {
+        let baseline = ResponseBaseline {
+            avg_length: 100,
+            headers: [("Server".to_string(), "nginx".to_string())].into(),
+            fuzzy_hash: 42,
+            dom_fingerprint: "html,head,body".to_string(),
+        };
+        let different_headers = [("Server".to_string(), "apache".to_string())].into();
+        assert!(
+            !baseline.is_mirror(500, &different_headers, 999, "div,span,p"),
+            "completely different response must not be classified as mirror"
+        );
+    }
+
+    #[test]
+    fn similarity_score_is_between_zero_and_one() {
+        let baseline = ResponseBaseline {
+            avg_length: 100,
+            headers: [("Server".to_string(), "nginx".to_string())].into(),
+            fuzzy_hash: 42,
+            dom_fingerprint: "html,head,body".to_string(),
+        };
+        let different_headers = [("Server".to_string(), "apache".to_string())].into();
+        let score = baseline.similarity(200, &different_headers, 0, "div,span");
+        assert!(score >= 0.0 && score <= 1.0, "similarity score must be in [0, 1], got {score}");
+    }
 }

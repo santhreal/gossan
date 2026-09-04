@@ -209,44 +209,74 @@ impl Scanner for PortScanner {
                 // store: per-(IpAddr, u16) granularity would inflate
                 // the SQLite write rate to one row per probed port,
                 // which dominated wall time on previous benchmarks.
-                if gossan_checkpoint::CheckpointStore::open(path).is_ok() {
-                    if let Ok(content) =
-                        std::fs::read_to_string(path.with_extension("portscan-resume.json"))
-                    {
-                        if let Ok(keys) = serde_json::from_str::<Vec<ScanTargetKey>>(&content) {
-                            completed_ports
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner())
-                                .extend(keys);
-                            tracing::info!(
-                                resumed = completed_ports
+                match gossan_checkpoint::CheckpointStore::open(path) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            path = %path.display(),
+                            "checkpoint store open failed; starting fresh scan"
+                        );
+                    }
+                }
+                match std::fs::read_to_string(path.with_extension("portscan-resume.json")) {
+                    Ok(content) => {
+                        match serde_json::from_str::<Vec<ScanTargetKey>>(&content) {
+                            Ok(keys) => {
+                                completed_ports
                                     .lock()
                                     .unwrap_or_else(|e| e.into_inner())
-                                    .len(),
-                                "resuming portscan from checkpoint"
-                            );
-                        } else if let Ok(old_ports) =
-                            serde_json::from_str::<Vec<(IpAddr, u16)>>(&content)
-                        {
-                            let keys: Vec<ScanTargetKey> = old_ports
-                                .into_iter()
-                                .map(|(ip, port)| ScanTargetKey {
-                                    target: ip.to_string(),
-                                    port,
-                                })
-                                .collect();
-                            completed_ports
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner())
-                                .extend(keys);
-                            tracing::info!(
-                                resumed = completed_ports
-                                    .lock()
-                                    .unwrap_or_else(|e| e.into_inner())
-                                    .len(),
-                                "resuming portscan from legacy checkpoint"
-                            );
+                                    .extend(keys);
+                                tracing::info!(
+                                    resumed = completed_ports
+                                        .lock()
+                                        .unwrap_or_else(|e| e.into_inner())
+                                        .len(),
+                                    "resuming portscan from checkpoint"
+                                );
+                            }
+                            Err(new_err) => {
+                                match serde_json::from_str::<Vec<(IpAddr, u16)>>(&content) {
+                                    Ok(old_ports) => {
+                                        let keys: Vec<ScanTargetKey> = old_ports
+                                            .into_iter()
+                                            .map(|(ip, port)| ScanTargetKey {
+                                                target: ip.to_string(),
+                                                port,
+                                            })
+                                            .collect();
+                                        completed_ports
+                                            .lock()
+                                            .unwrap_or_else(|e| e.into_inner())
+                                            .extend(keys);
+                                        tracing::info!(
+                                            resumed = completed_ports
+                                                .lock()
+                                                .unwrap_or_else(|e| e.into_inner())
+                                                .len(),
+                                            "resuming portscan from legacy checkpoint"
+                                        );
+                                    }
+                                    Err(legacy_err) => {
+                                        tracing::warn!(
+                                            new_format_err = %new_err,
+                                            legacy_format_err = %legacy_err,
+                                            "checkpoint resume JSON unparseable in both current and legacy formats; starting fresh"
+                                        );
+                                    }
+                                }
+                            }
                         }
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        // No sidecar file — first run or checkpoint from a different scanner.
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            path = %path.with_extension("portscan-resume.json").display(),
+                            "failed to read portscan resume sidecar; starting fresh"
+                        );
                     }
                 }
             }
@@ -455,9 +485,14 @@ impl Scanner for PortScanner {
                         let keys: Vec<&ScanTargetKey> = locked.iter().collect();
                         serde_json::to_string(&keys)
                     };
-                    if let Ok(json) = data {
-                        if let Err(e) = tokio::fs::write(&resume_file, json).await {
-                            tracing::warn!(err = %e, "failed to write periodic checkpoint");
+                    match data {
+                        Ok(json) => {
+                            if let Err(e) = tokio::fs::write(&resume_file, json).await {
+                                tracing::warn!(err = %e, "failed to write periodic checkpoint");
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "failed to serialize checkpoint data");
                         }
                     }
                 }
