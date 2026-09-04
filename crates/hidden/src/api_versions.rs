@@ -86,6 +86,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
     for path in VERSION_PATHS {
         let url = format!("{}{}", base, path);
         let Ok(resp) = client.get(&url).send().await else {
+            tracing::warn!(url = %url, "api_versions: version path probe send failed");
             continue;
         };
         let status = resp.status().as_u16();
@@ -177,6 +178,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
     for (path, description, severity) in SHADOW_PATHS {
         let url = format!("{}{}", base, path);
         let Ok(resp) = client.get(&url).send().await else {
+            tracing::warn!(url = %url, "api_versions: shadow endpoint probe send failed");
             continue;
         };
         let status = resp.status().as_u16();

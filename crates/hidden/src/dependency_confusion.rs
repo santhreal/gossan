@@ -54,6 +54,7 @@ pub async fn probe(
     for (path, title, confirms) in MANIFESTS {
         let url = format!("{}{}", base, path);
         let Ok(resp) = client.get(&url).send().await else {
+            tracing::warn!(url = %url, "dependency_confusion: manifest fetch send failed");
             continue;
         };
         if resp.status().as_u16() != 200 {

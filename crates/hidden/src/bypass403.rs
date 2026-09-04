@@ -78,6 +78,7 @@ pub async fn probe(
 
         // First, confirm this path actually returns 403.
         let Ok(resp) = client.get(&blocked_url).send().await else {
+            tracing::warn!(url = %blocked_url, "403 bypass: confirm request send failed");
             continue;
         };
         if resp.status().as_u16() != 403 {
@@ -95,6 +96,7 @@ pub async fn probe(
                 .send()
                 .await
             else {
+                tracing::warn!(url = %blocked_url, header = header, "403 bypass: header probe send failed");
                 continue;
             };
 
@@ -147,6 +149,7 @@ pub async fn probe(
         for (mutated, label) in path_mutations(path) {
             let mutated_url = format!("{}{}", base, mutated);
             let Ok(resp) = client.get(&mutated_url).send().await else {
+                tracing::warn!(url = %mutated_url, "403 bypass: mutation probe send failed");
                 continue;
             };
 
@@ -196,6 +199,7 @@ pub async fn probe(
             reqwest::Method::PUT,
         ] {
             let Ok(resp) = client.request(method.clone(), &blocked_url).send().await else {
+                tracing::warn!(url = %blocked_url, method = %method, "403 bypass: method probe send failed");
                 continue;
             };
             let status = resp.status().as_u16();

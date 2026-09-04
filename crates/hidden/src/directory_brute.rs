@@ -139,6 +139,7 @@ pub async fn probe(
                     let url = format!("{}{}{}", base, path, ext);
                     rl.wait_for_host(&host_str).await;
                     let Ok(resp) = client.get(&url).send().await else {
+                        tracing::warn!(url = %url, "directory_brute: probe send failed");
                         continue;
                     };
                     let status = resp.status().as_u16();

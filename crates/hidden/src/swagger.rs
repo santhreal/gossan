@@ -78,6 +78,7 @@ pub async fn probe(
     for path in PATHS {
         let url = format!("{}{}", base, path);
         let Ok(resp) = client.get(&url).send().await else {
+            tracing::warn!(url = %url, "swagger: probe send failed");
             continue;
         };
 

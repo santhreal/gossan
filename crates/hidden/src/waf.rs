@@ -16,6 +16,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
     let url = asset.url.as_str();
 
     let Ok(resp) = client.get(url).send().await else {
+        tracing::warn!(url = %url, "waf: probe send failed");
         return Ok(vec![]);
     };
 
