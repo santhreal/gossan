@@ -217,4 +217,70 @@ mod tests {
         let result = parent_domain("1.2.3.4");
         assert_eq!(result, "1.2.3.4");
     }
+
+    // ── proptest property tests ───────────────────────────────────────────
+
+    use proptest::prelude::*;
+
+    proptest! {
+        /// normalize_host is idempotent: applying it twice yields the same
+        /// result as applying it once.
+        #[test]
+        fn normalize_host_idempotent(host in "[a-z0-9.-]{1,63}") {
+            let once = normalize_host(&host);
+            let twice = normalize_host(&once);
+            prop_assert_eq!(once, twice);
+        }
+
+        /// normalize_host lowercases: the output contains no uppercase ASCII.
+        #[test]
+        fn normalize_host_output_is_lowercase(host in "[A-Za-z0-9.:-]{1,63}") {
+            let result = normalize_host(&host);
+            prop_assert!(!result.chars().any(|c| c.is_ascii_uppercase()),
+                "uppercase leaked into normalized host: {result:?} from {host:?}");
+        }
+
+        /// normalize_host never panics, even on hostile input.
+        #[test]
+        fn normalize_host_never_panics(input in "\\PC{0,128}") {
+            let _ = normalize_host(&input);
+        }
+
+        /// parent_domain is idempotent: re-normalizing the output does not
+        /// change it.
+        #[test]
+        fn parent_domain_idempotent(host in "[a-z0-9.-]{1,63}") {
+            let once = parent_domain(&host);
+            let twice = parent_domain(&once);
+            prop_assert_eq!(once, twice);
+        }
+
+        /// parent_domain never panics, even on hostile input.
+        #[test]
+        fn parent_domain_never_panics(input in "\\PC{0,128}") {
+            let _ = parent_domain(&input);
+        }
+
+        /// parent_domain of a bare IPv4 address returns the address unchanged.
+        #[test]
+        fn parent_domain_ipv4_unchanged(a in 0u8..=255, b in 0u8..=255, c in 0u8..=255, d in 0u8..=255) {
+            let ip = format!("{a}.{b}.{c}.{d}");
+            prop_assert_eq!(parent_domain(&ip), ip);
+        }
+
+        /// Sibling subdomains of the same registrable parent map to the
+        /// same parent_domain output.
+        #[test]
+        fn siblings_share_parent(
+            sub1 in "[a-z]{1,10}",
+            sub2 in "[a-z]{1,10}",
+            parent in "[a-z]{1,20}\\.[a-z]{2,6}"
+        ) {
+            // Only when the two sub-labels differ (otherwise it's the same host).
+            prop_assume!(sub1 != sub2);
+            let h1 = format!("{sub1}.{parent}");
+            let h2 = format!("{sub2}.{parent}");
+            prop_assert_eq!(parent_domain(&h1), parent_domain(&h2));
+        }
+    }
 }
