@@ -124,16 +124,21 @@ fn load_with(
     extra_roots: &[PathBuf],
 ) -> Vec<String> {
     if let Some(path) = custom {
-        if let Ok(c) = std::fs::read_to_string(path) {
-            let mut seen = HashSet::new();
-            let mut out = Vec::new();
-            parse(&c, &mut seen, &mut out);
-            if !out.is_empty() {
-                tracing::info!(count = out.len(), path, kind, "custom Tier-B list (replaces default)");
-                return out;
+        match std::fs::read_to_string(path) {
+            Ok(c) => {
+                let mut seen = HashSet::new();
+                let mut out = Vec::new();
+                parse(&c, &mut seen, &mut out);
+                if !out.is_empty() {
+                    tracing::info!(count = out.len(), path, kind, "custom Tier-B list (replaces default)");
+                    return out;
+                }
+                tracing::warn!(path, kind, "custom Tier-B list is empty  -  using default union");
+            }
+            Err(e) => {
+                tracing::warn!(path, error = %e, kind, "custom Tier-B list unreadable  -  using default union");
             }
         }
-        tracing::warn!(path, kind, "custom Tier-B list unreadable/empty  -  using default union");
     }
 
     let mut seen = HashSet::new();
@@ -144,11 +149,16 @@ fn load_with(
     let base = out.len();
     let mut drop_in_files = 0usize;
     for p in dropin_files(kind, extra_roots, "txt") {
-        if let Ok(c) = std::fs::read_to_string(&p) {
-            let before = out.len();
-            parse(&c, &mut seen, &mut out);
-            if out.len() > before {
-                drop_in_files += 1;
+        match std::fs::read_to_string(&p) {
+            Ok(c) => {
+                let before = out.len();
+                parse(&c, &mut seen, &mut out);
+                if out.len() > before {
+                    drop_in_files += 1;
+                }
+            }
+            Err(e) => {
+                tracing::warn!(path = %p.display(), error = %e, kind, "failed to read Tier-B drop-in file; skipping");
             }
         }
     }
@@ -221,30 +231,40 @@ pub fn load_wordlist_toml(
     extra_roots: &[PathBuf],
 ) -> Vec<String> {
     if let Some(path) = custom {
-        if let Ok(c) = std::fs::read_to_string(path) {
-            let mut seen = HashSet::new();
-            let mut out = Vec::new();
-            parse_wordlist(&c, &mut seen, &mut out);
-            if !out.is_empty() {
-                tracing::info!(count = out.len(), path, kind, "custom Tier-B list (replaces default)");
-                return out;
+        match std::fs::read_to_string(path) {
+            Ok(c) => {
+                let mut seen = HashSet::new();
+                let mut out = Vec::new();
+                parse_wordlist(&c, &mut seen, &mut out);
+                if !out.is_empty() {
+                    tracing::info!(count = out.len(), path, kind, "custom Tier-B list (replaces default)");
+                    return out;
+                }
+                tracing::warn!(path, kind, "custom Tier-B list is empty  -  using default union");
+            }
+            Err(e) => {
+                tracing::warn!(path, error = %e, kind, "custom Tier-B list unreadable  -  using default union");
             }
         }
-        tracing::warn!(path, kind, "custom Tier-B list unreadable/empty  -  using default union");
     }
 
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     for e in embedded {
-        if let Ok(parsed) = toml::from_str::<WordlistToml>(e) {
-            for w in &parsed.words {
-                let l = w.trim().strip_prefix('/').unwrap_or(w).to_lowercase();
-                if !l.is_empty() && seen.insert(l.clone()) { out.push(l); }
+        match toml::from_str::<WordlistToml>(e) {
+            Ok(parsed) => {
+                for w in &parsed.words {
+                    let l = w.trim().strip_prefix('/').unwrap_or(w).to_lowercase();
+                    if !l.is_empty() && seen.insert(l.clone()) { out.push(l); }
+                }
+                for ent in parsed.entry.iter().chain(&parsed.path) {
+                    let w = &ent.value;
+                    let l = w.trim().strip_prefix('/').unwrap_or(w).to_lowercase();
+                    if !l.is_empty() && seen.insert(l.clone()) { out.push(l); }
+                }
             }
-            for ent in parsed.entry.iter().chain(&parsed.path) {
-                let w = &ent.value;
-                let l = w.trim().strip_prefix('/').unwrap_or(w).to_lowercase();
-                if !l.is_empty() && seen.insert(l.clone()) { out.push(l); }
+            Err(err) => {
+                tracing::warn!(error = %err, kind, "failed to parse embedded Tier-B TOML baseline; skipping");
             }
         }
     }
@@ -252,10 +272,17 @@ pub fn load_wordlist_toml(
     let mut drop_in_files = 0usize;
     for ext in ["toml", "txt"] {
         for p in dropin_files(kind, extra_roots, ext) {
-            if let Ok(c) = std::fs::read_to_string(&p) {
-                let before = out.len();
-                if ext == "toml" {
-                    if let Ok(parsed) = toml::from_str::<WordlistToml>(&c) {
+            let c = match std::fs::read_to_string(&p) {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!(path = %p.display(), error = %e, kind, "failed to read Tier-B drop-in file; skipping");
+                    continue;
+                }
+            };
+            let before = out.len();
+            if ext == "toml" {
+                match toml::from_str::<WordlistToml>(&c) {
+                    Ok(parsed) => {
                         for w in &parsed.words {
                             let l = w.trim().strip_prefix('/').unwrap_or(w).to_lowercase();
                             if !l.is_empty() && seen.insert(l.clone()) { out.push(l); }
@@ -266,11 +293,14 @@ pub fn load_wordlist_toml(
                             if !l.is_empty() && seen.insert(l.clone()) { out.push(l); }
                         }
                     }
-                } else {
-                    parse_wordlist(&c, &mut seen, &mut out);
+                    Err(e) => {
+                        tracing::warn!(path = %p.display(), error = %e, kind, "failed to parse Tier-B TOML drop-in; skipping");
+                    }
                 }
-                if out.len() > before { drop_in_files += 1; }
+            } else {
+                parse_wordlist(&c, &mut seen, &mut out);
             }
+            if out.len() > before { drop_in_files += 1; }
         }
     }
     tracing::info!(total = out.len(), embedded = base, drop_in_files, kind, "Tier-B wordlist (toml baseline ∪ drop-ins)");
