@@ -393,6 +393,8 @@ async fn crawl_asset(
     // O(1) param dedup: param name → already added
     let mut param_seen: HashSet<String> = HashSet::new();
     let mut discovered_urls: Vec<Url> = Vec::new();
+    // O(1) discovered-URL dedup: canonical URL string → already emitted
+    let mut discovered_seen: HashSet<String> = HashSet::new();
     let mut url_status: HashMap<String, u16> = HashMap::new();
 
     while let Some((url, depth)) = queue.pop() {
@@ -580,6 +582,7 @@ async fn crawl_asset(
                                     if u.host_str() == Some(&base_host)
                                         && !visited.contains(&canonical_url_str(&u))
                                         && !seeds::is_disallowed(&u, &robots_disallowed)
+                                        && discovered_seen.insert(canonical_url_str(&u))
                                     {
                                         discovered_urls.push(u.clone());
                                         queue.push((u, depth.saturating_add(1)));
@@ -605,6 +608,7 @@ async fn crawl_asset(
                                 if u.host_str() == Some(&base_host)
                                     && !visited.contains(&canonical_url_str(&u))
                                     && !seeds::is_disallowed(&u, &robots_disallowed)
+                                    && discovered_seen.insert(canonical_url_str(&u))
                                 {
                                     discovered_urls.push(u.clone());
                                     queue.push((u, depth.saturating_add(1)));
