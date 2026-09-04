@@ -293,11 +293,13 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
             let acam = header_value(&resp, "access-control-allow-methods");
         let status = resp.status().as_u16();
 
-        if let Some(ref methods) = acam {
+        if let Some(methods) = &acam {
             let methods_upper = methods.to_uppercase();
+            let tokens: std::collections::HashSet<&str> =
+                methods_upper.split(|c: char| c == ',' || c.is_whitespace()).collect();
             let dangerous_methods: Vec<&str> = ["DELETE", "PUT", "PATCH"]
                 .iter()
-                .filter(|m| methods_upper.contains(**m))
+                .filter(|m| tokens.contains(**m))
                 .copied()
                 .collect();
             // Fire when the server exposes a wildcard method list OR allows
@@ -305,7 +307,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
             // parentheses pin the intended precedence (`&&` binds tighter
             // than `||` without them) so a future reader cannot misread the
             // condition.
-            if (!dangerous_methods.is_empty() && methods_upper.contains("*"))
+            if (tokens.contains("*") && !dangerous_methods.is_empty())
                 || dangerous_methods.len() >= 2
             {
                 findings.push(
@@ -330,8 +332,8 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
                     .map_err(|e| anyhow::anyhow!(e))?,
                 );
             }
-            }
         }
+            }
         Err(e) => {
             tracing::warn!(
                 "CORS OPTIONS probe send failed: origin={} url={} error={}",
@@ -459,14 +461,16 @@ mod tests {
     /// one dangerous method is listed without a wildcard.
     #[test]
     fn dangerous_methods_condition_requires_wildcard_or_two_plus() {
-        // Helper that mirrors the probe condition.
+        // Helper that mirrors the probe condition with token-exact matching.
         fn should_fire(methods_upper: &str) -> bool {
+            let tokens: std::collections::HashSet<&str> =
+                methods_upper.split(|c: char| c == ',' || c.is_whitespace()).collect();
             let dangerous: Vec<&str> = ["DELETE", "PUT", "PATCH"]
                 .iter()
-                .filter(|m| methods_upper.contains(**m))
+                .filter(|m| tokens.contains(**m))
                 .copied()
                 .collect();
-            (!dangerous.is_empty() && methods_upper.contains("*"))
+            (tokens.contains("*") && !dangerous.is_empty())
                 || dangerous.len() >= 2
         }
 
@@ -487,5 +491,11 @@ mod tests {
         // No dangerous methods → must NOT fire.
         assert!(!should_fire("GET, POST"), "no dangerous methods must NOT fire");
         assert!(!should_fire("GET, *"), "wildcard alone with no dangerous method must NOT fire");
+
+        // Substring false positive: "INPUT" must not match "PUT",
+        // "PATCHED" must not match "PATCH". Token-exact matching prevents this.
+        assert!(!should_fire("GET, INPUT"), "INPUT must not match PUT via substring");
+        assert!(!should_fire("GET, PATCHED"), "PATCHED must not match PATCH via substring");
+        assert!(!should_fire("GET, COMPUTE, OUTPUT"), "OUTPUT must not match PUT via substring");
     }
 }

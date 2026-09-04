@@ -949,12 +949,15 @@ fn identify_banner_or_probe(
     let b = banner.to_lowercase();
 
     // SSH version disclosure
-    if b.starts_with("ssh-") || banner.starts_with("SSH-") {
+    if b.starts_with("ssh-") {
         let version = banner.lines().next().unwrap_or(banner).trim();
-        let severity = if version.contains("OpenSSH_7")
-            || version.contains("OpenSSH_6")
-            || version.contains("OpenSSH_5")
-            || version.contains("OpenSSH_4")
+        // Use the lowercased banner for version checks so non-standard
+        // casing (e.g. `openssh_7.4`) is still caught.
+        let severity = if b.contains("openssh_7")
+            || b.contains("openssh_6")
+            || b.contains("openssh_5")
+            || b.contains("openssh_4")
+            || b.contains("openssh_3")
         {
             Severity::High
         } else {
