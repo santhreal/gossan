@@ -89,7 +89,16 @@ async fn check_cname(resolver: &TokioResolver, domain: &str, target: &Target) ->
             }
             records[0].clone()
         }
-        Err(_) => return findings,
+        Err(e) => {
+            if !e.is_nx_domain() && !e.is_no_records_found() {
+                tracing::warn!(
+                    domain,
+                    error = %e,
+                    "dns takeover: CNAME lookup failed (not transient absence)"
+                );
+            }
+            return findings;
+        }
     };
 
     let fps = fingerprints();
@@ -135,7 +144,16 @@ async fn check_ns(resolver: &TokioResolver, domain: &str, target: &Target) -> Ve
 
     let ns_records = match resolver.lookup(domain, RecordType::NS).await {
         Ok(r) => r,
-        Err(_) => return findings,
+        Err(e) => {
+            if !e.is_nx_domain() && !e.is_no_records_found() {
+                tracing::warn!(
+                    domain,
+                    error = %e,
+                    "dns takeover: NS lookup failed (not transient absence)"
+                );
+            }
+            return findings;
+        }
     };
 
     let nameservers: Vec<String> = ns_records
@@ -206,7 +224,16 @@ async fn check_mx(resolver: &TokioResolver, domain: &str, target: &Target) -> Ve
 
     let mx_records = match resolver.mx_lookup(domain).await {
         Ok(r) => r,
-        Err(_) => return findings,
+        Err(e) => {
+            if !e.is_nx_domain() && !e.is_no_records_found() {
+                tracing::warn!(
+                    domain,
+                    error = %e,
+                    "dns takeover: MX lookup failed (not transient absence)"
+                );
+            }
+            return findings;
+        }
     };
 
     let exchanges: Vec<String> = mx_records
