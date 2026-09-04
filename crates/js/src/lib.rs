@@ -285,8 +285,9 @@ async fn analyze(
     }
 
     // Collect WASM results
-    if let Ok(wasm_findings) = wasm_task.await {
-        findings.extend(wasm_findings);
+    match wasm_task.await {
+        Ok(wasm_findings) => findings.extend(wasm_findings),
+        Err(e) => tracing::warn!(error = %e, "WASM analysis task failed"),
     }
 
     // Oneshot: Verify discovered secrets actively
@@ -349,6 +350,7 @@ pub(crate) async fn probe_sourcemap_full(
     }
 
     let Ok(resp) = client.get(map_url).send().await else {
+        tracing::warn!(url = map_url, "source map fetch send failed");
         return findings;
     };
     let status = resp.status().as_u16();
@@ -356,6 +358,7 @@ pub(crate) async fn probe_sourcemap_full(
         return findings;
     }
     let Ok(body) = gossan_core::net::bounded_text(resp, MAX_JS_RESPONSE_BYTES).await else {
+        tracing::warn!(url = map_url, "source map body read failed");
         return findings;
     };
     if !body.contains("\"sources\"") {
