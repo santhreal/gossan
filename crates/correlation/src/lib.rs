@@ -181,4 +181,109 @@ mod tests {
             .iter()
             .any(|f| f.title().contains("Unauthenticated legacy API")));
     }
+
+    #[test]
+    fn engine_returns_ssrf_chain_when_ssrf_and_internal_service_align() {
+        let engine = CorrelationEngine::new();
+        let findings = vec![
+            finding("hidden", "app.example.com", "Open redirect detected"),
+            finding("portscan", "app.example.com", "Redis exposed without authentication"),
+        ];
+        let chains = engine.run(&findings, &[]);
+        assert!(chains.iter().any(|f| f.title().contains("SSRF")));
+    }
+
+    #[test]
+    fn engine_returns_source_secrets_chain_when_git_and_key_on_same_host() {
+        let engine = CorrelationEngine::new();
+        let findings = vec![
+            finding("hidden", "app.example.com", "Git repository exposed at /.git/"),
+            finding("js", "app.example.com", "AWS Access Key found in JavaScript"),
+        ];
+        let chains = engine.run(&findings, &[]);
+        assert!(chains
+            .iter()
+            .any(|f| f.title().contains("Source Code Exposure")));
+    }
+
+    #[test]
+    fn engine_returns_shadow_infra_chain_for_ip_with_unknown_san() {
+        use gossan_core::{HostTarget, ServiceTarget, Target};
+        use secfinding::Evidence;
+        let engine = CorrelationEngine::new();
+        let ip_target = Target::Service(ServiceTarget {
+            host: HostTarget {
+                ip: "203.0.113.5".parse().unwrap(),
+                domain: None,
+            },
+            port: 443,
+            protocol: gossan_core::Protocol::Tcp,
+            banner: None,
+            tls: true,
+        });
+        let cert_finding = Finding::builder("portscan", "203.0.113.5", Severity::High)
+            .title("TLS certificate exposes internal domains")
+            .evidence(Evidence::Certificate {
+                subject: "internal.example.com".into(),
+                san: vec!["internal.example.com".into()],
+                issuer: "Let's Encrypt".into(),
+                expires: "2026-01-01".into(),
+            })
+            .build()
+            .expect("finding builder: required fields are set");
+        let chains = engine.run(&[cert_finding], &[ip_target]);
+        assert!(chains
+            .iter()
+            .any(|f| f.title().contains("Shadow Infrastructure")));
+    }
+
+    #[test]
+    fn engine_returns_wildcard_takeover_chain() {
+        let engine = CorrelationEngine::new();
+        let findings = vec![
+            finding("dns", "*.example.com", "Wildcard DNS record detected"),
+            finding("hidden", "stale.example.com", "CNAME points to unclaimed GitHub Pages"),
+        ];
+        let chains = engine.run(&findings, &[]);
+        assert!(chains
+            .iter()
+            .any(|f| f.title().contains("Wildcard DNS")));
+    }
+
+    #[test]
+    fn engine_returns_debug_rce_chain_for_actuator() {
+        let engine = CorrelationEngine::new();
+        let findings = vec![
+            finding("hidden", "app.example.com", "Spring Boot actuator/env exposed"),
+        ];
+        let chains = engine.run(&findings, &[]);
+        assert!(chains.iter().any(|f| f.title().contains("Potential RCE")));
+    }
+
+    #[test]
+    fn engine_returns_cors_secret_chain_when_cors_and_secret_on_same_host() {
+        let engine = CorrelationEngine::new();
+        let findings = vec![
+            finding("hidden", "app.example.com", "CORS: arbitrary origin reflected with credentials"),
+            finding_with_tag("js", "app.example.com", "AWS Access Key in JS", "secret"),
+        ];
+        let chains = engine.run(&findings, &[]);
+        assert!(chains
+            .iter()
+            .any(|f| f.title().contains("CORS")));
+    }
+
+    #[test]
+    fn engine_does_not_chain_across_unrelated_hosts() {
+        let engine = CorrelationEngine::new();
+        let findings = vec![
+            finding("hidden", "app.example.com", "Git repository exposed at /.git/"),
+            finding("js", "unrelated.com", "AWS Access Key found in JavaScript"),
+        ];
+        let chains = engine.run(&findings, &[]);
+        assert!(
+            !chains.iter().any(|f| f.title().contains("Source Code Exposure")),
+            "source+secret on unrelated hosts must not chain"
+        );
+    }
 }
