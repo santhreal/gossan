@@ -94,15 +94,24 @@ pub fn load_wordlist_tiered(custom_path: Option<&str>, tier: &WordlistTier) -> V
         WordlistTier::Standard => {
             // Try Tier B paths
             for path in TIER_B_PATHS {
-                if let Ok(content) = std::fs::read_to_string(path) {
-                    words.extend(parse_wordlist(&content));
-                    if !words.is_empty() {
-                        tracing::info!(
-                            count = words.len(),
+                match std::fs::read_to_string(path) {
+                    Ok(content) => {
+                        words.extend(parse_wordlist(&content));
+                        if !words.is_empty() {
+                            tracing::info!(
+                                count = words.len(),
+                                path = path,
+                                "loaded Tier B directory wordlist"
+                            );
+                            return words;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!(
                             path = path,
-                            "loaded Tier B directory wordlist"
+                            error = %e,
+                            "Tier B directory wordlist not found or unreadable; trying next path"
                         );
-                        return words;
                     }
                 }
             }
