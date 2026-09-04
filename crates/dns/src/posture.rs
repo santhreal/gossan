@@ -15,6 +15,12 @@ use gossan_core::Target;
 use hickory_resolver::{proto::rr::RecordType, TokioResolver};
 use secfinding::{Evidence, Finding, FindingKind, Severity};
 
+/// True when a DNS lookup error indicates genuine absence (NXDOMAIN or
+/// no-records-found), not a transient resolver failure (SERVFAIL/timeout).
+fn is_dns_absence(e: &hickory_resolver::ResolveError) -> bool {
+    e.is_nx_domain() || e.is_no_records_found()
+}
+
 /// Length of a SOA serial in YYYYMMDDNN format (10 digits: 4 year + 2 month + 2 day + 2 counter).
 const SOA_SERIAL_YYYYMMDDNN_LEN: usize = 10;
 
@@ -39,7 +45,14 @@ async fn check_soa(resolver: &TokioResolver, domain: &str, target: &Target) -> V
 
     let soa_records = match resolver.lookup(domain, RecordType::SOA).await {
         Ok(r) => r,
-        Err(_) => return findings,
+        Err(e) => {
+            tracing::warn!(
+                domain = %domain,
+                error = %e,
+                "SOA lookup failed; skipping SOA posture checks"
+            );
+            return findings;
+        }
     };
 
     if let Some(hickory_resolver::proto::rr::RData::SOA(soa)) = soa_records.iter().next() {
@@ -100,7 +113,14 @@ async fn check_ns_resilience(
 
     let ns_records = match resolver.ns_lookup(domain).await {
         Ok(r) => r,
-        Err(_) => return findings,
+        Err(e) => {
+            tracing::warn!(
+                domain = %domain,
+                error = %e,
+                "NS lookup failed; skipping NS resilience checks"
+            );
+            return findings;
+        }
     };
 
     let nameservers: Vec<String> = ns_records
@@ -154,8 +174,15 @@ async fn check_ns_resilience(
     // Check for IP colocation risk
     let mut ips = Vec::new();
     for ns in &nameservers {
-        if let Ok(lookup) = resolver.lookup_ip(ns.as_str()).await {
-            ips.extend(lookup.iter());
+        match resolver.lookup_ip(ns.as_str()).await {
+            Ok(lookup) => ips.extend(lookup.iter()),
+            Err(e) => {
+                tracing::warn!(
+                    nameserver = %ns,
+                    error = %e,
+                    "NS A/AAAA lookup failed; excluding from colocation check"
+                );
+            }
         }
     }
 
@@ -345,22 +372,34 @@ async fn check_caa(resolver: &TokioResolver, domain: &str, target: &Target) -> V
 
     let caa_records = match resolver.lookup(domain, RecordType::CAA).await {
         Ok(r) => r,
-        Err(_) => {
-            gossan_core::try_push_finding(
-                Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Low)
-                    .title("No CAA records, any CA may issue certificates")
-                    .detail(format!(
-                        "{domain} has no CAA DNS records. Any Certificate Authority \
-                         can issue TLS certificates for this domain. CAA records \
-                         (RFC 8659) restrict issuance to specific CAs, preventing \
-                         unauthorized certificate creation."
-                    ))
-                    .kind(FindingKind::Misconfiguration)
-                    .tag("dns")
-                    .tag("caa")
-                    .tag("certificates"),
-                &mut findings,
-            );
+        Err(e) => {
+            // Distinguish NXDOMAIN/no-records (genuine absence) from
+            // transient resolver failures (SERVFAIL/timeout). Only emit
+            // missing-CAA for genuine absence; warn and skip on errors.
+            let is_absence = is_dns_absence(&e);
+            if is_absence {
+                gossan_core::try_push_finding(
+                    Finding::builder("dns", target.domain().unwrap_or("?"), Severity::Low)
+                        .title("No CAA records, any CA may issue certificates")
+                        .detail(format!(
+                            "{domain} has no CAA DNS records. Any Certificate Authority \
+                             can issue TLS certificates for this domain. CAA records \
+                             (RFC 8659) restrict issuance to specific CAs, preventing \
+                             unauthorized certificate creation."
+                        ))
+                        .kind(FindingKind::Misconfiguration)
+                        .tag("dns")
+                        .tag("caa")
+                        .tag("certificates"),
+                    &mut findings,
+                );
+            } else {
+                tracing::warn!(
+                    domain = %domain,
+                    error = %e,
+                    "CAA lookup failed; skipping CAA posture check"
+                );
+            }
             return findings;
         }
     };
@@ -448,7 +487,14 @@ async fn check_mx_info(
 
     let mx_records = match resolver.mx_lookup(domain).await {
         Ok(r) => r,
-        Err(_) => return findings,
+        Err(e) => {
+            tracing::warn!(
+                domain = %domain,
+                error = %e,
+                "MX lookup failed; skipping MX info enumeration"
+            );
+            return findings;
+        }
     };
 
     let exchanges: Vec<(u16, String)> = mx_records
