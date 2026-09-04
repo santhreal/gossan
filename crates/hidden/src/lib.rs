@@ -460,7 +460,7 @@ impl Scanner for HiddenScanner {
                                                     _ => Ok(Vec::new()),
                                                 };
                                                 // Update rate-limiter state based on response evidence
-                                                if let Ok(ref findings) = result {
+                                                if let Ok(findings) = &result {
                                                     for finding in findings {
                                                         for ev in finding.evidence() {
                                                             if let Evidence::HttpResponse { status, .. } = ev {

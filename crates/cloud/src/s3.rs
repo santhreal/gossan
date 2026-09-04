@@ -48,9 +48,7 @@ impl CloudProvider for S3Provider {
     }
 
     fn endpoint(&self, name: &str) -> String {
-        if let Some(ref url) = self.endpoint_override {
-            return url.clone();
-        }
+        if let Some(url) = &self.endpoint_override { return url.clone(); }
         let encoded_name = urlencoding::encode(name);
         format!("https://{}.s3.amazonaws.com/", encoded_name)
     }

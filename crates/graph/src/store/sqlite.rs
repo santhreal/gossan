@@ -669,8 +669,8 @@ impl GraphBackend for SqliteBackend {
         edge_type: Option<EdgeType>,
     ) -> Result<Vec<Edge>, Self::Error> {
         let node_id = node_id.to_string();
-        let mut stmt = match edge_type {
-            Some(ref et) => self.conn.prepare(
+        let mut stmt = match &edge_type {
+            Some(et) => self.conn.prepare(
                 "SELECT source_id, target_id, rel_type, data, first_seen, last_seen
                  FROM relationships WHERE source_id = ?1 AND rel_type = ?2",
             )?,

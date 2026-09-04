@@ -103,9 +103,7 @@ impl CloudProvider for AzureProvider {
     }
 
     fn endpoint(&self, name: &str) -> String {
-        if let Some(ref url) = self.endpoint_override {
-            return url.clone();
-        }
+        if let Some(url) = &self.endpoint_override { return url.clone(); }
         format!("https://{}.blob.core.windows.net/", name)
     }
 

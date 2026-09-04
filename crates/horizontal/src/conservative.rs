@@ -552,36 +552,32 @@ impl SeedFingerprint {
         // --- Tier 0: strong infrastructure signals ---
 
         // TLS certificate serial
-        if let Some(ref seed_cert) = self.cert_serial {
-            if !seed_cert.is_empty() {
-                if let Ok(t_cert) = get_cert_serial(host, connect_ip).await {
-                    if seed_cert == &t_cert {
-                        signals.push(Signal {
-                            name: "TLS Certificate Serial",
-                            weight: 40,
-                            detail: format!("same leaf TLS certificate serial as seed"),
-                            matched_value: hex::encode(&t_cert),
-                        });
-                    }
+        if let Some(seed_cert) = &self.cert_serial { if !seed_cert.is_empty() {
+            if let Ok(t_cert) = get_cert_serial(host, connect_ip).await {
+                if seed_cert == &t_cert {
+                    signals.push(Signal {
+                        name: "TLS Certificate Serial",
+                        weight: 40,
+                        detail: format!("same leaf TLS certificate serial as seed"),
+                        matched_value: hex::encode(&t_cert),
+                    });
                 }
             }
-        }
+        } }
 
         // SSH host key
-        if let Some(ref seed_ssh) = self.ssh_key {
-            if !seed_ssh.is_empty() {
-                if let Ok(t_ssh) = get_ssh_host_key(host, connect_ip).await {
-                    if seed_ssh == &t_ssh {
-                        signals.push(Signal {
-                            name: "SSH Host Key",
-                            weight: 40,
-                            detail: format!("same ssh kex fingerprint as seed"),
-                            matched_value: t_ssh,
-                        });
-                    }
+        if let Some(seed_ssh) = &self.ssh_key { if !seed_ssh.is_empty() {
+            if let Ok(t_ssh) = get_ssh_host_key(host, connect_ip).await {
+                if seed_ssh == &t_ssh {
+                    signals.push(Signal {
+                        name: "SSH Host Key",
+                        weight: 40,
+                        detail: format!("same ssh kex fingerprint as seed"),
+                        matched_value: t_ssh,
+                    });
                 }
             }
-        }
+        } }
 
         // --- Fetch candidate HTTP once for multiple signal extractions ---
         let mut t_tracking_ids = HashSet::new();
@@ -643,16 +639,14 @@ impl SeedFingerprint {
         }
 
         // CSP report-uri match
-        if let (Some(ref seed_uri), Some(ref t_uri)) = (&self.csp_report_uri, &t_csp_report_uri) {
-            if seed_uri == t_uri && !seed_uri.is_empty() {
-                signals.push(Signal {
-                    name: "CSP Report Endpoint",
-                    weight: 25,
-                    detail: format!("same CSP report-uri: {}", seed_uri),
-                    matched_value: seed_uri.clone(),
-                });
-            }
-        }
+        if let (Some(seed_uri), Some(t_uri)) = (&self.csp_report_uri, &t_csp_report_uri) { if seed_uri == t_uri && !seed_uri.is_empty() {
+            signals.push(Signal {
+                name: "CSP Report Endpoint",
+                weight: 25,
+                detail: format!("same CSP report-uri: {}", seed_uri),
+                matched_value: seed_uri.clone(),
+            });
+        } }
 
         // CORS non-public origin match
         if !self.cors_origins.is_empty() {
@@ -691,66 +685,60 @@ impl SeedFingerprint {
         }
 
         // Content hash
-        if let Some(ref seed_con) = self.content_hash {
-            if !seed_con.is_empty() {
-                if let Ok(t_con) = get_content_hash(client, host, connect_ip, max_size).await {
-                    if seed_con == &t_con {
-                        signals.push(Signal {
-                            name: "Content Hash",
-                            weight: 20,
-                            detail: format!("identical page content SHA-256"),
-                            matched_value: t_con,
-                        });
-                    }
+        if let Some(seed_con) = &self.content_hash { if !seed_con.is_empty() {
+            if let Ok(t_con) = get_content_hash(client, host, connect_ip, max_size).await {
+                if seed_con == &t_con {
+                    signals.push(Signal {
+                        name: "Content Hash",
+                        weight: 20,
+                        detail: format!("identical page content SHA-256"),
+                        matched_value: t_con,
+                    });
                 }
             }
-        }
+        } }
 
         // JARM fingerprint (with ambient rejection)
-        if let Some(ref seed_jarm) = self.jarm {
-            if !AMBIENT_JARM.iter().any(|a| a == seed_jarm) {
-                if let Ok(t_jarm) = get_jarm_fingerprint(host).await {
-                    if seed_jarm == &t_jarm && !AMBIENT_JARM.iter().any(|a| a == &t_jarm) {
-                        signals.push(Signal {
-                            name: "JARM TLS Fingerprint",
-                            weight: 10,
-                            detail: format!(
-                                "same JARM (non-CDN): {}",
-                                &t_jarm[..16.min(t_jarm.len())]
-                            ),
-                            matched_value: t_jarm,
-                        });
-                    }
+        if let Some(seed_jarm) = &self.jarm { if !AMBIENT_JARM.iter().any(|a| a == seed_jarm) {
+            if let Ok(t_jarm) = get_jarm_fingerprint(host).await {
+                if seed_jarm == &t_jarm && !AMBIENT_JARM.iter().any(|a| a == &t_jarm) {
+                    signals.push(Signal {
+                        name: "JARM TLS Fingerprint",
+                        weight: 10,
+                        detail: format!(
+                            "same JARM (non-CDN): {}",
+                            &t_jarm[..16.min(t_jarm.len())]
+                        ),
+                        matched_value: t_jarm,
+                    });
                 }
             }
-        }
+        } }
 
         // DNS IP (lowest weight, shared hosting is extremely common)
-        if let Some(ref seed_dns) = self.dns_ips {
-            if !seed_dns.is_empty() {
-                if let Ok(t_dns) = get_dns_ips(resolver, host).await {
-                    if seed_dns == &t_dns {
-                        signals.push(Signal {
-                            name: "DNS Resolution IP",
-                            weight: 5,
-                            detail: format!(
-                                "resolves to same IP(s): {}",
-                                t_dns
-                                    .iter()
-                                    .map(|ip| ip.to_string())
-                                    .collect::<Vec<_>>()
-                                    .join(", ")
-                            ),
-                            matched_value: t_dns
+        if let Some(seed_dns) = &self.dns_ips { if !seed_dns.is_empty() {
+            if let Ok(t_dns) = get_dns_ips(resolver, host).await {
+                if seed_dns == &t_dns {
+                    signals.push(Signal {
+                        name: "DNS Resolution IP",
+                        weight: 5,
+                        detail: format!(
+                            "resolves to same IP(s): {}",
+                            t_dns
                                 .iter()
                                 .map(|ip| ip.to_string())
                                 .collect::<Vec<_>>()
-                                .join(", "),
-                        });
-                    }
+                                .join(", ")
+                        ),
+                        matched_value: t_dns
+                            .iter()
+                            .map(|ip| ip.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    });
                 }
             }
-        }
+        } }
 
         signals
     }

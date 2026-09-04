@@ -132,7 +132,7 @@ async fn analyze_target(
     mut target: Target,
     config: &Config,
 ) -> anyhow::Result<(Target, Vec<Finding>)> {
-    let Target::Web(ref asset) = target else {
+    let Target::Web(asset) = &target else {
         return Ok((target, vec![]));
     };
     let mut findings = Vec::new();
@@ -572,7 +572,7 @@ async fn analyze_target(
     }
 
     // Update the asset with discovered forms
-    if let Target::Web(ref mut asset) = target {
+    if let Target::Web(asset) = &mut target {
         asset.forms = discovered_forms;
     }
 
@@ -651,7 +651,7 @@ mod tests {
         let browser = runtime.browser();
 
         let mut target = web_target();
-        if let Target::Web(ref mut asset) = target {
+        if let Target::Web(asset) = &mut target {
             asset.url = Url::parse("http://0.0.0.0:1").expect("Invalid URL");
         }
         let config = Config::default();

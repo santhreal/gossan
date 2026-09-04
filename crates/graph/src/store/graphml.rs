@@ -150,7 +150,7 @@ fn write_graphml<'a>(
             r#"<data key="label">{}</data>"#,
             gossan_core::xml_escape(&n.label)
         )?;
-        if let Some(ref p) = n.payload {
+        if let Some(p) = &n.payload {
             writeln!(
                 w,
                 r#"<data key="payload">{}</data>"#,
@@ -172,7 +172,7 @@ fn write_graphml<'a>(
             r#"<data key="etype">{}</data>"#,
             gossan_core::xml_escape(&e.kind.to_string())
         )?;
-        if let Some(ref p) = e.payload {
+        if let Some(p) = &e.payload {
             writeln!(
                 w,
                 r#"<data key="epayload">{}</data>"#,

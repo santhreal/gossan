@@ -13,7 +13,7 @@ pub async fn is_catch_all(
 ) -> bool {
     rate_limiter.wait_for_host(host).await;
     let baseline = crate::soft404::establish(client, base).await;
-    if let Some(ref fp) = baseline {
+    if let Some(fp) = &baseline {
         rate_limiter.observe_status(host, fp.status).await;
     }
     crate::soft404::is_catch_all(baseline.as_ref())
