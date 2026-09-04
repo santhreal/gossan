@@ -281,7 +281,9 @@ impl SubdomainScanner {
 
             // Wait for all tasks; failure isolation is automatic because each task is independent.
             for task in tasks {
-                let _ = task.await;
+                if let Err(e) = task.await {
+                    tracing::warn!(error = %e, "subdomain bruteforce task panicked");
+                }
             }
 
             // Collect currently seen domains for permutation input

@@ -589,11 +589,16 @@ impl SeedFingerprint {
         let mut t_csp_report_uri = None;
         let mut t_cors_origins = HashSet::new();
 
-        if let Ok((_status, headers, body)) = fetch_http(client, host, connect_ip, max_size).await {
-            t_tracking_ids = extract_tracking_ids(&body);
-            t_internal_ips = extract_internal_ips(&headers);
-            t_csp_report_uri = extract_csp_report_uri(&headers);
-            t_cors_origins = extract_cors_origins(&headers);
+        match fetch_http(client, host, connect_ip, max_size).await {
+            Ok((_status, headers, body)) => {
+                t_tracking_ids = extract_tracking_ids(&body);
+                t_internal_ips = extract_internal_ips(&headers);
+                t_csp_report_uri = extract_csp_report_uri(&headers);
+                t_cors_origins = extract_cors_origins(&headers);
+            }
+            Err(e) => {
+                tracing::warn!(host = host, error = %e, "fetch_http failed; skipping HTTP-based signal extraction");
+            }
         }
 
         // --- Tier 1: account-bound signals ---

@@ -89,21 +89,26 @@ impl Scanner for HorizontalScanner {
         for target in &inbound {
             // 1. IP → ASN → BGP Prefixes
             if let Some(ip) = target.ip() {
-                if let Ok(prefixes) = asn::get_prefixes_for_ip(&client, &ip.to_string()).await {
-                    for prefix in prefixes {
-                        let network = Target::Network(NetworkTarget {
-                            cidr: prefix.clone(),
-                            source: DiscoverySource::AsnLookup,
-                        });
+                match asn::get_prefixes_for_ip(&client, &ip.to_string()).await {
+                    Ok(prefixes) => {
+                        for prefix in prefixes {
+                            let network = Target::Network(NetworkTarget {
+                                cidr: prefix.clone(),
+                                source: DiscoverySource::AsnLookup,
+                            });
 
-                        // Emit to the target stream for recursive
-                        // scanning. (The historical
-                        // `if let Some(ref tx) = input.target_tx` +
-                        // explicit `tx.send` + `emit_target` was
-                        // double-emit; `target_tx` is no longer
-                        // optional, so `emit_target` alone is correct
-                        // and emits exactly once.)
-                        input.emit_target(network).await;
+                            // Emit to the target stream for recursive
+                            // scanning. (The historical
+                            // `if let Some(ref tx) = input.target_tx` +
+                            // explicit `tx.send` + `emit_target` was
+                            // double-emit; `target_tx` is no longer
+                            // optional, so `emit_target` alone is correct
+                            // and emits exactly once.)
+                            input.emit_target(network).await;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(ip = %ip, error = %e, "ASN prefix lookup failed; skipping BGP expansion");
                     }
                 }
             }
@@ -170,27 +175,31 @@ impl Scanner for HorizontalScanner {
                     })).await;
                 }
 
-                if let Ok(records) =
-                    passive_dns::query_hostsearch(&client, &d.domain, "https://api.hackertarget.com")
-                        .await
+                match passive_dns::query_hostsearch(&client, &d.domain, "https://api.hackertarget.com")
+                    .await
                 {
-                    for domain in passive_dns::extract_unique_domains(&records) {
-                        input.emit_target(Target::Domain(DomainTarget {
-                            domain,
-                            source: DiscoverySource::PassiveDns,
-                        })).await;
-                    }
-                    for ip in private_ip::filter_private_ips(
-                        &passive_dns::extract_unique_ips(&records)
-                            .into_iter()
-                            .collect::<Vec<_>>(),
-                    ) {
-                        if let Ok(addr) = ip.parse() {
-                            input.emit_target(Target::Host(gossan_core::HostTarget {
-                                ip: addr,
-                                domain: Some(d.domain.clone()),
+                    Ok(records) => {
+                        for domain in passive_dns::extract_unique_domains(&records) {
+                            input.emit_target(Target::Domain(DomainTarget {
+                                domain,
+                                source: DiscoverySource::PassiveDns,
                             })).await;
                         }
+                        for ip in private_ip::filter_private_ips(
+                            &passive_dns::extract_unique_ips(&records)
+                                .into_iter()
+                                .collect::<Vec<_>>(),
+                        ) {
+                            if let Ok(addr) = ip.parse() {
+                                input.emit_target(Target::Host(gossan_core::HostTarget {
+                                    ip: addr,
+                                    domain: Some(d.domain.clone()),
+                                })).await;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(domain = %d.domain, error = %e, "passive DNS query failed; skipping PDNS expansion");
                     }
                 }
 
@@ -213,42 +222,47 @@ impl Scanner for HorizontalScanner {
         // 4. Ownership correlation via WHOIS/RDAP across the inbound domain set.
         // Reverse-IP hosting is intentionally not used (shared-hosting FPs).
         if seed_domains.len() > 1 {
-            if let Ok(groups) = ownership::group_siblings_by_ownership(
+            match ownership::group_siblings_by_ownership(
                 &client,
                 &seed_domains,
                 "https://api.hackertarget.com",
             )
             .await
             {
-                for (_key, domains) in groups {
-                    for domain in &domains {
-                        for sibling in domains.iter().filter(|s| *s != domain) {
-                            input.emit_target(Target::Domain(DomainTarget {
-                                domain: sibling.clone(),
-                                source: DiscoverySource::Crawl,
-                            })).await;
-                            if let Some(finding) = Finding::builder(
-                                "horizontal",
-                                domain,
-                                Severity::Info,
-                            )
-                            .title(
-                                "Horizontal discovery: sibling domain found via ownership correlation"
-                                    .to_string(),
-                            )
-                            .detail(format!(
-                                "Domain {} shares WHOIS/RDAP ownership attributes with {}.",
-                                sibling, domain
-                            ))
-                            .tag("horizontal")
-                            .tag("ownership-pivot")
-                            .kind(secfinding::FindingKind::InfoDisclosure)
-                            .build_or_log()
-                            {
-                                input.emit(finding).await;
+                Ok(groups) => {
+                    for (_key, domains) in groups {
+                        for domain in &domains {
+                            for sibling in domains.iter().filter(|s| *s != domain) {
+                                input.emit_target(Target::Domain(DomainTarget {
+                                    domain: sibling.clone(),
+                                    source: DiscoverySource::Crawl,
+                                })).await;
+                                if let Some(finding) = Finding::builder(
+                                    "horizontal",
+                                    domain,
+                                    Severity::Info,
+                                )
+                                .title(
+                                    "Horizontal discovery: sibling domain found via ownership correlation"
+                                        .to_string(),
+                                )
+                                .detail(format!(
+                                    "Domain {} shares WHOIS/RDAP ownership attributes with {}.",
+                                    sibling, domain
+                                ))
+                                .tag("horizontal")
+                                .tag("ownership-pivot")
+                                .kind(secfinding::FindingKind::InfoDisclosure)
+                                .build_or_log()
+                                {
+                                    input.emit(finding).await;
+                                }
                             }
                         }
                     }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "ownership group_siblings failed; skipping ownership correlation");
                 }
             }
         }
