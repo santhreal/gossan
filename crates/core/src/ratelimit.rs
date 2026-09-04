@@ -80,7 +80,13 @@ impl HostRateLimiter {
     }
 
     async fn get_or_create(&self, host: &str) -> Arc<DefaultDirectRateLimiter> {
-        let rps = self.rps.expect("get_or_create only called when rps is Some");
+        let rps = match self.rps {
+            Some(r) => r,
+            // get_or_create is only called when rps is Some (guarded by
+            // until_ready), but fail safe with a 1 RPS limiter rather
+            // than panicking if the invariant is ever violated.
+            None => return Arc::new(RateLimiter::direct(Quota::per_second(NonZeroU32::MIN))),
+        };
         {
             let read = self.limiters.read().await;
             if let Some((l, _)) = read.get(host) {
