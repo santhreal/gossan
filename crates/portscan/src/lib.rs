@@ -1328,37 +1328,15 @@ pub async fn grab_banner(mut stream: tokio::net::TcpStream, timeout: Duration) -
 }
 
 /// Extract the registrable root domain from a full domain name.
+///
+/// Delegates to [`gossan_core::domain::registrable`] (Mozilla PSL) so the
+/// portscan SAN filter shares the same vetted source of truth as every
+/// other scanner. Falls back to [`gossan_core::domain::parent_domain`]
+/// (last-two-labels heuristic) when the PSL does not recognise the TLD,
+/// and to the raw input for IPs / bare labels.
 fn extract_root_domain(domain: &str) -> String {
-    let domain = domain.trim_end_matches('.').to_lowercase();
-    // Fast path for simple cases
-    if domain.is_empty() {
-        return domain;
-    }
-    // Pure fallback: last two labels (or three for known two-part TLDs)
-    // No external publicsuffix crate dependency needed.
-    let parts: Vec<&str> = domain.split('.').collect();
-    if parts.len() <= 2 {
-        return domain;
-    }
-    let last_two = format!("{}.{}", parts[parts.len() - 2], parts[parts.len() - 1]);
-    let common_two_part_suffixes = [
-        "co.uk", "org.uk", "me.uk", "ltd.uk", "plc.uk", "sch.uk", "gov.uk", "ac.uk", "net.uk",
-        "com.au", "net.au", "org.au", "edu.au", "gov.au", "asn.au", "id.au", "com.cn", "edu.cn",
-        "gov.cn", "org.cn", "net.cn", "ac.cn", "com.br", "net.br", "org.br", "edu.br", "gov.br",
-        "co.jp", "or.jp", "ne.jp", "ac.jp", "ad.jp", "ed.jp", "go.jp", "com.sg", "org.sg",
-        "edu.sg", "gov.sg", "net.sg", "co.nz", "net.nz", "org.nz", "edu.nz", "gov.nz", "com.tw",
-        "org.tw", "gov.tw", "edu.tw", "net.tw", "com.hk", "org.hk", "gov.hk", "edu.hk", "net.hk",
-    ];
-    if common_two_part_suffixes.contains(&last_two.as_str()) && parts.len() >= 3 {
-        format!(
-            "{}.{}.{}",
-            parts[parts.len() - 3],
-            parts[parts.len() - 2],
-            parts[parts.len() - 1]
-        )
-    } else {
-        last_two
-    }
+    gossan_core::domain::registrable(domain)
+        .unwrap_or_else(|| gossan_core::domain::parent_domain(domain))
 }
 
 #[cfg(test)]
