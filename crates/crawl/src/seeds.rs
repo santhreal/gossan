@@ -30,8 +30,12 @@ pub fn parse_robots_txt(body: &str, base_url: &Url) -> RobotsTxtResult {
                     }
                 }
                 "disallow" => {
-                    if let Ok(u) = base_url.join(value) {
-                        disallowed.push(u);
+                    // Empty Disallow value means "allow all" (RFC 9309 §2.2.2).
+                    // Skip it so it does not block every path on the site.
+                    if !value.is_empty() {
+                        if let Ok(u) = base_url.join(value) {
+                            disallowed.push(u);
+                        }
                     }
                 }
                 "sitemap" => {
