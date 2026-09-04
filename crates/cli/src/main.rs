@@ -87,6 +87,9 @@ async fn main() -> anyhow::Result<()> {
             no_fleet,
             #[cfg(feature = "engine")]
             no_engine,
+            fast,
+            #[cfg(feature = "hidden")]
+            wordlist_tier,
         } => {
             let mut active_modules = std::collections::HashMap::new();
             #[cfg(feature = "subdomain")]
@@ -110,27 +113,27 @@ async fn main() -> anyhow::Result<()> {
                 active_modules.insert("js".to_string(), true);
             }
             #[cfg(feature = "hidden")]
-            if !no_hidden {
+            if !no_hidden && !fast {
                 active_modules.insert("hidden".to_string(), true);
             }
             #[cfg(feature = "cloud")]
-            if !no_cloud {
+            if !no_cloud && !fast {
                 active_modules.insert("cloud".to_string(), true);
             }
             #[cfg(feature = "headless")]
-            if !no_headless {
+            if !no_headless && !fast {
                 active_modules.insert("headless".to_string(), true);
             }
             #[cfg(feature = "crawl")]
-            if !no_crawl {
+            if !no_crawl && !fast {
                 active_modules.insert("crawl".to_string(), true);
             }
             #[cfg(feature = "origin")]
-            if !no_origin {
+            if !no_origin && !fast {
                 active_modules.insert("origin".to_string(), true);
             }
             #[cfg(feature = "horizontal")]
-            if !no_horizontal {
+            if !no_horizontal && !fast {
                 active_modules.insert("horizontal".to_string(), true);
             }
             #[cfg(feature = "graph")]
@@ -138,7 +141,7 @@ async fn main() -> anyhow::Result<()> {
                 active_modules.insert("graph".to_string(), true);
             }
             #[cfg(feature = "scm")]
-            if !no_scm {
+            if !no_scm && !fast {
                 active_modules.insert("scm".to_string(), true);
             }
             #[cfg(feature = "intel")]
@@ -163,6 +166,18 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             config.modules = active_modules;
+            #[cfg(feature = "hidden")]
+            if let Some(tier) = wordlist_tier.as_deref() {
+                config.hidden_wordlist_tier = match tier {
+                    "fast" => gossan_core::WordlistTier::Fast,
+                    "standard" => gossan_core::WordlistTier::Standard,
+                    "full" => gossan_core::WordlistTier::Full,
+                    _ => {
+                        eprintln!("error: invalid --wordlist-tier `{tier}` (expected: fast | standard | full)");
+                        std::process::exit(2);
+                    }
+                };
+            }
             let seeds = resolve_targets(target)?;
             let output_config = config.output.clone();
             let mut all = Vec::new();

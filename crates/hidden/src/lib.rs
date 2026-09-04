@@ -357,6 +357,7 @@ impl Scanner for HiddenScanner {
         let rate_limiter = Arc::new(HostRateLimiter::new(config.host_delay_ms));
 
         let semaphore = Arc::new(Semaphore::new(config.concurrency));
+        let wordlist_tier = config.hidden_wordlist_tier.clone();
         let mut rx = input.target_rx.lock().await;
         let mut workers = futures::stream::FuturesUnordered::new();
         let live_tx = input.live_tx.clone();
@@ -377,6 +378,7 @@ impl Scanner for HiddenScanner {
                             let cf = client_follow.clone();
                             let rl = Arc::clone(&rate_limiter);
                             let live_tx = live_tx.clone();
+                            let wt = wordlist_tier.clone();
                             workers.push(tokio::spawn(async move {
                                 let _permit = permit;
                                 let mut f = Vec::new();
@@ -442,7 +444,7 @@ impl Scanner for HiddenScanner {
                                                     "debug_endpoints_follow" => debug_endpoints::probe(&client_inner, &target_inner2, baseline_inner.as_ref().as_ref()
                                                     ).await,
                                                     "directory_brute" => {
-                                                        let words = directory_brute::load_wordlist(None);
+                                                        let words = directory_brute::load_wordlist_tiered(None, &wt);
                                                         let exts = directory_brute::extensions(&[]);
                                                         let codes = directory_brute::status_codes(&[]);
                                                         Ok(directory_brute::probe(&client_inner, &target_inner2, &words, &exts, &codes, baseline_inner.as_ref().as_ref(), &rl_inner, &host_inner).await)

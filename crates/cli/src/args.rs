@@ -277,6 +277,16 @@ pub enum Command {
         #[cfg(feature = "engine")]
         #[arg(long, help = "Skip raw SYN engine module")]
         no_engine: bool,
+        /// Disable heavy modules (hidden, crawl, headless, cloud, origin,
+        /// horizontal, scm) for a fast first-pass scan. Lightweight modules
+        /// (subdomain, dns, portscan, techstack, js) remain active.
+        #[arg(long, help = "Fast profile: disable heavy modules for quick first pass")]
+        fast: bool,
+        /// Directory-brute wordlist tier: fast (top-100, default), standard
+        /// (Tier B ~365), full (~1160).
+        #[cfg(feature = "hidden")]
+        #[arg(long, help = "Wordlist tier: fast | standard | full", value_name = "TIER")]
+        wordlist_tier: Option<String>,
     },
 
     // Individual module subcommands, only compiled in when the feature is active
@@ -980,6 +990,27 @@ mod tests {
         let cli = Cli::parse_from(["gossan", "scan", "--no-hidden", "example.com"]);
         match cli.command {
             Command::Scan { no_hidden, .. } => assert!(no_hidden),
+            _ => panic!("expected Scan command"),
+        }
+    }
+
+    #[test]
+    fn cli_fast_flag_parses() {
+        let cli = Cli::parse_from(["gossan", "scan", "--fast", "example.com"]);
+        match cli.command {
+            Command::Scan { fast, .. } => assert!(fast),
+            _ => panic!("expected Scan command"),
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "hidden")]
+    fn cli_wordlist_tier_parses() {
+        let cli = Cli::parse_from(["gossan", "scan", "--wordlist-tier", "full", "example.com"]);
+        match cli.command {
+            Command::Scan { wordlist_tier, .. } => {
+                assert_eq!(wordlist_tier.as_deref(), Some("full"));
+            }
             _ => panic!("expected Scan command"),
         }
     }

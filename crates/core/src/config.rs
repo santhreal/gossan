@@ -45,6 +45,19 @@ pub enum PortMode {
     Custom(Vec<u16>),
 }
 
+/// Directory-brute wordlist size tier.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WordlistTier {
+    /// Top ~100 highest-value paths (admin, config, actuator, env).
+    #[default]
+    Fast,
+    /// Tier B file on disk (~365 paths) if present, else built-in.
+    Standard,
+    /// Full embedded wordlist (~1160 paths).
+    Full,
+}
+
 /// Crawl scanner configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CrawlConfig {
@@ -139,6 +152,9 @@ pub struct Config {
     /// to streaming JSONL instead of a monolithic JSON document.
     #[serde(default = "default_graph_json_streaming_threshold")]
     pub graph_json_streaming_threshold: usize,
+    /// Directory-brute wordlist tier (fast / standard / full).
+    #[serde(default)]
+    pub hidden_wordlist_tier: WordlistTier,
 }
 
 fn default_max_response_size() -> usize {
@@ -233,6 +249,7 @@ impl Default for Config {
             include_kind: Vec::new(),
             exclude_kind: Vec::new(),
             graph_json_streaming_threshold: default_graph_json_streaming_threshold(),
+            hidden_wordlist_tier: WordlistTier::default(),
         }
     }
 }

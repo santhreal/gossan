@@ -66,6 +66,7 @@ pub mod dedup;
 pub use accuracy::{calculate_fuzzy_hash, generate_dom_fingerprint, ResponseBaseline};
 pub use config::{
     ApiKeys, Config, CrawlConfig, ModuleConfig, OutputConfig, OutputFormat, PortMode,
+    WordlistTier,
 };
 pub use error::Error;
 pub use finding::{make_finding, try_push_finding, Evidence, Finding, FindingKind, Severity};

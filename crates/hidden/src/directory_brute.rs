@@ -2,15 +2,20 @@
 //!
 //! Enumerates common paths and extensions to discover hidden directories
 //! and files. Uses 404 baseline fingerprinting to reduce false positives.
-//! Wordlist is loaded from a Tier B file (SecLists-derived) by default,
-//! falling back to a small built-in list.
+//! Wordlist tier is selected via [`gossan_core::WordlistTier`]:
+//!   - **Fast** (default): top ~100 highest-value paths.
+//!   - **Standard**: Tier B file on disk (~365 paths) if present, else full.
+//!   - **Full**: complete embedded wordlist (~1160 paths).
 
 use futures::StreamExt as _;
-use gossan_core::Target;
+use gossan_core::{Target, WordlistTier};
 use reqwest::Client;
 use secfinding::{Evidence, Finding, Severity};
 
-/// Default directory wordlist embedded at compile time (emergency fallback).
+/// Top-100 highest-value paths (admin, config, actuator, env, etc.).
+const FAST_WORDLIST: &str = include_str!("top100_wordlist.txt");
+
+/// Full directory wordlist embedded at compile time.
 const DEFAULT_WORDLIST: &str = include_str!("directory_wordlist.txt");
 
 /// Tier B wordlist path (relative to executable or CWD).
@@ -30,8 +35,17 @@ const DEFAULT_EXTENSIONS: &[&str] = &[
 /// Default interesting HTTP status codes.
 const DEFAULT_STATUSES: &[u16] = &[200, 204, 301, 302, 307, 308, 401, 403, 405, 500];
 
-/// Load the directory wordlist: Tier B file first, then built-in fallback.
+/// Load the directory wordlist for the given tier.
+///
+/// A custom path always overrides the tier. When no custom path is
+/// supplied, the tier selects between fast (top-100), standard (Tier B
+/// file or full fallback), and full (embedded ~1160 paths).
 pub fn load_wordlist(custom_path: Option<&str>) -> Vec<String> {
+    load_wordlist_tiered(custom_path, &WordlistTier::default())
+}
+
+/// Load the directory wordlist with an explicit tier.
+pub fn load_wordlist_tiered(custom_path: Option<&str>, tier: &WordlistTier) -> Vec<String> {
     let mut words: Vec<String> = Vec::new();
 
     // Try custom path first
@@ -49,27 +63,44 @@ pub fn load_wordlist(custom_path: Option<&str>) -> Vec<String> {
         }
     }
 
-    // Try Tier B paths
-    for path in TIER_B_PATHS {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            words.extend(parse_wordlist(&content));
-            if !words.is_empty() {
-                tracing::info!(
-                    count = words.len(),
-                    path = path,
-                    "loaded Tier B directory wordlist"
-                );
-                return words;
+    match tier {
+        WordlistTier::Fast => {
+            words.extend(parse_wordlist(FAST_WORDLIST));
+            tracing::info!(
+                count = words.len(),
+                "using fast (top-100) directory wordlist"
+            );
+        }
+        WordlistTier::Full => {
+            words.extend(parse_wordlist(DEFAULT_WORDLIST));
+            tracing::info!(
+                count = words.len(),
+                "using full directory wordlist"
+            );
+        }
+        WordlistTier::Standard => {
+            // Try Tier B paths
+            for path in TIER_B_PATHS {
+                if let Ok(content) = std::fs::read_to_string(path) {
+                    words.extend(parse_wordlist(&content));
+                    if !words.is_empty() {
+                        tracing::info!(
+                            count = words.len(),
+                            path = path,
+                            "loaded Tier B directory wordlist"
+                        );
+                        return words;
+                    }
+                }
             }
+            // Fallback to full list
+            words.extend(parse_wordlist(DEFAULT_WORDLIST));
+            tracing::info!(
+                count = words.len(),
+                "using built-in directory wordlist fallback"
+            );
         }
     }
-
-    // Fallback to built-in list
-    words.extend(parse_wordlist(DEFAULT_WORDLIST));
-    tracing::info!(
-        count = words.len(),
-        "using built-in directory wordlist fallback"
-    );
     words
 }
 
@@ -393,6 +424,49 @@ mod tests {
         let input = "../../../etc/passwd\n..\\windows\\system32\n";
         let words = parse_wordlist(input);
         assert_eq!(words, vec!["../../../etc/passwd", "..\\windows\\system32"]);
+    }
+
+    #[test]
+    fn fast_tier_loads_fewer_than_full() {
+        let fast = load_wordlist_tiered(None, &WordlistTier::Fast);
+        let full = load_wordlist_tiered(None, &WordlistTier::Full);
+        assert!(!fast.is_empty(), "fast wordlist must not be empty");
+        assert!(!full.is_empty(), "full wordlist must not be empty");
+        assert!(
+            fast.len() < full.len(),
+            "fast tier ({}) must be smaller than full ({})",
+            fast.len(),
+            full.len()
+        );
+    }
+
+    #[test]
+    fn fast_tier_contains_high_value_paths() {
+        let fast = load_wordlist_tiered(None, &WordlistTier::Fast);
+        assert!(fast.iter().any(|w| w == "admin"), "fast must contain admin");
+        assert!(fast.iter().any(|w| w == "config"), "fast must contain config");
+        assert!(
+            fast.iter().any(|w| w == "actuator"),
+            "fast must contain actuator"
+        );
+    }
+
+    #[test]
+    fn full_tier_contains_standard_directories() {
+        let full = load_wordlist_tiered(None, &WordlistTier::Full);
+        assert!(
+            full.iter().any(|w| w == "admin"),
+            "full must contain admin"
+        );
+        assert!(
+            full.iter().any(|w| w == "backup"),
+            "full must contain backup"
+        );
+        assert!(
+            full.len() > 500,
+            "full tier must have >500 entries, got {}",
+            full.len()
+        );
     }
 
     /// Property tests for wordlist parsing.
