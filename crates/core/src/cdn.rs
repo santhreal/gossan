@@ -107,4 +107,15 @@ mod tests {
             "some CDN range lines failed to parse"
         );
     }
+
+    #[test]
+    fn is_cdn_ip_never_panics_on_any_ip() {
+        // Boundary: all-zero and all-one addresses must not panic.
+        assert!(!is_cdn_ip("0.0.0.0".parse().unwrap()));
+        assert!(!is_cdn_ip("255.255.255.255".parse().unwrap()));
+        assert!(!is_cdn_ip("::".parse().unwrap()));
+        assert!(!is_cdn_ip("::1".parse().unwrap()));
+        // A real CDN edge IP still works.
+        assert!(is_cdn_ip("104.16.0.1".parse().unwrap()));
+    }
 }
