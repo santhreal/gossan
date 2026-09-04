@@ -727,7 +727,7 @@ async fn probe_port(
         if let Some(s) = svc_hint {
             f = f.tag(format!("service:{s}"));
         }
-        if let Some(ref b) = banner {
+        if let Some(b) = &banner {
             f = f.evidence(Evidence::Banner {
                 raw: b.clone().into(),
             });
