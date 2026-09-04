@@ -65,7 +65,7 @@ fn latency_increases(latencies: &[u128]) -> bool {
         return false;
     }
     let avg = latencies.iter().sum::<u128>() / latencies.len() as u128;
-    let last = *latencies.last().unwrap();
+    let last = latencies[latencies.len() - 1];
     last > avg * 3
 }
 

@@ -42,13 +42,13 @@ proxywire = { workspace = true }
 hickory-resolver = { version = "0.25", default-features = false, features = ["tokio", "system-config"] }
 idna        = "1"
 psl         = "2"
+ipnet       = "2.9"
 
 [dev-dependencies]
 proptest = {workspace = true}
 tempfile = "3.27.0"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 wiremock = {workspace = true}
-ipnet = "2.9"
 
 [lints]
 workspace = true

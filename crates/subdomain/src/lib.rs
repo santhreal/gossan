@@ -56,6 +56,10 @@ use crate::wildcard::detect_wildcards;
 /// Maximum number of passive sources that may query concurrently per domain.
 /// This cap prevents thundering-herd DNS bursts and respects per-source rate limits.
 const MAX_CONCURRENT_SOURCES: usize = 16;
+/// Hard deadline per passive source. Sources that exceed this are
+/// cancelled and reported as unhealthy so one dead endpoint cannot
+/// hang the entire scan past operator patience.
+const SOURCE_TIMEOUT_SECS: u64 = 30;
 
 /// Downstream emitter wrapper (cloneable so it can be moved into spawned tasks).
 #[derive(Clone)]
@@ -163,11 +167,17 @@ impl SubdomainScanner {
                     let Ok(_permit) = sem.acquire().await else {
                         return;
                     };
-                    match sources[i].query(&domain, &config, &client, &limiter).await {
-                        Ok(targets) => {
+                    let query_result =
+                        tokio::time::timeout(
+                            std::time::Duration::from_secs(SOURCE_TIMEOUT_SECS),
+                            sources[i].query(&domain, &config, &client, &limiter),
+                        )
+                        .await;
+                    match query_result {
+                        Ok(Ok(targets)) => {
                             for mut t in targets {
                                 // Rewrite discovery source to the canonical one for this source
-                                if let Target::Domain(ref mut dt) = t {
+                                if let Target::Domain(dt) = &mut t {
                                     dt.source = discovery.clone();
                                 }
                                 if let Some(dom) = t.domain() {
@@ -187,7 +197,7 @@ impl SubdomainScanner {
                                 }
                             }
                         }
-                        Err(err) => {
+                        Ok(Err(err)) => {
                             tracing::warn!(source = source_name, domain, err = %err, "subdomain source error");
                             let severity = Severity::Info;
                             if let Some(finding) = Finding::builder("subdomain", &domain, severity)
@@ -200,6 +210,29 @@ impl SubdomainScanner {
                                 .tag("subdomain")
                                 .tag("source-error")
                                 .evidence(Evidence::raw(err.to_string()))
+                                .build_or_log()
+                            {
+                                emitter.emit_finding(finding).await;
+                            }
+                        }
+                        Err(_) => {
+                            tracing::warn!(
+                                source = source_name,
+                                domain,
+                                timeout_secs = SOURCE_TIMEOUT_SECS,
+                                "subdomain source timed out"
+                            );
+                            let severity = Severity::Info;
+                            if let Some(finding) = Finding::builder("subdomain", &domain, severity)
+                                .title(format!("Subdomain source timed out: {source_name}"))
+                                .detail(format!(
+                                    "Passive source {source_name} exceeded the {SOURCE_TIMEOUT_SECS}s deadline \
+                                     while enumerating {domain}. The endpoint may be dead or throttled."
+                                ))
+                                .kind(secfinding::FindingKind::Other)
+                                .tag("subdomain")
+                                .tag("source-timeout")
+                                .evidence(Evidence::raw(format!("timeout after {SOURCE_TIMEOUT_SECS}s")))
                                 .build_or_log()
                             {
                                 emitter.emit_finding(finding).await;
@@ -228,7 +261,7 @@ impl SubdomainScanner {
                 {
                     Ok(targets) => {
                         for mut t in targets {
-                            if let Target::Domain(ref mut dt) = t {
+                            if let Target::Domain(dt) = &mut t {
                                 dt.source = gossan_core::DiscoverySource::DnsBruteforce;
                             }
                             if let Some(dom) = t.domain() {
@@ -277,7 +310,7 @@ impl SubdomainScanner {
             {
                 Ok(perms) => {
                     for mut t in perms {
-                        if let Target::Domain(ref mut dt) = t {
+                        if let Target::Domain(dt) = &mut t {
                             dt.source = gossan_core::DiscoverySource::DnsBruteforce;
                         }
                         if let Some(dom) = t.domain() {

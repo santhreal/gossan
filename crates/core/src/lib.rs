@@ -29,6 +29,7 @@
 //! All 14 scanner crates depend on `gossan-core` for these shared types.
 
 pub mod accuracy;
+pub mod cdn;
 pub mod config;
 pub mod ports;
 pub use ports::{resolve_ports, EPHEMERAL_PORT_COUNT, EPHEMERAL_PORT_START};
@@ -82,3 +83,4 @@ pub use target::{
 };
 pub use text::{xml_escape, xml_unescape};
 pub use transport::ScanClient;
+pub use cdn::is_cdn_ip;

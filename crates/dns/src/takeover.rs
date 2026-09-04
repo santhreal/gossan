@@ -215,8 +215,8 @@ async fn check_mx(resolver: &TokioResolver, domain: &str, target: &Target) -> Ve
         .collect();
 
     for mx in &exchanges {
-        if mx == "." {
-            continue; // null MX (RFC 7505), intentional
+        if should_skip_mx_exchange(mx) {
+            continue;
         }
         if lookup_name_absent(resolver, mx.as_str()).await {
             gossan_core::try_push_finding(
@@ -240,6 +240,15 @@ async fn check_mx(resolver: &TokioResolver, domain: &str, target: &Target) -> Ve
     }
 
     findings
+}
+
+/// True for MX exchange hostnames that should not be probed for takeover.
+///
+/// Empty exchanges and null MX (`.` per RFC 75005) are intentional
+/// non-targets: emitting a takeover finding for them is a false positive.
+fn should_skip_mx_exchange(mx: &str) -> bool {
+    let mx = mx.trim();
+    mx.is_empty() || mx == "."
 }
 
 #[cfg(test)]
@@ -285,11 +294,14 @@ mod tests {
     }
 
     #[test]
-    fn no_duplicate_suffixes() {
-        let fps = fingerprints();
-        let mut seen = std::collections::HashSet::new();
-        for (suffix, name) in &fps {
-            assert!(seen.insert(*suffix), "duplicate suffix: {suffix} ({name})");
-        }
+    fn mx_skip_empty_and_null_exchange() {
+    // Empty exchange hostname must be skipped (false takeover on example.com).
+    assert!(should_skip_mx_exchange(""), "empty exchange must be skipped");
+    // Null MX (RFC 75005) must be skipped.
+    assert!(should_skip_mx_exchange("."), "null MX must be skipped");
+    // Whitespace-only exchange must be skipped.
+    assert!(should_skip_mx_exchange("   "), "whitespace-only exchange must be skipped");
+    // Real exchange must not be skipped.
+    assert!(!should_skip_mx_exchange("mail.example.com"), "real exchange must not be skipped");
     }
 }

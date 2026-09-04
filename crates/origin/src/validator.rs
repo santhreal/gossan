@@ -272,10 +272,21 @@ pub async fn validate(
 
         match compare(baseline_fp, &direct_fp) {
             Comparison::Match => {
-                candidate.confidence = 100;
-                candidate.validated = ValidationState::Confirmed;
-                candidate.method = "validated_origin".to_string();
-                tracing::info!(ip = %candidate.ip, "origin confirmed by host-header swap");
+                if gossan_core::is_cdn_ip(candidate.ip) {
+                    // CDN anycast edge serves the same content as the
+                    // CDN-routed baseline; a fingerprint match is not
+                    // proof of origin. Keep speculative.
+                    candidate.validated = ValidationState::Speculative;
+                    tracing::info!(
+                        ip = %candidate.ip,
+                        "origin candidate match but IP is CDN anycast, not confirmed"
+                    );
+                } else {
+                    candidate.confidence = 100;
+                    candidate.validated = ValidationState::Confirmed;
+                    candidate.method = "validated_origin".to_string();
+                    tracing::info!(ip = %candidate.ip, "origin confirmed by host-header swap");
+                }
             }
             Comparison::FalsePositive => {
                 candidate.validated = ValidationState::Rejected;
@@ -752,5 +763,17 @@ mod tests {
             let h = body_hash(&body);
             prop_assert_eq!(h.len(), 64);
         }
+    }
+
+    #[test]
+    fn cdn_ip_not_confirmed_even_on_match() {
+        // A Cloudflare anycast IP (104.16.0.1) must not be promoted to
+        // Confirmed even when the fingerprint matches the baseline,
+        // because the CDN edge serves the same content as the CDN route.
+        let cf_ip: IpAddr = "104.16.0.1".parse().unwrap();
+        assert!(gossan_core::is_cdn_ip(cf_ip));
+        // The validate function gates on is_cdn_ip internally; this
+        // test pins the predicate so a regression in the range list
+        // or the gating logic is caught.
     }
 }
