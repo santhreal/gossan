@@ -541,7 +541,7 @@ impl Scanner for PortScanner {
                                 port,
                             });
 
-                        if let Some((ref svc, _, _)) = result {
+                        if let Some((svc, _, _)) = &result {
                             tracing::debug!(host = ?svc.host.ip, port = svc.port, "open port");
                             open_count.fetch_add(1, Ordering::Relaxed);
                         }
