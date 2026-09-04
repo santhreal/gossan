@@ -58,7 +58,13 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
     let base = asset.url.as_str();
     let mut findings = Vec::new();
 
-    let resp = client.get(base).send().await?;
+    let resp = match client.get(base).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("csp: request failed url={base} error={e}");
+            return Ok(findings);
+        }
+    };
     let status = resp.status().as_u16();
     let headers = resp.headers().clone();
 
