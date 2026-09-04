@@ -194,9 +194,11 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
             .body(body)
             .send()
             .await;
-        latencies.push(req_start.elapsed().as_millis());
         match resp {
-            Ok(r) => statuses.push(r.status().as_u16()),
+            Ok(r) => {
+                latencies.push(req_start.elapsed().as_millis());
+                statuses.push(r.status().as_u16());
+            }
             Err(e) => {
                 tracing::warn!(
                     url = %auth_url,
