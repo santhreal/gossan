@@ -186,7 +186,7 @@ impl ProbeEngine {
             if seen.contains(&idx) {
                 continue;
             }
-            if let Some(ref allowed) = probe.def.ports {
+            if let Some(allowed) = &probe.def.ports {
                 if !allowed.contains(&port) {
                     continue;
                 }
@@ -196,7 +196,7 @@ impl ProbeEngine {
                 matches.push(m.clone());
                 seen.insert(idx);
                 // Follow fallback chain once
-                if let Some(ref fallback) = probe.def.fallback_probe {
+                if let Some(fallback) = &probe.def.fallback_probe {
                     if let Some(&fb_idx) = by_name.get(fallback) {
                         if !seen.contains(&fb_idx) {
                             if let Some(fm) = self

@@ -58,13 +58,11 @@ impl IntelSource for ShodanSource {
             }
         }
 
-        if let (Some(asn), Some(ref org)) = (body.asn, &body.org) {
-            enrichment.asn = Some(AsnInfo {
-                asn: asn.to_string(),
-                org: Some(org.clone()),
-                domain: None,
-            });
-        }
+        if let (Some(asn), Some(org)) = (body.asn, &body.org) { enrichment.asn = Some(AsnInfo {
+            asn: asn.to_string(),
+            org: Some(org.clone()),
+            domain: None,
+        }); }
 
         if let (Some(country_name), Some(city)) = (body.country_name, body.city) {
             enrichment.geo = Some(GeoInfo {

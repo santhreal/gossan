@@ -359,7 +359,7 @@ pub fn correlate_with_rules(banner: &str, svc: &ServiceTarget, rules: &[CveRule]
             })
             .tag("cve")
             .tag("version-disclosure");
-            if let Some(ref hint) = rule.exploit {
+            if let Some(hint) = &rule.exploit {
                 let target_str = format!("{}:{}", svc.host.ip, svc.port);
                 f = f.exploit_hint(hint.replace("TARGET", &target_str));
             }

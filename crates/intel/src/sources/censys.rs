@@ -87,13 +87,11 @@ impl IntelSource for CensysSource {
             }
         }
 
-        if let Some(ref asn) = body.result.asn {
-            enrichment.asn = Some(AsnInfo {
-                asn: asn.asn.clone(),
-                org: asn.name.clone(),
-                domain: None,
-            });
-        }
+        if let Some(asn) = &body.result.asn { enrichment.asn = Some(AsnInfo {
+            asn: asn.asn.clone(),
+            org: asn.name.clone(),
+            domain: None,
+        }); }
 
         enrichment
             .raw

@@ -34,9 +34,7 @@ impl IntelSource for AsnSource {
             segs.push(ip);
             segs.push("json");
         }
-        if let Some(ref token) = self.token {
-            url.query_pairs_mut().append_pair("token", token);
-        }
+        if let Some(token) = &self.token { url.query_pairs_mut().append_pair("token", token); }
         let resp = self.client.get(url).send().await?.error_for_status()?;
         // ipinfo.io payloads are <16 KiB; 64 KiB is generous headroom
         // while bounding malformed/hostile responses.
@@ -69,9 +67,7 @@ impl IntelSource for AsnSource {
             segs.push(domain);
             segs.push("json");
         }
-        if let Some(ref token) = self.token {
-            url.query_pairs_mut().append_pair("token", token);
-        }
+        if let Some(token) = &self.token { url.query_pairs_mut().append_pair("token", token); }
         let resp = self.client.get(url).send().await?.error_for_status()?;
         // ipinfo.io payloads are <16 KiB; 64 KiB is generous headroom
         // while bounding malformed/hostile responses.

@@ -34,9 +34,7 @@ impl IntelSource for GreyNoiseSource {
             segs.push(ip);
         }
         let mut req = self.client.get(url);
-        if let Some(ref key) = self.api_key {
-            req = req.header("key", key);
-        }
+        if let Some(key) = &self.api_key { req = req.header("key", key); }
         let resp = req.send().await?.error_for_status()?;
         // GreyNoise community/v3 IP records are typically <8 KiB; cap
         // at 256 KiB for headroom while bounding hostile responses.

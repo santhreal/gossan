@@ -42,9 +42,7 @@ pub async fn lookup_target_offline(
 pub fn record_to_finding(r: &IntelRecord) -> Option<secfinding::Finding> {
     let title = format!("Passive Intel: {}/{}", r.port, r.protocol);
     let mut detail = format!("IP: {}\nPort: {}\nProtocol: {}", r.ip, r.port, r.protocol);
-    if let Some(ref b) = r.banner {
-        detail.push_str(&format!("\nBanner: {b}"));
-    }
+    if let Some(b) = &r.banner { detail.push_str(&format!("\nBanner: {b}")); }
 
     let mut builder = secfinding::Finding::builder("intel", &r.ip, secfinding::Severity::Info)
         .title(title)
@@ -72,16 +70,12 @@ pub fn enrichment_to_finding(e: &IntelEnrichment) -> Option<secfinding::Finding>
     let title = format!("Intel enrichment from {}: {}", e.source, e.target_value);
     let mut detail = format!("Source: {}\nTarget: {}\n", e.source, e.target_value);
 
-    if let Some(ref classification) = e.classification {
-        detail.push_str(&format!("Classification: {classification}\n"));
-    }
-    if let Some(ref asn) = e.asn {
-        detail.push_str(&format!(
-            "ASN: {} ({})",
-            asn.asn,
-            asn.org.as_deref().unwrap_or("unknown")
-        ));
-    }
+    if let Some(classification) = &e.classification { detail.push_str(&format!("Classification: {classification}\n")); }
+    if let Some(asn) = &e.asn { detail.push_str(&format!(
+        "ASN: {} ({})",
+        asn.asn,
+        asn.org.as_deref().unwrap_or("unknown")
+    )); }
 
     let mut builder = secfinding::Finding::builder("intel", target, secfinding::Severity::Info)
         .title(title)

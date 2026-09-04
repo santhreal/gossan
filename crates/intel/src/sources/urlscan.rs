@@ -32,9 +32,7 @@ impl IntelSource for UrlScanSource {
         let mut url = url::Url::parse(&format!("{BASE_URL}/search/"))?;
         url.query_pairs_mut().append_pair("q", &format!("ip:{ip}"));
         let mut req = self.client.get(url);
-        if let Some(ref key) = self.api_key {
-            req = req.header("API-Key", key);
-        }
+        if let Some(key) = &self.api_key { req = req.header("API-Key", key); }
         let resp = req.send().await?.error_for_status()?;
         // URLScan search responses can include hundreds of historical
         // crawls per query; cap at 8 MiB.
@@ -64,9 +62,7 @@ impl IntelSource for UrlScanSource {
         let mut url = url::Url::parse(&format!("{BASE_URL}/search/"))?;
         url.query_pairs_mut().append_pair("q", &format!("domain:{domain}"));
         let mut req = self.client.get(url);
-        if let Some(ref key) = self.api_key {
-            req = req.header("API-Key", key);
-        }
+        if let Some(key) = &self.api_key { req = req.header("API-Key", key); }
         let resp = req.send().await?.error_for_status()?;
         // URLScan search responses can include hundreds of historical
         // crawls per query; cap at 8 MiB.

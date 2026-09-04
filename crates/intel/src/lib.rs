@@ -136,13 +136,13 @@ impl IntelScanner {
             pdns_endpoint,
         )));
 
-        let cache = if let Some(ref path) = config.intel_db_path {
+        let cache = if let Some(path) = &config.intel_db_path {
             Some(Arc::new(IntelCache::open(path)?))
         } else {
             None
         };
 
-        let db = if let Some(ref path) = config.intel_db_path {
+        let db = if let Some(path) = &config.intel_db_path {
             Some(Arc::new(db::IntelDb::open(path)?))
         } else {
             None
@@ -180,7 +180,7 @@ impl IntelScanner {
         let mut emitted = 0usize;
 
         // 1. Offline bulk lookup (legacy)
-        if let Some(ref db) = self.db {
+        if let Some(db) = &self.db {
             let db = Arc::clone(db);
             let target = target.clone();
             let live_tx = input.live_tx.clone();
@@ -222,17 +222,17 @@ impl IntelScanner {
         let domain = target.domain().map(|s| s.to_string());
 
         for source in &self.sources {
-            if let Some(ref limiter) = self.limiter {
+            if let Some(limiter) = &self.limiter {
                 ratelimit::acquire(limiter, source.name()).await;
             }
 
-            let enrichment = if let Some(ref ip) = ip {
-                if let Some(ref cache) = self.cache {
+            let enrichment = if let Some(ip) = &ip {
+                if let Some(cache) = &self.cache {
                     if let Some(cached) = cache.get(source.name(), "ip", ip, self.cache_ttl_secs)? {
                         Ok(cached)
                     } else {
                         let result = source.query_ip(ip).await;
-                        if let Ok(ref e) = result {
+                        if let Ok(e) = &result {
                             if let Err(err) = cache.put(e) {
                                 tracing::warn!(
                                     source = source.name(),
@@ -246,15 +246,15 @@ impl IntelScanner {
                 } else {
                     source.query_ip(ip).await
                 }
-            } else if let Some(ref domain) = domain {
-                if let Some(ref cache) = self.cache {
+            } else if let Some(domain) = &domain {
+                if let Some(cache) = &self.cache {
                     if let Some(cached) =
                         cache.get(source.name(), "domain", domain, self.cache_ttl_secs)?
                     {
                         Ok(cached)
                     } else {
                         let result = source.query_domain(domain).await;
-                        if let Ok(ref e) = result {
+                        if let Ok(e) = &result {
                             if let Err(err) = cache.put(e) {
                                 tracing::warn!(
                                     source = source.name(),

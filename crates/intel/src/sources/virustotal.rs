@@ -69,13 +69,11 @@ impl IntelSource for VirusTotalSource {
             );
         }
 
-        if let Some(ref asn) = body.data.attributes.asn {
-            enrichment.asn = Some(crate::enrichment::AsnInfo {
-                asn: asn.to_string(),
-                org: body.data.attributes.as_owner.clone(),
-                domain: None,
-            });
-        }
+        if let Some(asn) = &body.data.attributes.asn { enrichment.asn = Some(crate::enrichment::AsnInfo {
+            asn: asn.to_string(),
+            org: body.data.attributes.as_owner.clone(),
+            domain: None,
+        }); }
 
         if let Some(country) = body.data.attributes.country {
             enrichment.geo = Some(crate::enrichment::GeoInfo {

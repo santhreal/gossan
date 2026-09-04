@@ -474,7 +474,7 @@ fn test_scan_target_key_serialization_and_legacy_migration() {
     // Ensure it might parse directly due to Serde's flexibility with sequence deserialization.
     // If it succeeds, verify the output; otherwise, we explicitly test the migration fallback path.
     let parsed_new_attempt = serde_json::from_str::<Vec<ScanTargetKey>>(&old_json);
-    if let Ok(ref migrated) = parsed_new_attempt {
+    if let Ok(migrated) = &parsed_new_attempt {
         assert_eq!(migrated.len(), 2);
         assert!(migrated
             .iter()

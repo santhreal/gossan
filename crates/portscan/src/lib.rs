@@ -200,7 +200,7 @@ impl Scanner for PortScanner {
             .map(std::path::PathBuf::from)
             .or_else(|| Some(std::path::PathBuf::from("gossan-scan.db")));
 
-        if let Some(ref path) = checkpoint_path {
+        if let Some(path) = &checkpoint_path {
             if path.exists() {
                 // Touch the CheckpointStore as a structural soundness
                 // check (corrupted DB → don't try to resume), then read
@@ -458,7 +458,7 @@ impl Scanner for PortScanner {
             })
             .collect();
 
-        if let Some(ref open_set) = syn_open {
+        if let Some(open_set) = &syn_open {
             pairs.retain(|(_, _, port, ip)| {
                 if let IpAddr::V4(v4) = ip {
                     if !v4.is_unspecified() {
@@ -473,7 +473,7 @@ impl Scanner for PortScanner {
         let probe_engine = Arc::new(probes::ProbeEngine::new(timeout));
 
         // ── Periodic checkpoint saving task ──────────────────────────────────
-        let checkpoint_task = if let Some(ref path) = checkpoint_path {
+        let checkpoint_task = if let Some(path) = &checkpoint_path {
             let path = path.clone();
             let completed_ports = Arc::clone(&completed_ports);
             Some(tokio::spawn(async move {
@@ -563,7 +563,7 @@ impl Scanner for PortScanner {
             input.emit_target(Target::Service(svc)).await;
 
             for t in extra_targets {
-                if let Target::Domain(ref d) = t {
+                if let Target::Domain(d) = &t {
                     let san_root = extract_root_domain(&d.domain);
                     if san_root == seed_root
                         || d.domain.ends_with(&format!(".{}", input.seed))
