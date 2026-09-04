@@ -106,7 +106,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
         }
 
         // Missing HttpOnly flag
-        if !lower.contains("httponly") {
+        if !cookie_has_attr(&lower, "httponly") {
             crate::try_push_finding(
                 crate::misconfig_finding(
                     target,
@@ -139,7 +139,7 @@ pub async fn probe(client: &Client, target: &Target) -> anyhow::Result<Vec<Findi
         }
 
         // Missing or weak SameSite
-        if !lower.contains("samesite") {
+        if !cookie_has_attr(&lower, "samesite") {
             crate::try_push_finding(
                 crate::misconfig_finding(
                     target,
@@ -211,5 +211,22 @@ mod tests {
             "secure_session=abc123; path=/; httponly",
             "secure"
         ));
+    }
+
+    #[test]
+    fn cookie_value_containing_httponly_substring_does_not_satisfy_check() {
+        // A cookie whose VALUE contains "httponly" as a substring must not
+        // be treated as having the HttpOnly attribute. The attribute must
+        // be a semicolon-delimited segment, not part of the value.
+        let cookie = "session=httponly_is_my_value; path=/";
+        assert!(!cookie_has_attr(&cookie.to_lowercase(), "httponly"));
+    }
+
+    #[test]
+    fn cookie_value_containing_samesite_substring_does_not_satisfy_check() {
+        // Same: a cookie value containing "samesite" must not satisfy the
+        // SameSite attribute check.
+        let cookie = "session=samesite_research_paper; path=/";
+        assert!(!cookie_has_attr(&cookie.to_lowercase(), "samesite"));
     }
 }
