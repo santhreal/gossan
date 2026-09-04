@@ -95,6 +95,44 @@ pub async fn check(resolver: &TokioResolver, domain: &str, target: &Target) -> V
 }
 
 // ── SPF ─────────────────────────────────────────────────────────────────────
+/// Classification of an SPF record's `all` mechanism.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SpfAllClass {
+    /// No `all` mechanism present: implicit `+all` per RFC 7208 §4.6.1.
+    Missing,
+    /// `+all` or bare `all`: pass all senders.
+    PassAll,
+    /// `~all`: softfail, not enforced.
+    SoftFail,
+    /// `?all`: neutral, no policy.
+    Neutral,
+    /// `-all`: hardfail, properly enforced.
+    HardFail,
+}
+
+/// Classify the `all` mechanism in an SPF record by token-exact matching.
+///
+/// Uses `split_whitespace` so `+all` inside a domain name (e.g.
+/// `include:mail+all.example.com`) does not false-positive.
+#[must_use]
+fn spf_all_classification(spf_rec: &str) -> SpfAllClass {
+    let has_all = spf_rec.split_whitespace().any(|m| {
+        let m = m.strip_prefix('+').unwrap_or(m);
+        m == "all" || m == "~all" || m == "-all" || m == "?all"
+    });
+    if !has_all {
+        return SpfAllClass::Missing;
+    }
+    if spf_rec.split_whitespace().any(|m| m == "+all" || m == "all") {
+        SpfAllClass::PassAll
+    } else if spf_rec.split_whitespace().any(|m| m == "~all") {
+        SpfAllClass::SoftFail
+    } else if spf_rec.split_whitespace().any(|m| m == "?all") {
+        SpfAllClass::Neutral
+    } else {
+        SpfAllClass::HardFail
+    }
+}
 
 /// SPF analysis with recursive `include:` resolution and lookup counting.
 async fn check_spf(resolver: &TokioResolver, domain: &str, target: &Target) -> Vec<Finding> {
@@ -147,35 +185,75 @@ async fn check_spf(resolver: &TokioResolver, domain: &str, target: &Target) -> V
         }
     };
 
-    // Check terminal mechanism
-    if spf_rec.contains("+all") {
-        gossan_core::try_push_finding(
-            fb(
-                target,
-                Severity::High,
-                "SPF allows all senders (+all)",
-                format!("{domain} SPF has +all, any server can send as this domain."),
-            )
-            .tag("email-security")
-            .tag("spf")
-            .evidence(Evidence::DnsRecord {
-                record_type: "TXT".into(),
-                value: spf_rec.clone().into(),
-            }),
-            &mut findings,
-        );
-    } else if spf_rec.contains("~all") {
-        gossan_core::try_push_finding(
-            fb(
-                target,
-                Severity::Low,
-                "SPF softfail (~all), not enforced",
-                format!("{domain} uses ~all, emails failing SPF are still delivered."),
-            )
-            .tag("email-security")
-            .tag("spf"),
-            &mut findings,
-        );
+    match spf_all_classification(&spf_rec) {
+        SpfAllClass::Missing => {
+            gossan_core::try_push_finding(
+                fb(
+                    target,
+                    Severity::High,
+                    "SPF has no 'all' mechanism (implicit +all)",
+                    format!(
+                        "{domain} SPF record has no 'all' mechanism. \
+                         Per RFC 7208 §4.6.1, the default is '+all', allowing \
+                         any server to send email as this domain."
+                    ),
+                )
+                .tag("email-security")
+                .tag("spf")
+                .evidence(Evidence::DnsRecord {
+                    record_type: "TXT".into(),
+                    value: spf_rec.clone().into(),
+                }),
+                &mut findings,
+            );
+        }
+        SpfAllClass::PassAll => {
+            gossan_core::try_push_finding(
+                fb(
+                    target,
+                    Severity::High,
+                    "SPF allows all senders (+all)",
+                    format!("{domain} SPF has +all, any server can send as this domain."),
+                )
+                .tag("email-security")
+                .tag("spf")
+                .evidence(Evidence::DnsRecord {
+                    record_type: "TXT".into(),
+                    value: spf_rec.clone().into(),
+                }),
+                &mut findings,
+            );
+        }
+        SpfAllClass::SoftFail => {
+            gossan_core::try_push_finding(
+                fb(
+                    target,
+                    Severity::Low,
+                    "SPF softfail (~all), not enforced",
+                    format!("{domain} uses ~all, emails failing SPF are still delivered."),
+                )
+                .tag("email-security")
+                .tag("spf"),
+                &mut findings,
+            );
+        }
+        SpfAllClass::Neutral => {
+            gossan_core::try_push_finding(
+                fb(
+                    target,
+                    Severity::Medium,
+                    "SPF neutral (?all), no policy enforced",
+                    format!(
+                        "{domain} uses ?all, emails failing SPF are accepted \
+                         with no policy applied. Use -all for enforcement."
+                    ),
+                )
+                .tag("email-security")
+                .tag("spf"),
+                &mut findings,
+            );
+        }
+        SpfAllClass::HardFail => {}
     }
 
     // Recursive include resolution, count total lookups
@@ -784,6 +862,62 @@ mod tests {
         ) {
             let _ = identify_email_services(&includes);
         }
+    }
+
+    #[test]
+    fn spf_all_classification_missing_all() {
+        // No `all` mechanism: implicit +all per RFC 7208.
+        assert_eq!(
+            spf_all_classification("v=spf1 ip4:1.2.3.4 include:_spf.google.com"),
+            SpfAllClass::Missing
+        );
+    }
+
+    #[test]
+    fn spf_all_classification_pass_all() {
+        assert_eq!(
+            spf_all_classification("v=spf1 ip4:1.2.3.4 +all"),
+            SpfAllClass::PassAll
+        );
+        // Bare `all` is equivalent to `+all`.
+        assert_eq!(
+            spf_all_classification("v=spf1 all"),
+            SpfAllClass::PassAll
+        );
+    }
+
+    #[test]
+    fn spf_all_classification_softfail() {
+        assert_eq!(
+            spf_all_classification("v=spf1 ip4:1.2.3.4 ~all"),
+            SpfAllClass::SoftFail
+        );
+    }
+
+    #[test]
+    fn spf_all_classification_neutral() {
+        assert_eq!(
+            spf_all_classification("v=spf1 ip4:1.2.3.4 ?all"),
+            SpfAllClass::Neutral
+        );
+    }
+
+    #[test]
+    fn spf_all_classification_hardfail() {
+        assert_eq!(
+            spf_all_classification("v=spf1 ip4:1.2.3.4 -all"),
+            SpfAllClass::HardFail
+        );
+    }
+
+    #[test]
+    fn spf_all_classification_substring_in_domain_does_not_false_positive() {
+        // `+all` inside a domain name must not match; the record has `-all`
+        // as the terminal mechanism.
+        assert_eq!(
+            spf_all_classification("v=spf1 include:mail+all.example.com -all"),
+            SpfAllClass::HardFail
+        );
     }
 }
 
